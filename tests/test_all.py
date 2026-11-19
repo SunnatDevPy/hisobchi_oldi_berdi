@@ -296,3 +296,12 @@ def test_utc_to_tashkent_local_formatting():
 
     naive_utc_dt = datetime(2026, 11, 19, 6, 29)
     assert format_local_dt(naive_utc_dt, "%d.%m.%Y %H:%M") == "19.11.2026 11:29"
+
+
+def test_nakladnoy_confirm_keyboard_has_skip_group_button():
+    from bot.keyboards import nakladnoy_confirm_kb
+
+    kb = nakladnoy_confirm_kb(42)
+    callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
+    assert "nak:confirm:42" in callbacks
+    assert "nak:save_only:42" in callbacks

@@ -65,6 +65,12 @@ def nakladnoy_confirm_kb(payment_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text="⏭ O'tkazib yuborish (Faqat bazaga saqlash)",
+                    callback_data=f"nak:save_only:{payment_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text="💰 Summani o'zgartirish",
                     callback_data=f"nak:edit_amt:{payment_id}",
                 ),

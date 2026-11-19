@@ -478,9 +478,10 @@ async def process_nakladnoy_clarification(message: Message, state: FSMContext) -
     await message.answer("👇 Tasdiqlang:", reply_markup=main_menu_keyboard())
 
 
-@router.callback_query(F.data.startswith("nak:confirm:"))
-async def cb_nakladnoy_confirm(cb: CallbackQuery) -> None:
-    payment_id = int(cb.data.split(":")[-1])
+async def _finalize_nakladnoy_confirmation(
+    cb: CallbackQuery, payment_id: int, send_to_group: bool
+) -> None:
+    """Confirm a pending nakladnoy payment, optionally posting it to the Nakladnoy group."""
     async with async_session_maker() as db:
         payment = await get_nakladnoy(db, payment_id)
         if not payment or payment.status == "deleted":
@@ -489,12 +490,15 @@ async def cb_nakladnoy_confirm(cb: CallbackQuery) -> None:
         if not payment.supplier_name or payment.amount <= 0:
             await cb.answer("Postavshik nomi va summa to'liq bo'lishi kerak!", show_alert=True)
             return
-        nak_group = await get_group_config(db, "nakladnoy")
+        nak_group = await get_group_config(db, "nakladnoy") if send_to_group else None
         payment = await confirm_nakladnoy(db, payment_id)
 
-    group_notice = "<i>(Nakladnoy guruhi ulanmagan — faqat hisobga olindi)</i>"
     missing_group_kb = None
-    if nak_group and payment:
+    if not send_to_group:
+        header = f"⏭ <b>Bazaga saqlandi! (#{payment.id})</b>"
+        group_notice = "<i>(Guruhga yuborilmadi — faqat hisobingizga olindi)</i>"
+    elif nak_group and payment:
+        header = f"✅ <b>Tasdiqlandi! (#{payment.id})</b>"
         caption = render_nakladnoy_group_caption(payment)
         try:
             if payment.photo_file_id:
@@ -515,7 +519,9 @@ async def cb_nakladnoy_confirm(cb: CallbackQuery) -> None:
             group_notice = f"📤 <b>{html.escape(nak_group.title)}</b> guruhiga yuborildi!"
         except Exception as exc:
             group_notice = f"⚠️ Guruhga yuborib bo'lmadi: {html.escape(str(exc))}"
-    elif not nak_group:
+    else:
+        header = f"✅ <b>Tasdiqlandi! (#{payment.id})</b>"
+        group_notice = "<i>(Nakladnoy guruhi ulanmagan — faqat hisobga olindi)</i>"
         username = await get_bot_username(cb.bot)
         missing_group_kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -532,14 +538,26 @@ async def cb_nakladnoy_confirm(cb: CallbackQuery) -> None:
         summary = await compute_session_summary(db, payment.session_id)
 
     await cb.message.edit_text(
-        f"✅ <b>Tasdiqlandi! (#{payment.id})</b>\n"
+        f"{header}\n"
         f"🏢 {html.escape(payment.supplier_name)} — <b>{format_uzs(payment.amount)} so'm</b>\n"
         f"{group_notice}\n\n"
         f"💰 Qo'lda qolishi kerak: <b>{format_uzs(summary.expected_cash)} so'm</b>",
         parse_mode="HTML",
         reply_markup=missing_group_kb,
     )
-    await cb.answer("✅ Tasdiqlandi!")
+    await cb.answer("✅ Saqlandi!")
+
+
+@router.callback_query(F.data.startswith("nak:confirm:"))
+async def cb_nakladnoy_confirm(cb: CallbackQuery) -> None:
+    payment_id = int(cb.data.split(":")[-1])
+    await _finalize_nakladnoy_confirmation(cb, payment_id, send_to_group=True)
+
+
+@router.callback_query(F.data.startswith("nak:save_only:"))
+async def cb_nakladnoy_save_only(cb: CallbackQuery) -> None:
+    payment_id = int(cb.data.split(":")[-1])
+    await _finalize_nakladnoy_confirmation(cb, payment_id, send_to_group=False)
 
 
 @router.callback_query(F.data.startswith("nak:cancel:"))
