@@ -401,6 +401,16 @@ async def _post_payment_to_group(bot, payment: NakladnoyPayment, nak_group) -> t
         return False, f"⚠️ Guruhga yuborib bo'lmadi: {html.escape(str(exc))}"
 
 
+def _format_balance_summary_block(summary: SessionSummary) -> str:
+    """Compact balance breakdown shown in confirmation and done messages."""
+    return (
+        f"📊 <b>Sizda natija shu:</b>\n"
+        f"💵 Jami pul (kirim): <b>{format_uzs(summary.total_available_inflow)} so'm</b>\n"
+        f"➖ Jami rasxod ({len(summary.confirmed_nakladnoys)} ta): <b>{format_uzs(summary.total_nakladnoy_spent)} so'm</b>\n"
+        f"💰 <b>Qo'lda qolgani: {format_uzs(summary.expected_cash)} so'm</b>"
+    )
+
+
 async def _process_ready_nakladnoy(
     message: Message,
     state: FSMContext,
@@ -412,6 +422,7 @@ async def _process_ready_nakladnoy(
     prefix_html: str = "",
 ) -> None:
     """Apply rounding, check duplicates, and either auto-confirm+post or show manual confirmation card."""
+    was_in_fsm = (await state.get_state()) is not None
     async with async_session_maker() as db:
         auto_confirm = (await get_app_setting(db, "auto_confirm", "on")) == "on"
         round_mode = await get_app_setting(db, "round_mode", "floor_1000")
@@ -458,10 +469,12 @@ async def _process_ready_nakladnoy(
             f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>\n"
             f"{round_line}"
             f"{group_notice}\n\n"
-            f"💵 Qo'lda qolishi kerak: <b>{format_uzs(summary.expected_cash)} so'm</b>",
+            f"{_format_balance_summary_block(summary)}",
             parse_mode="HTML",
             reply_markup=auto_confirmed_nakladnoy_kb(payment.id, sent_to_group=posted),
         )
+        if was_in_fsm:
+            await message.answer("📋 Asosiy menyu:", reply_markup=main_menu_keyboard())
         return
 
     await _send_pending_nakladnoy_card(message, payment, duplicate_warning=dup)
@@ -632,10 +645,11 @@ async def _finalize_nakladnoy_confirmation(
         f"{header}\n"
         f"🏢 {html.escape(payment.supplier_name)} — <b>{format_uzs(payment.amount)} so'm</b>\n"
         f"{group_notice}\n\n"
-        f"💰 Qo'lda qolishi kerak: <b>{format_uzs(summary.expected_cash)} so'm</b>",
+        f"{_format_balance_summary_block(summary)}",
         parse_mode="HTML",
         reply_markup=missing_group_kb,
     )
+    await cb.message.answer("📋 Asosiy menyu:", reply_markup=main_menu_keyboard())
     await cb.answer("✅ Saqlandi!")
 
 
@@ -676,17 +690,17 @@ async def cb_nakladnoy_unpost_group(cb: CallbackQuery) -> None:
         f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
         f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>\n"
         f"🙈 <i>(Guruhdan olib tashlandi)</i>\n\n"
-        f"📊 <b>Sizda natija shu:</b>\n"
-        f"💵 Qo'lda qolishi kerak: <b>{format_uzs(summary.expected_cash)} so'm</b>",
+        f"{_format_balance_summary_block(summary)}",
         parse_mode="HTML",
         reply_markup=None,
     )
+    await cb.message.answer("📋 Asosiy menyu:", reply_markup=main_menu_keyboard())
     await cb.answer("✅ Shaxsiy hisobga saqlandi!")
 
 
 @router.callback_query(F.data.startswith("nak:done:"))
 async def cb_nakladnoy_done(cb: CallbackQuery) -> None:
-    """Collapse quick-edit buttons and leave clean final result summary."""
+    """Collapse quick-edit buttons, restore main menu, and show remaining balance summary."""
     payment_id = int(cb.data.split(":")[-1])
     async with async_session_maker() as db:
         payment = await get_nakladnoy(db, payment_id)
@@ -701,11 +715,11 @@ async def cb_nakladnoy_done(cb: CallbackQuery) -> None:
         f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
         f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>\n"
         f"<i>({where})</i>\n\n"
-        f"📊 <b>Sizda natija shu:</b>\n"
-        f"💵 Qo'lda qolishi kerak: <b>{format_uzs(summary.expected_cash)} so'm</b>",
+        f"{_format_balance_summary_block(summary)}",
         parse_mode="HTML",
         reply_markup=None,
     )
+    await cb.message.answer("📋 Asosiy menyu:", reply_markup=main_menu_keyboard())
     await cb.answer("✅ Tayyor!")
 
 
@@ -742,7 +756,8 @@ async def cb_nakladnoy_cancel(cb: CallbackQuery) -> None:
     payment_id = int(cb.data.split(":")[-1])
     async with async_session_maker() as db:
         await delete_nakladnoy(db, payment_id)
-    await cb.message.edit_text("❌ Nakladnoy bekor qilindi (hisobga olinmadi).")
+    await cb.message.edit_text("❌ Nakladnoy bekor qilindi (hisobga olinmadi).", reply_markup=None)
+    await cb.message.answer("📋 Asosiy menyu:", reply_markup=main_menu_keyboard())
     await cb.answer("Bekor qilindi")
 
 
