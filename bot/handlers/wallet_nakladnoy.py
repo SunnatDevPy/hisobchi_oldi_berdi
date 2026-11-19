@@ -962,35 +962,32 @@ async def handle_any_photo(message: Message, state: FSMContext) -> None:
     await _process_nakladnoy_photo(message, state)
 
 
-@router.message(F.chat.type == "private", F.voice | F.audio)
-async def handle_any_voice(message: Message, state: FSMContext) -> None:
-    """Understand voice commands naturally via Gemini 2.5 Flash."""
-    if not is_authorized(message.from_user.id if message.from_user else None):
-        return
-
+async def _handle_parsed_command(
+    message: Message,
+    state: FSMContext,
+    intent: str,
+    amount: Optional[float],
+    supplier: Optional[str],
+    raw_note: str,
+    is_voice: bool = False,
+) -> bool:
+    """Execute a parsed voice or text command. Returns True if handled."""
     current_state = await state.get_state()
-    audio_bytes, mime = await _download_voice_bytes(message)
-    parsed = await parse_voice_or_text(audio_bytes=audio_bytes, mime_type=mime)
-
-    intent = parsed.get("intent", "unknown")
-    amount = parsed.get("amount")
-    supplier = parsed.get("supplier_name")
-    transcript = parsed.get("transcript", "")
-
-    # If user explicitly clicked "📸 Nakladnoy qo'shish" before sending voice
     if current_state == WalletStates.waiting_nakladnoy_input.state and amount and supplier:
         intent = "pay_supplier"
+
+    voice_header = f"🎤 <i>«{html.escape(raw_note)}»</i>\n\n" if is_voice and raw_note else ""
 
     if intent == "status":
         await state.clear()
         async with async_session_maker() as db:
             summary = await compute_session_summary(db)
         await message.answer(
-            f"🎤 <i>«{html.escape(transcript)}»</i>\n\n" + render_status_text(summary),
+            voice_header + render_status_text(summary),
             parse_mode="HTML",
             reply_markup=status_actions_kb(summary.session.id),
         )
-        return
+        return True
 
     if intent in ("cash_in", "kassa_debt", "kassa_repay") and amount and amount > 0:
         await state.clear()
@@ -1001,10 +998,10 @@ async def handle_any_voice(message: Message, state: FSMContext) -> None:
             "kassa_repay": "Kassaga qaytarildi",
         }
         async with async_session_maker() as db:
-            await add_cash_transaction(db, amount=amount, source_type=src_map[intent], note=transcript)
+            await add_cash_transaction(db, amount=amount, source_type=src_map[intent], note=raw_note)
             summary = await compute_session_summary(db)
         await message.answer(
-            f"🎤 <i>«{html.escape(transcript)}»</i>\n\n"
+            f"{voice_header}"
             f"✅ <b>{lbl_map[intent]}:</b> {format_uzs(amount)} so'm\n"
             f"💰 Qo'lda qolishi kerak: <b>{format_uzs(summary.expected_cash)} so'm</b>"
             + (
@@ -1015,24 +1012,53 @@ async def handle_any_voice(message: Message, state: FSMContext) -> None:
             parse_mode="HTML",
             reply_markup=main_menu_keyboard(),
         )
-        return
+        return True
 
     if intent == "pay_supplier" and amount and amount > 0 and supplier:
         await state.clear()
         async with async_session_maker() as db:
             sess = await get_or_create_open_session(db)
             payment = await create_pending_nakladnoy(
-                db, supplier_name=supplier, amount=amount, note=transcript, session_id=sess.id
+                db, supplier_name=supplier, amount=amount, note=raw_note, session_id=sess.id
             )
             dup = await find_duplicate_confirmed_nakladnoy(
                 db, sess.id, supplier, amount, exclude_id=payment.id
             )
         await _send_pending_nakladnoy_card(message, payment, duplicate_warning=dup)
         await message.answer("👇 Tasdiqlang:", reply_markup=main_menu_keyboard())
+        return True
+
+    return False
+
+
+@router.message(F.chat.type == "private", F.voice | F.audio)
+async def handle_any_voice(message: Message, state: FSMContext) -> None:
+    """Understand voice commands naturally via Gemini Flash."""
+    if not is_authorized(message.from_user.id if message.from_user else None):
+        return
+
+    wait_msg = await message.answer("🎤 Ovozli xabar eshitilmoqda...")
+    try:
+        audio_bytes, mime = await _download_voice_bytes(message)
+        parsed = await parse_voice_or_text(audio_bytes=audio_bytes, mime_type=mime)
+    finally:
+        try:
+            await wait_msg.delete()
+        except Exception:
+            pass
+
+    intent = parsed.get("intent", "unknown")
+    amount = parsed.get("amount")
+    supplier = parsed.get("supplier_name")
+    transcript = parsed.get("transcript", "")
+
+    if await _handle_parsed_command(
+        message, state, intent, amount, supplier, transcript, is_voice=True
+    ):
         return
 
     await message.answer(
-        f"🎤 Eshitildi: <i>«{html.escape(transcript)}»</i>\n"
+        f"🎤 Eshitildi: <i>«{html.escape(transcript or 'Tushunilmadi')}»</i>\n"
         "Aniq amal topilmadi. Misol uchun:\n"
         "• <i>«Pul oldim 21 million»</i>\n"
         "• <i>«Kassadan 3 million oldim»</i>\n"
@@ -1050,62 +1076,16 @@ async def handle_any_text(message: Message, state: FSMContext) -> None:
     if not txt or txt.startswith("/"):
         return
 
-    current_state = await state.get_state()
     parsed = await parse_voice_or_text(text=txt)
-    intent = parsed.get("intent", "unknown")
-    amount = parsed.get("amount")
-    supplier = parsed.get("supplier_name")
-
-    if current_state == WalletStates.waiting_nakladnoy_input.state and amount and supplier:
-        intent = "pay_supplier"
-
-    if intent == "status":
-        await state.clear()
-        async with async_session_maker() as db:
-            summary = await compute_session_summary(db)
-        await message.answer(
-            render_status_text(summary),
-            parse_mode="HTML",
-            reply_markup=status_actions_kb(summary.session.id),
-        )
-        return
-
-    if intent in ("cash_in", "kassa_debt", "kassa_repay") and amount and amount > 0:
-        await state.clear()
-        src_map = {"cash_in": "main", "kassa_debt": "kassa_debt", "kassa_repay": "kassa_repay"}
-        lbl_map = {
-            "cash_in": "Asosiy balansga qo'shildi",
-            "kassa_debt": "Kassadan qarzga olindi",
-            "kassa_repay": "Kassaga qaytarildi",
-        }
-        async with async_session_maker() as db:
-            await add_cash_transaction(db, amount=amount, source_type=src_map[intent], note=txt)
-            summary = await compute_session_summary(db)
-        await message.answer(
-            f"✅ <b>{lbl_map[intent]}:</b> {format_uzs(amount)} so'm\n"
-            f"💰 Qo'lda qolishi kerak: <b>{format_uzs(summary.expected_cash)} so'm</b>"
-            + (
-                f"\n⚠️ Jami kassa qarzi: <b>{format_uzs(summary.total_kassa_debt_outstanding)} so'm</b>"
-                if summary.total_kassa_debt_outstanding > 0
-                else ""
-            ),
-            parse_mode="HTML",
-            reply_markup=main_menu_keyboard(),
-        )
-        return
-
-    if intent == "pay_supplier" and amount and amount > 0 and supplier:
-        await state.clear()
-        async with async_session_maker() as db:
-            sess = await get_or_create_open_session(db)
-            payment = await create_pending_nakladnoy(
-                db, supplier_name=supplier, amount=amount, note=txt, session_id=sess.id
-            )
-            dup = await find_duplicate_confirmed_nakladnoy(
-                db, sess.id, supplier, amount, exclude_id=payment.id
-            )
-        await _send_pending_nakladnoy_card(message, payment, duplicate_warning=dup)
-        await message.answer("👇 Tasdiqlang:", reply_markup=main_menu_keyboard())
+    if await _handle_parsed_command(
+        message,
+        state,
+        parsed.get("intent", "unknown"),
+        parsed.get("amount"),
+        parsed.get("supplier_name"),
+        txt,
+        is_voice=False,
+    ):
         return
 
     await message.answer(

@@ -151,16 +151,16 @@ async def _call_gemini(parts: list[dict[str, Any]]) -> Dict[str, Any]:
     candidates_order: list[str] = []
     for model_name in (
         settings.GEMINI_MODEL,
-        "gemini-flash-latest",
-        "gemini-3.8-flash",
         "gemini-flash-lite-latest",
+        "gemini-3.8-flash",
+        "gemini-flash-latest",
     ):
         if model_name and model_name not in candidates_order:
             candidates_order.append(model_name)
 
     last_exc: Optional[Exception] = None
     body: Dict[str, Any] = {}
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=12.0) as client:
         for model_name in candidates_order:
             url = (
                 f"https://generativelanguage.googleapis.com/v1beta/models/"
@@ -306,6 +306,25 @@ def _heuristic_parse_text(text: str) -> Optional[Dict[str, Any]]:
     stripped_num = re.sub(r"[\d\s.,+_mlnmingmillionkso'msomсўм-]+", "", low).strip()
     if amount is not None and not stripped_num:
         return {"intent": "number_only", "amount": amount, "supplier_name": None, "transcript": raw}
+
+    # Explicit supplier payment pattern like "Marimalako ga 820 000 berdim" or "Non Oka 1 657 000 to'ladim"
+    pay_verbs = ("berdim", "to'ladim", "toladim", "berildi", "o'tkazdim", "otkazdim", "tashladim", "бердим", "оплатил")
+    if amount is not None and any(v in low for v in pay_verbs):
+        name_candidate = re.sub(
+            r"(?i)\b(?:berdim|to'ladim|toladim|berildi|o'tkazdim|otkazdim|tashladim|бердим|оплатил|so'm|som|sum|сўм|mln|million|ming|млн|миллион)\b",
+            " ",
+            raw,
+        )
+        name_candidate = re.sub(r"[\d\s.,+_]+", " ", name_candidate).strip(" :-")
+        # Remove standalone "ga" or trailing "-ga" if present as separate word
+        name_candidate = re.sub(r"\s+ga$", "", name_candidate, flags=re.IGNORECASE).strip()
+        if name_candidate:
+            return {
+                "intent": "pay_supplier",
+                "amount": amount,
+                "supplier_name": name_candidate,
+                "transcript": raw,
+            }
 
     return None
 

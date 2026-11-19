@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import logging
 import time
 
 from aiogram import F, Router
@@ -50,6 +51,9 @@ from services.gemini_ai import format_uzs
 
 
 router = Router(name="settings_groups")
+logger = logging.getLogger("hisobot_bot.groups")
+
+ANONYMOUS_ADMIN_BOT_ID = 1087968824
 
 ROLE_TITLES = {
     "nakladnoy": "📸 Nakladnoy guruhi",
@@ -76,10 +80,12 @@ async def get_bot_username(bot) -> str:
     return _BOT_USERNAME
 
 
-def is_authorized(user_id: int | None) -> bool:
+def is_authorized(user_id: int | None, allow_group_anon: bool = False) -> bool:
     """Check if Telegram user is permitted when ADMIN_IDS is configured."""
     admins = get_settings().admin_id_list
     if not admins:
+        return True
+    if allow_group_anon and user_id == ANONYMOUS_ADMIN_BOT_ID:
         return True
     return user_id in admins
 
@@ -121,7 +127,10 @@ async def cancel_any_state(message: Message, state: FSMContext) -> None:
 
 
 async def _bind_group_command(message: Message, role: str) -> None:
-    if not is_authorized(message.from_user.id if message.from_user else None):
+    if not is_authorized(
+        message.from_user.id if message.from_user else None,
+        allow_group_anon=(message.chat.type != "private"),
+    ):
         return
     if message.chat.type == "private":
         await message.answer(
@@ -169,7 +178,7 @@ async def cmd_group_id(message: Message) -> None:
 async def cmd_start_group_bind(message: Message, command: CommandObject) -> None:
     """Auto-bind group when bot is added via Telegram startgroup=<role>&admin=... deep link."""
     user_id = message.from_user.id if message.from_user else None
-    if not is_authorized(user_id):
+    if not is_authorized(user_id, allow_group_anon=True):
         return
 
     role = DEEP_LINK_ROLE_MAP.get((command.args or "").strip())
@@ -178,6 +187,7 @@ async def cmd_start_group_bind(message: Message, command: CommandObject) -> None
 
     title = message.chat.title or f"Group {message.chat.id}"
     _recently_bound_chats[message.chat.id] = time.monotonic()
+    logger.info("Deep-link group bind: role=%s chat_id=%s title=%s", role, message.chat.id, title)
 
     async with async_session_maker() as db:
         await set_group_config(db, role=role, chat_id=message.chat.id, title=title)
@@ -188,7 +198,7 @@ async def cmd_start_group_bind(message: Message, command: CommandObject) -> None
         parse_mode="HTML",
     )
 
-    if user_id:
+    if user_id and user_id != ANONYMOUS_ADMIN_BOT_ID:
         try:
             status_text = await _render_groups_status()
             username = await get_bot_username(message.bot)
@@ -211,6 +221,14 @@ async def on_bot_added_to_group(event: ChatMemberUpdated) -> None:
     """Auto-detect when bot is added to or promoted in a group and offer 1-tap role binding in DM."""
     new_status = event.new_chat_member.status
     old_status = event.old_chat_member.status
+    logger.info(
+        "my_chat_member update: chat_id=%s title=%s old=%s new=%s from_user=%s",
+        event.chat.id,
+        event.chat.title,
+        old_status,
+        new_status,
+        event.from_user.id if event.from_user else None,
+    )
     if new_status not in ("member", "administrator") or new_status == old_status:
         return
 

@@ -261,6 +261,11 @@ def test_heuristic_text_intents():
         res4 = await parse_voice_or_text(text="Status")
         assert res4["intent"] == "status"
 
+        res5 = await parse_voice_or_text(text="Marimalako ga 820 000 berdim")
+        assert res5["intent"] == "pay_supplier"
+        assert res5["supplier_name"] == "Marimalako"
+        assert res5["amount"] == 820_000
+
     asyncio.run(scenario())
 
 

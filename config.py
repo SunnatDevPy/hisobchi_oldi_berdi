@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = f"sqlite+aiosqlite:///{(BASE_DIR / 'data' / 'hisobot_bot.db').as_posix()}"
 
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-flash-latest"
+    GEMINI_MODEL: str = "gemini-flash-lite-latest"
 
     YESPOS_BASE_URL: str = "https://marketplace.yestask.uz"
     YESPOS_API_KEY: str = ""
