@@ -542,6 +542,40 @@ async def list_closed_sessions(db: AsyncSession, limit: int = 10) -> List[DailyC
     return list((await db.scalars(stmt)).all())
 
 
+async def list_all_sessions(db: AsyncSession, limit: int = 15) -> List[DailyCashSession]:
+    """Return recent open and closed daily sessions ordered newest first."""
+    stmt = select(DailyCashSession).order_by(desc(DailyCashSession.id)).limit(limit)
+    return list((await db.scalars(stmt)).all())
+
+
+async def list_recent_nakladnoys(
+    db: AsyncSession, limit: int = 50, offset: int = 0
+) -> List[NakladnoyPayment]:
+    """Return recent confirmed nakladnoy payments across all days."""
+    stmt = (
+        select(NakladnoyPayment)
+        .where(NakladnoyPayment.status == "confirmed")
+        .order_by(desc(NakladnoyPayment.id))
+        .offset(offset)
+        .limit(limit)
+    )
+    return list((await db.scalars(stmt)).all())
+
+
+async def list_recent_cash_transactions(
+    db: AsyncSession, limit: int = 50, offset: int = 0
+) -> List[CashTransaction]:
+    """Return recent non-deleted cash-in and kassa-debt transactions across all days."""
+    stmt = (
+        select(CashTransaction)
+        .where(CashTransaction.is_deleted.is_(False))
+        .order_by(desc(CashTransaction.id))
+        .offset(offset)
+        .limit(limit)
+    )
+    return list((await db.scalars(stmt)).all())
+
+
 # ---------------------------------------------------------------------------
 # Prixod (ITOG) Reports
 # ---------------------------------------------------------------------------

@@ -133,7 +133,13 @@ def status_actions_kb(session_id: int) -> InlineKeyboardMarkup:
                     text="📥 Excel yuklash",
                     callback_data=f"export:session:{session_id}",
                 ),
-            ]
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📜 Pul oldi-berdi & Nakladnoy History",
+                    callback_data="set:history",
+                )
+            ],
         ]
     )
 
@@ -443,15 +449,30 @@ def supplier_detail_kb(supplier_id: int) -> InlineKeyboardMarkup:
 
 
 def history_sessions_kb(sessions: Sequence[DailyCashSession]) -> InlineKeyboardMarkup:
-    """List closed daily sessions for inspection or reopening."""
-    rows = []
+    """List open & closed daily sessions plus quick Nakladnoy / Cash history views."""
+    rows = [
+        [
+            InlineKeyboardButton(
+                text="📸 Barcha Nakladnoylar tarixi",
+                callback_data="hist:all_nak:0",
+            ),
+            InlineKeyboardButton(
+                text="💵 Barcha Oldi-berdi tarixi",
+                callback_data="hist:all_cash:0",
+            ),
+        ]
+    ]
     for s in sessions:
-        diff = s.difference or 0
-        icon = "✅" if abs(diff) < 1 else ("⚠️" if diff < 0 else "➕")
+        if s.status == "open":
+            label = f"🟢 {s.report_date} (Ochiq) | Qolishi: {format_uzs(s.expected_cash)}"
+        else:
+            diff = s.difference or 0
+            icon = "✅" if abs(diff) < 1 else ("⚠️" if diff < 0 else "➕")
+            label = f"{icon} {s.report_date} | Qoldiq: {format_uzs(s.actual_counted_cash or 0)}"
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"{icon} {s.report_date} | Qoldiq: {format_uzs(s.actual_counted_cash or 0)}",
+                    text=label,
                     callback_data=f"hist:view:{s.id}",
                 )
             ]
@@ -460,23 +481,39 @@ def history_sessions_kb(sessions: Sequence[DailyCashSession]) -> InlineKeyboardM
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def history_detail_kb(session_id: int) -> InlineKeyboardMarkup:
-    """Actions on a closed historical session."""
+def history_detail_kb(session_id: int, is_closed: bool = True) -> InlineKeyboardMarkup:
+    """Actions on a daily session in history."""
+    top_row = [
+        InlineKeyboardButton(
+            text="📥 Excel yuklash",
+            callback_data=f"export:session:{session_id}",
+        )
+    ]
+    if is_closed:
+        top_row.append(
+            InlineKeyboardButton(
+                text="🔓 Qayta ochib to'g'irlash",
+                callback_data=f"hist:reopen:{session_id}",
+            )
+        )
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="📥 Excel yuklash",
-                    callback_data=f"export:session:{session_id}",
-                ),
-                InlineKeyboardButton(
-                    text="🔓 Qayta ochib to'g'irlash",
-                    callback_data=f"hist:reopen:{session_id}",
-                ),
-            ],
-            [InlineKeyboardButton(text="⬅️ Arxivga qaytish", callback_data="set:history")],
+            top_row,
+            [InlineKeyboardButton(text="⬅️ History ga qaytish", callback_data="set:history")],
         ]
     )
+
+
+def history_feed_kb(kind: str, page: int, has_next: bool) -> InlineKeyboardMarkup:
+    """Pagination keyboard for all-nakladnoys or all-cash-transactions history feed."""
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"hist:{kind}:{page - 1}"))
+    if has_next:
+        nav.append(InlineKeyboardButton(text="Keyingi ➡️", callback_data=f"hist:{kind}:{page + 1}"))
+    rows = [nav] if nav else []
+    rows.append([InlineKeyboardButton(text="⬅️ History ga qaytish", callback_data="set:history")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def prixod_report_kb(report_id: int, is_published: bool = False) -> InlineKeyboardMarkup:

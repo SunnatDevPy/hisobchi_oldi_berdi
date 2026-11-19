@@ -18,6 +18,7 @@ from bot.keyboards import (
     cancel_reply_keyboard,
     groups_config_kb,
     history_detail_kb,
+    history_feed_kb,
     history_sessions_kb,
     main_menu_keyboard,
     prixod_history_kb,
@@ -33,11 +34,15 @@ from database.crud import (
     append_supplier_alias,
     compute_session_summary,
     delete_supplier,
+    format_local_dt,
     get_all_group_configs,
     get_app_setting,
     get_prixod_report,
+    list_all_sessions,
     list_closed_sessions,
     list_prixod_reports,
+    list_recent_cash_transactions,
+    list_recent_nakladnoys,
     list_suppliers,
     reopen_cash_session,
     set_app_setting,
@@ -637,12 +642,13 @@ async def process_new_supplier_category(message: Message, state: FSMContext) -> 
 @router.callback_query(F.data == "set:history")
 async def cb_history_list(cb: CallbackQuery) -> None:
     async with async_session_maker() as db:
-        sessions = await list_closed_sessions(db, limit=10)
+        sessions = await list_all_sessions(db, limit=12)
     if not sessions:
-        await cb.answer("Hozircha yopilgan kunlar tarixi yo'q.", show_alert=True)
+        await cb.answer("Hozircha kunlik tarix yo'q.", show_alert=True)
         return
     await cb.message.edit_text(
-        "📜 <b>Yopilgan kunlar arxivi (History):</b>\nBatafsil ko'rish yoki to'g'irlash uchun tanlang:",
+        "📜 <b>Pul oldi-berdi va Nakladnoylar History (Arxiv):</b>\n"
+        "Kunni tanlang yoki umumiy nakladnoy / oldi-berdi ro'yxatini oching:",
         parse_mode="HTML",
         reply_markup=history_sessions_kb(sessions),
     )
@@ -656,26 +662,116 @@ async def cb_history_detail(cb: CallbackQuery) -> None:
         summary = await compute_session_summary(db, sess_id)
 
     sess: DailyCashSession = summary.session
-    counted = sess.actual_counted_cash or 0
-    diff = sess.difference or 0
-    diff_str = "✅ To'g'ri (0)" if abs(diff) < 1 else (f"⚠️ Kamomad: {format_uzs(diff)}" if diff < 0 else f"➕ Ortiqcha: +{format_uzs(diff)}")
-
+    is_closed = sess.status == "closed"
     lines = [
-        f"📜 <b>KUNLIK ARXIV — {sess.report_date}</b>",
+        f"📜 <b>KUNLIK HISTORY — {sess.report_date}</b> ({'Yopilgan' if is_closed else '🟢 Ochiq'})",
         "===============================",
         f"⏮ Boshlang'ich qoldiq: <b>{format_uzs(summary.opening_balance)}</b>",
         f"➕ Olingan pul: <b>{format_uzs(summary.main_cash_in)}</b>",
-        f"🏦 Kassadan qarz: <b>{format_uzs(summary.kassa_debt_today)}</b>",
-        f"💵 Jami kirim: <b>{format_uzs(summary.total_available_inflow)}</b>",
-        f"➖ Jami rasxod ({len(summary.confirmed_nakladnoys)} ta): <b>{format_uzs(summary.total_nakladnoy_spent)}</b>",
-        f"💰 Qolishi kerak edi: <b>{format_uzs(summary.expected_cash)}</b>",
-        f"🖐 Sanalgan pul: <b>{format_uzs(counted)}</b>",
-        f"📊 Farq: <b>{diff_str}</b>",
     ]
+    if summary.kassa_debt_today > 0:
+        lines.append(f"🏦 Kassadan qarz: <b>{format_uzs(summary.kassa_debt_today)}</b>")
+    if summary.kassa_repay_today > 0:
+        lines.append(f"↩️ Kassaga qaytarilgan: <b>-{format_uzs(summary.kassa_repay_today)}</b>")
+    lines.append(f"💵 Jami kirim: <b>{format_uzs(summary.total_available_inflow)}</b>")
+    lines.append(f"➖ Jami rasxod ({len(summary.confirmed_nakladnoys)} ta): <b>{format_uzs(summary.total_nakladnoy_spent)}</b>")
+    lines.append(f"💰 Qolishi kerak: <b>{format_uzs(summary.expected_cash)}</b>")
+
+    if is_closed:
+        counted = sess.actual_counted_cash or 0
+        diff = sess.difference or 0
+        diff_str = "✅ To'g'ri (0)" if abs(diff) < 1 else (f"⚠️ Kamomad: {format_uzs(diff)}" if diff < 0 else f"➕ Ortiqcha: +{format_uzs(diff)}")
+        lines.append(f"🖐 Sanalgan pul: <b>{format_uzs(counted)}</b>")
+        lines.append(f"📊 Farq: <b>{diff_str}</b>")
+
+    if summary.cash_transactions:
+        lines.append("\n💵 <b>Pul oldi-berdi:</b>")
+        t_icons = {"main": "➕", "kassa_debt": "🏦", "kassa_repay": "↩️"}
+        for tx in summary.cash_transactions[:15]:
+            tm = format_local_dt(tx.created_at, "%H:%M")
+            note_part = f" ({html.escape(tx.note[:28])})" if tx.note else ""
+            lines.append(f"• <code>{tm}</code> {t_icons.get(tx.source_type, '💵')} <b>{format_uzs(tx.amount)}</b>{note_part}")
+
+    if summary.confirmed_nakladnoys:
+        lines.append("\n📸 <b>Nakladnoylar:</b>")
+        for idx, n in enumerate(summary.confirmed_nakladnoys[:25], start=1):
+            tm = format_local_dt(n.created_at, "%H:%M")
+            where = "📤" if n.group_message_id else "💾"
+            lines.append(
+                f"{idx}) <code>{tm}</code> {where} {html.escape(n.supplier_name)} — <b>{format_uzs(n.amount)}</b>"
+            )
+        if len(summary.confirmed_nakladnoys) > 25:
+            lines.append(f"<i>...yana {len(summary.confirmed_nakladnoys) - 25} ta (to'liq ro'yxat Excel'da)</i>")
+
+    text = "\n".join(lines)
+    if len(text) > 3900:
+        text = text[:3850] + "\n<i>...(to'liq ro'yxat Excel yuklashda)</i>"
+
+    await cb.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=history_detail_kb(sess_id, is_closed=is_closed),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("hist:all_nak:"))
+async def cb_history_all_nakladnoys(cb: CallbackQuery) -> None:
+    page = int(cb.data.split(":")[-1])
+    page_size = 15
+    async with async_session_maker() as db:
+        items = await list_recent_nakladnoys(db, limit=page_size + 1, offset=page * page_size)
+    has_next = len(items) > page_size
+    items = items[:page_size]
+    if not items and page == 0:
+        await cb.answer("Hali tasdiqlangan nakladnoylar yo'q.", show_alert=True)
+        return
+
+    lines = [f"📸 <b>Nakladnoylar Tarixi (Sahifa {page + 1})</b>\n"]
+    for idx, n in enumerate(items, start=page * page_size + 1):
+        dt_str = format_local_dt(n.created_at, "%d.%m %H:%M")
+        where = "📤" if n.group_message_id else "💾"
+        lines.append(
+            f"{idx}) <code>{dt_str}</code> {where} <b>{html.escape(n.supplier_name)}</b> — {format_uzs(n.amount)} so'm"
+        )
+    lines.append("\n<i>📤 = Guruhga yuborilgan | 💾 = Faqat bazada</i>")
     await cb.message.edit_text(
         "\n".join(lines),
         parse_mode="HTML",
-        reply_markup=history_detail_kb(sess_id),
+        reply_markup=history_feed_kb("all_nak", page, has_next),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("hist:all_cash:"))
+async def cb_history_all_cash(cb: CallbackQuery) -> None:
+    page = int(cb.data.split(":")[-1])
+    page_size = 15
+    async with async_session_maker() as db:
+        items = await list_recent_cash_transactions(db, limit=page_size + 1, offset=page * page_size)
+    has_next = len(items) > page_size
+    items = items[:page_size]
+    if not items and page == 0:
+        await cb.answer("Hali pul oldi-berdi yozuvlari yo'q.", show_alert=True)
+        return
+
+    labels = {
+        "main": "➕ Pul olindi",
+        "kassa_debt": "🏦 Kassadan qarz",
+        "kassa_repay": "↩️ Kassaga qaytarildi",
+    }
+    lines = [f"💵 <b>Pul Oldi-Berdi Tarixi (Sahifa {page + 1})</b>\n"]
+    for idx, tx in enumerate(items, start=page * page_size + 1):
+        dt_str = format_local_dt(tx.created_at, "%d.%m %H:%M")
+        lbl = labels.get(tx.source_type, tx.source_type)
+        note_part = f" — <i>{html.escape(tx.note[:30])}</i>" if tx.note else ""
+        lines.append(
+            f"{idx}) <code>{dt_str}</code> {lbl}: <b>{format_uzs(tx.amount)}</b>{note_part}"
+        )
+    await cb.message.edit_text(
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=history_feed_kb("all_cash", page, has_next),
     )
     await cb.answer()
 

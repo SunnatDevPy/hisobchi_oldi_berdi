@@ -321,8 +321,19 @@ def test_nakladnoy_amount_rounding_and_app_settings(tmp_path: Path):
     assert round_nakladnoy_amount(192_620, "none") == 192_620
 
     async def scenario(db_session: AsyncSession) -> None:
+        from database.crud import list_all_sessions, list_recent_cash_transactions, list_recent_nakladnoys
+
         assert await get_app_setting(db_session, "auto_confirm", "on") == "on"
         await set_app_setting(db_session, "auto_confirm", "off")
         assert await get_app_setting(db_session, "auto_confirm", "on") == "off"
+
+        sess = await get_or_create_open_session(db_session, report_date="2026-11-19")
+        await add_cash_transaction(db_session, 1_000_000, source_type="main", note="Test", session_id=sess.id)
+        p = await create_pending_nakladnoy(db_session, "Nafis", 330_000, session_id=sess.id)
+        await confirm_nakladnoy(db_session, p.id)
+
+        assert len(await list_all_sessions(db_session)) == 1
+        assert len(await list_recent_nakladnoys(db_session)) == 1
+        assert len(await list_recent_cash_transactions(db_session)) == 1
 
     asyncio.run(_run_with_db(tmp_path, scenario))
