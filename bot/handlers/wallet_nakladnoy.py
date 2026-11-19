@@ -45,9 +45,9 @@ from database.crud import (
     format_local_dt,
     get_app_setting,
     get_group_config,
+    get_kassa_debt_stats,
     get_nakladnoy,
     get_or_create_open_session,
-    get_outstanding_kassa_debt,
     round_nakladnoy_amount,
     set_nakladnoy_group_message,
     update_cash_transaction,
@@ -68,18 +68,25 @@ logger = logging.getLogger("hisobot_bot.wallet")
 
 
 def render_status_text(summary: SessionSummary) -> str:
-    """Format full live daily cash & nakladnoy status report."""
+    """Format full live daily cash, kassa movements, nakladnoy list with times, and statistics."""
     lines = [
         f"📊 <b>KUNLIK HISOB-KITOB ({summary.session.report_date})</b>",
         "===============================",
         f"⏮ Kechadan qoldiq: <b>{format_uzs(summary.opening_balance)}</b>",
         f"➕ Olingan pul: <b>{format_uzs(summary.main_cash_in)}</b>",
+        f"🏦 Kassadan olingan: <b>{format_uzs(summary.kassa_debt_today)}</b>",
+        f"↩️ Kassaga berilgan (qaytarilgan): <b>{format_uzs(summary.kassa_repay_today)}</b>",
+        f"💵 Jami kirim (Qo'ldagi jami): <b>{format_uzs(summary.total_available_inflow)}</b>",
     ]
-    if summary.kassa_debt_today > 0:
-        lines.append(f"🏦 Kassadan olingan (Qarz): <b>{format_uzs(summary.kassa_debt_today)}</b>")
-    if summary.kassa_repay_today > 0:
-        lines.append(f"↩️ Kassaga qaytarilgan: <b>-{format_uzs(summary.kassa_repay_today)}</b>")
-    lines.append(f"💵 Jami kirim (Qo'ldagi jami): <b>{format_uzs(summary.total_available_inflow)}</b>")
+    if summary.cash_transactions:
+        t_icons = {"main": "➕", "kassa_debt": "🏦", "kassa_repay": "↩️"}
+        for tx in summary.cash_transactions:
+            tm = format_local_dt(tx.created_at, "%H:%M")
+            sign = "-" if tx.source_type == "kassa_repay" else ""
+            lines.append(
+                f"  • <code>{tm}</code> {t_icons.get(tx.source_type, '💵')} {sign}{format_uzs(tx.amount)}"
+            )
+
     lines.append("===============================")
     lines.append(f"📋 <b>Berilgan pullar ({len(summary.confirmed_nakladnoys)} ta):</b>")
 
@@ -87,16 +94,44 @@ def render_status_text(summary: SessionSummary) -> str:
         lines.append("<i>Hozircha nakladnoy to'lovlari yo'q (0)</i>")
     else:
         for idx, n in enumerate(summary.confirmed_nakladnoys, start=1):
-            lines.append(f"{idx}) {html.escape(n.supplier_name)} — <b>{format_uzs(n.amount)}</b>")
+            tm = format_local_dt(n.created_at, "%H:%M")
+            where = "" if n.group_message_id else " 💾"
+            lines.append(
+                f"{idx}) {html.escape(n.supplier_name)} — <b>{format_uzs(n.amount)}</b> <i>({tm})</i>{where}"
+            )
 
     lines.append("===============================")
     lines.append(f"➖ Jami rasxod (Nakladnoy): <b>{format_uzs(summary.total_nakladnoy_spent)}</b>")
     lines.append(f"💰 <b>Qo'lda qolishi kerak: {format_uzs(summary.expected_cash)} so'm</b>")
-    if summary.total_kassa_debt_outstanding > 0:
+
+    # Daily statistics block
+    count = len(summary.confirmed_nakladnoys)
+    spend_pct = (
+        (summary.total_nakladnoy_spent / summary.total_available_inflow * 100)
+        if summary.total_available_inflow > 0
+        else 0.0
+    )
+    avg_amt = (summary.total_nakladnoy_spent / count) if count > 0 else 0.0
+    in_group_cnt = sum(1 for n in summary.confirmed_nakladnoys if n.group_message_id)
+    db_only_cnt = count - in_group_cnt
+    top_payment = max(summary.confirmed_nakladnoys, key=lambda n: n.amount, default=None)
+
+    lines.append("\n📈 <b>Statistika:</b>")
+    lines.append(f"• Sarflanish: <b>{spend_pct:.1f}%</b> ({count} ta to'lov)")
+    if count > 0:
+        lines.append(f"• O'rtacha to'lov: <b>{format_uzs(avg_amt)} so'm</b>")
+    if top_payment is not None:
         lines.append(
-            f"\n⚠️ <i>Joriy Kassadan qarzingiz:</i> <b>{format_uzs(summary.total_kassa_debt_outstanding)} so'm</b>"
+            f"• Eng katta to'lov: <b>{html.escape(top_payment.supplier_name)}</b> — {format_uzs(top_payment.amount)}"
         )
-    return "\n".join(lines)
+    if count > 0:
+        lines.append(f"• Guruhda / Shaxsiy bazada: 📤 {in_group_cnt} ta | 💾 {db_only_cnt} ta")
+    lines.append(f"• Kassa qarzi qoldig'i: <b>{format_uzs(summary.total_kassa_debt_outstanding)} so'm</b>")
+
+    result = "\n".join(lines)
+    if len(result) > 4000:
+        result = result[:3940] + "\n<i>...(to'liq ro'yxat Excel'da)</i>"
+    return result
 
 
 def render_nakladnoy_group_caption(
@@ -260,11 +295,32 @@ async def handle_kassa_debt_button(message: Message, state: FSMContext) -> None:
         return
     await state.clear()
     async with async_session_maker() as db:
-        outstanding = await get_outstanding_kassa_debt(db)
+        stats = await get_kassa_debt_stats(db, limit=10)
+        summary = await compute_session_summary(db)
+
+    lines = [
+        "🏦 <b>Kassadan Olingan va Berilgan Pul Statistikasi</b>",
+        "===============================",
+        f"📥 Bugun kassadan olingan: <b>{format_uzs(summary.kassa_debt_today)} so'm</b>",
+        f"📤 Bugun kassaga berilgan: <b>{format_uzs(summary.kassa_repay_today)} so'm</b>",
+        "-------------------------------",
+        f"📥 Jami kassadan olingan: <b>{format_uzs(stats['total_borrowed'])} so'm</b>",
+        f"📤 Jami kassaga berilgan: <b>{format_uzs(stats['total_repaid'])} so'm</b>",
+        f"⚠️ <b>Hozirgi kassa qarzi qoldig'i: {format_uzs(stats['outstanding'])} so'm</b>",
+    ]
+    recent = stats["recent_txs"]
+    if recent:
+        lines.append("\n📜 <b>Oxirgi kassa harakatlari:</b>")
+        for tx in recent:
+            dt_str = format_local_dt(tx.created_at, "%d.%m %H:%M")
+            lbl = "🏦 Olingan" if tx.source_type == "kassa_debt" else "↩️ Berilgan"
+            lines.append(f"• <code>{dt_str}</code> {lbl}: <b>{format_uzs(tx.amount)}</b>")
+
+    lines.append(
+        "\n💡 <i>Maslahat: Ovozda «Kassadan 3 million oldim» yoki «Kassaga 3 million qaytardim» deb ham yuborishingiz mumkin.</i>"
+    )
     await message.answer(
-        f"🏦 <b>Kassadan Qarz Nazorati</b>\n\n"
-        f"⚠️ Hozirgi jami kassadan qarzingiz: <b>{format_uzs(outstanding)} so'm</b>\n\n"
-        "💡 <i>Maslahat: Ovozda «Kassadan 3 million oldim» yoki «Kassaga 3 million qaytardim» deb ham yuborishingiz mumkin.</i>",
+        "\n".join(lines),
         parse_mode="HTML",
         reply_markup=kassa_debt_actions_kb(),
     )

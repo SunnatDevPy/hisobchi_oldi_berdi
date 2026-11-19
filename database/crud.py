@@ -244,6 +244,30 @@ async def get_outstanding_kassa_debt(db: AsyncSession) -> float:
     return debt - repaid
 
 
+async def get_kassa_debt_stats(db: AsyncSession, limit: int = 10) -> dict:
+    """Return total borrowed from Kassa, total repaid/given back, balance, and recent history."""
+    txs = list(
+        (
+            await db.scalars(
+                select(CashTransaction)
+                .where(
+                    CashTransaction.is_deleted.is_(False),
+                    CashTransaction.source_type.in_(["kassa_debt", "kassa_repay"]),
+                )
+                .order_by(desc(CashTransaction.id))
+            )
+        ).all()
+    )
+    total_borrowed = sum(t.amount for t in txs if t.source_type == "kassa_debt")
+    total_repaid = sum(t.amount for t in txs if t.source_type == "kassa_repay")
+    return {
+        "total_borrowed": total_borrowed,
+        "total_repaid": total_repaid,
+        "outstanding": total_borrowed - total_repaid,
+        "recent_txs": txs[:limit],
+    }
+
+
 async def compute_session_summary(
     db: AsyncSession, session_id: Optional[int] = None
 ) -> SessionSummary:

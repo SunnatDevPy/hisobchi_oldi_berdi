@@ -321,7 +321,13 @@ def test_nakladnoy_amount_rounding_and_app_settings(tmp_path: Path):
     assert round_nakladnoy_amount(192_620, "none") == 192_620
 
     async def scenario(db_session: AsyncSession) -> None:
-        from database.crud import list_all_sessions, list_recent_cash_transactions, list_recent_nakladnoys
+        from bot.handlers.wallet_nakladnoy import render_status_text
+        from database.crud import (
+            get_kassa_debt_stats,
+            list_all_sessions,
+            list_recent_cash_transactions,
+            list_recent_nakladnoys,
+        )
 
         assert await get_app_setting(db_session, "auto_confirm", "on") == "on"
         await set_app_setting(db_session, "auto_confirm", "off")
@@ -329,11 +335,26 @@ def test_nakladnoy_amount_rounding_and_app_settings(tmp_path: Path):
 
         sess = await get_or_create_open_session(db_session, report_date="2026-11-19")
         await add_cash_transaction(db_session, 1_000_000, source_type="main", note="Test", session_id=sess.id)
+        await add_cash_transaction(db_session, 500_000, source_type="kassa_debt", note="Kassa", session_id=sess.id)
+        await add_cash_transaction(db_session, 200_000, source_type="kassa_repay", note="Qaytar", session_id=sess.id)
         p = await create_pending_nakladnoy(db_session, "Nafis", 330_000, session_id=sess.id)
         await confirm_nakladnoy(db_session, p.id)
 
         assert len(await list_all_sessions(db_session)) == 1
         assert len(await list_recent_nakladnoys(db_session)) == 1
-        assert len(await list_recent_cash_transactions(db_session)) == 1
+        assert len(await list_recent_cash_transactions(db_session)) == 3
+
+        kstats = await get_kassa_debt_stats(db_session)
+        assert kstats["total_borrowed"] == 500_000
+        assert kstats["total_repaid"] == 200_000
+        assert kstats["outstanding"] == 300_000
+
+        summary = await compute_session_summary(db_session, sess.id)
+        st_text = render_status_text(summary)
+        assert "Kassadan olingan:" in st_text
+        assert "Kassaga berilgan (qaytarilgan):" in st_text
+        assert "Statistika:" in st_text
+        assert "Nafis" in st_text
+        assert "(" in st_text  # timestamp at end of payment row
 
     asyncio.run(_run_with_db(tmp_path, scenario))
