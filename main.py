@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
@@ -22,6 +24,14 @@ logging.basicConfig(
 logger = logging.getLogger("hisobot_bot")
 
 
+class IPv4AiohttpSession(AiohttpSession):
+    """Force IPv4 connections to api.telegram.org to avoid IPv6 timeout stalls on VPS."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._connector_init["family"] = socket.AF_INET
+
+
 async def run_bot() -> None:
     """Initialize database and start long polling."""
     settings = get_settings()
@@ -35,6 +45,7 @@ async def run_bot() -> None:
 
     bot = Bot(
         token=settings.BOT_TOKEN,
+        session=IPv4AiohttpSession(timeout=60),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher(storage=MemoryStorage())
@@ -42,7 +53,11 @@ async def run_bot() -> None:
 
     logger.info("Starting Hisobot Bot polling...")
     await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    await dp.start_polling(
+        bot,
+        polling_timeout=20,
+        allowed_updates=dp.resolve_used_update_types(),
+    )
 
 
 if __name__ == "__main__":
