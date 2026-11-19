@@ -1,0 +1,41 @@
+services:
+  hisobchi-postgres:
+    image: postgres:16-alpine
+    container_name: hisobchi-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hisobchi}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hisobchi_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-hisobchi_db}
+    volumes:
+      - hisobchi_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hisobchi} -d ${POSTGRES_DB:-hisobchi_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  hisobchi-bot:
+    build: .
+    container_name: hisobchi-bot
+    restart: unless-stopped
+    depends_on:
+      hisobchi-postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  hisobchi_pgdata:
