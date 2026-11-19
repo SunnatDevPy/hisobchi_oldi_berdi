@@ -169,11 +169,12 @@ def edit_items_list_kb(
     """Inline list of confirmed nakladnoy payments and cash transactions for editing."""
     buttons = []
     for n in nakladnoys:
-        sup = n.supplier_name[:22]
+        sup = n.supplier_name[:20]
+        where = "📤" if n.group_message_id else "💾"
         buttons.append(
             [
                 InlineKeyboardButton(
-                    text=f"📸 {sup} — {format_uzs(n.amount)}",
+                    text=f"{where} {sup} — {format_uzs(n.amount)}",
                     callback_data=f"nak_view:{n.id}",
                 )
             ]
@@ -195,8 +196,19 @@ def edit_items_list_kb(
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def confirmed_nakladnoy_edit_kb(payment_id: int) -> InlineKeyboardMarkup:
+def confirmed_nakladnoy_edit_kb(payment_id: int, in_group: bool = False) -> InlineKeyboardMarkup:
     """Edit options for an already confirmed nakladnoy."""
+    group_btn = (
+        InlineKeyboardButton(
+            text="🙈 Guruhdan olish (Faqat baza)",
+            callback_data=f"nak:unpost_group:{payment_id}",
+        )
+        if in_group
+        else InlineKeyboardButton(
+            text="📤 Guruhga yuborish",
+            callback_data=f"nak:repost_group:{payment_id}",
+        )
+    )
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -210,10 +222,11 @@ def confirmed_nakladnoy_edit_kb(payment_id: int) -> InlineKeyboardMarkup:
                 ),
             ],
             [
+                group_btn,
                 InlineKeyboardButton(
-                    text="🗑 O'chirish (Bekor qilish)",
+                    text="🗑 O'chirish",
                     callback_data=f"nak:delete_conf:{payment_id}",
-                )
+                ),
             ],
             [
                 InlineKeyboardButton(

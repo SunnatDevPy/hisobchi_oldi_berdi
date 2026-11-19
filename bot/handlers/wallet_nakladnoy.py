@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import io
+import logging
 from typing import Optional
 
 from aiogram import F, Router
@@ -63,6 +64,7 @@ from services.gemini_ai import (
 
 
 router = Router(name="wallet_nakladnoy")
+logger = logging.getLogger("hisobot_bot.wallet")
 
 
 def render_status_text(summary: SessionSummary) -> str:
@@ -118,10 +120,12 @@ def render_nakladnoy_group_caption(
     )
 
 
-async def _sync_nakladnoy_group_message(bot, payment: NakladnoyPayment, tag: str = "✏️ [TAHRIRLANDI]") -> None:
+async def _sync_nakladnoy_group_message(
+    bot, payment: NakladnoyPayment, tag: str = "✏️ [TAHRIRLANDI]"
+) -> tuple[bool, str]:
     """Update existing message in the Nakladnoy group if a confirmed payment was edited or deleted."""
     if not payment.group_chat_id or not payment.group_message_id:
-        return
+        return False, "<i>(Bu nakladnoy hali guruhga yuborilmagan)</i>"
     new_caption = render_nakladnoy_group_caption(payment, tag=tag)
     try:
         if payment.photo_file_id:
@@ -138,9 +142,18 @@ async def _sync_nakladnoy_group_message(bot, payment: NakladnoyPayment, tag: str
                 text=new_caption,
                 parse_mode="HTML",
             )
-    except Exception:
-        # Ignore Telegram errors (e.g. message deleted manually or caption unchanged)
-        pass
+        return True, "📤 <b>Guruhdagi xabar ham avtomatik yangilandi!</b>"
+    except Exception as exc:
+        if "message is not modified" in str(exc).lower():
+            return True, "📤 Guruhdagi xabar dolzarb holatda."
+        logger.warning(
+            "Failed to edit group message payment_id=%s chat_id=%s msg_id=%s: %s",
+            payment.id,
+            payment.group_chat_id,
+            payment.group_message_id,
+            exc,
+        )
+        return False, f"⚠️ Guruhdagi xabarni tahrirlab bo'lmadi: {html.escape(str(exc))}"
 
 
 async def _send_pending_nakladnoy_card(
@@ -763,12 +776,15 @@ async def cb_nakladnoy_edit_view(cb: CallbackQuery) -> None:
     if not payment or payment.status == "deleted":
         await cb.answer("Topilmadi", show_alert=True)
         return
+    in_group = bool(payment.group_chat_id and payment.group_message_id)
+    group_state = "📤 Guruhga yuborilgan (tahrirlasangiz u yerda ham yangilanadi)" if in_group else "💾 Faqat bazada (guruhga yuborilmagan)"
     await cb.message.edit_text(
         f"📸 <b>Tasdiqlangan Nakladnoy #{payment.id}</b>\n"
         f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
-        f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>",
+        f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>\n"
+        f"📍 Holat: <i>{group_state}</i>",
         parse_mode="HTML",
-        reply_markup=confirmed_nakladnoy_edit_kb(payment.id),
+        reply_markup=confirmed_nakladnoy_edit_kb(payment.id, in_group=in_group),
     )
     await cb.answer()
 
@@ -814,13 +830,18 @@ async def process_edit_nakladnoy_amount(message: Message, state: FSMContext) -> 
 
     await state.clear()
     if payment.status == "confirmed":
-        await _sync_nakladnoy_group_message(message.bot, payment, tag="✏️ [SUMMA TAHRIRLANDI]")
+        in_group = bool(payment.group_chat_id and payment.group_message_id)
+        _, sync_msg = await _sync_nakladnoy_group_message(
+            message.bot, payment, tag="✏️ [SUMMA TAHRIRLANDI]"
+        )
         await message.answer(
             f"✅ Summa yangilandi: <b>{html.escape(payment.supplier_name)} — {format_uzs(payment.amount)} so'm</b>\n"
+            f"{sync_msg}\n"
             f"💰 Qo'lda qolishi kerak: <b>{format_uzs(summary.expected_cash)} so'm</b>",
             parse_mode="HTML",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=confirmed_nakladnoy_edit_kb(payment.id, in_group=in_group),
         )
+        await message.answer("👇 Yana amal tanlashingiz mumkin:", reply_markup=main_menu_keyboard())
     else:
         await _send_pending_nakladnoy_card(message, payment)
         await message.answer("👇 Tasdiqlang:", reply_markup=main_menu_keyboard())
@@ -866,12 +887,17 @@ async def process_edit_nakladnoy_supplier(message: Message, state: FSMContext) -
         return
 
     if payment.status == "confirmed":
-        await _sync_nakladnoy_group_message(message.bot, payment, tag="✏️ [NOM TAHRIRLANDI]")
-        await message.answer(
-            f"✅ Postavshik yangilandi: <b>{html.escape(payment.supplier_name)} — {format_uzs(payment.amount)} so'm</b>",
-            parse_mode="HTML",
-            reply_markup=main_menu_keyboard(),
+        in_group = bool(payment.group_chat_id and payment.group_message_id)
+        _, sync_msg = await _sync_nakladnoy_group_message(
+            message.bot, payment, tag="✏️ [NOM TAHRIRLANDI]"
         )
+        await message.answer(
+            f"✅ Postavshik yangilandi: <b>{html.escape(payment.supplier_name)} — {format_uzs(payment.amount)} so'm</b>\n"
+            f"{sync_msg}",
+            parse_mode="HTML",
+            reply_markup=confirmed_nakladnoy_edit_kb(payment.id, in_group=in_group),
+        )
+        await message.answer("👇 Yana amal tanlashingiz mumkin:", reply_markup=main_menu_keyboard())
     else:
         await _send_pending_nakladnoy_card(message, payment)
         await message.answer("👇 Tasdiqlang:", reply_markup=main_menu_keyboard())
@@ -887,9 +913,10 @@ async def cb_nakladnoy_delete_confirmed(cb: CallbackQuery) -> None:
             return
         summary = await compute_session_summary(db, payment.session_id)
 
-    await _sync_nakladnoy_group_message(cb.bot, payment)
+    _, sync_msg = await _sync_nakladnoy_group_message(cb.bot, payment)
     await cb.message.edit_text(
         f"🗑 Nakladnoy #{payment.id} ({html.escape(payment.supplier_name)} — {format_uzs(payment.amount)}) o'chirildi!\n"
+        f"{sync_msg}\n"
         f"💰 Yangilangan qoldiq: <b>{format_uzs(summary.expected_cash)} so'm</b>",
         parse_mode="HTML",
     )
