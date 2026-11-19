@@ -14,6 +14,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery, ChatMemberUpdated, M
 
 from bot.keyboards import (
     BTN_SETTINGS,
+    ai_prefs_kb,
     cancel_reply_keyboard,
     groups_config_kb,
     history_detail_kb,
@@ -33,11 +34,13 @@ from database.crud import (
     compute_session_summary,
     delete_supplier,
     get_all_group_configs,
+    get_app_setting,
     get_prixod_report,
     list_closed_sessions,
     list_prixod_reports,
     list_suppliers,
     reopen_cash_session,
+    set_app_setting,
     set_group_config,
 )
 from database.models import DailyCashSession
@@ -338,6 +341,56 @@ async def cb_settings_back(cb: CallbackQuery, state: FSMContext) -> None:
         reply_markup=settings_menu_kb(),
     )
     await cb.answer()
+
+
+async def _render_ai_prefs() -> tuple[str, bool, str]:
+    async with async_session_maker() as db:
+        auto_str = await get_app_setting(db, "auto_confirm", "on")
+        round_mode = await get_app_setting(db, "round_mode", "floor_1000")
+    auto_on = auto_str == "on"
+    round_desc = {
+        "floor_1000": "1 000 ga pastga (192 620 → 192 000)",
+        "nearest_1000": "Eng yaqin 1 000 ga (192 620 → 193 000)",
+        "none": "Yaxlitlamaslik (aniq summa)",
+    }.get(round_mode, round_mode)
+    text = (
+        "⚡ <b>Tez rejim va Summani yaxlitlash</b>\n\n"
+        f"• <b>Avto-tasdiqlash:</b> {'✅ YOQILGAN (aniq o‘qilsa darhol guruhga yuboradi)' if auto_on else '❌ O‘CHIQ (har gal tasdiqlash so‘raydi)'}\n"
+        f"• <b>Yaxlitlash (Okruglit):</b> <b>{round_desc}</b>\n\n"
+        "<i>Eslatma: Tez rejim yoqilgan bo'lsa ham, xabar tagida 1 bosishda summani/nomni tuzatish yoki guruhdan olib tashlash tugmasi turadi.</i>"
+    )
+    return text, auto_on, round_mode
+
+
+@router.callback_query(F.data == "set:ai_prefs")
+async def cb_ai_prefs_menu(cb: CallbackQuery) -> None:
+    text, auto_on, round_mode = await _render_ai_prefs()
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=ai_prefs_kb(auto_on, round_mode))
+    await cb.answer()
+
+
+@router.callback_query(F.data == "pref:toggle_auto")
+async def cb_toggle_auto_confirm(cb: CallbackQuery) -> None:
+    async with async_session_maker() as db:
+        cur = await get_app_setting(db, "auto_confirm", "on")
+        new_val = "off" if cur == "on" else "on"
+        await set_app_setting(db, "auto_confirm", new_val)
+    text, auto_on, round_mode = await _render_ai_prefs()
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=ai_prefs_kb(auto_on, round_mode))
+    await cb.answer("✅ Saqlandi")
+
+
+@router.callback_query(F.data.startswith("pref:round:"))
+async def cb_set_round_mode(cb: CallbackQuery) -> None:
+    mode = cb.data.split(":")[-1]
+    if mode not in ("floor_1000", "nearest_1000", "none"):
+        await cb.answer("Noto'g'ri rejim")
+        return
+    async with async_session_maker() as db:
+        await set_app_setting(db, "round_mode", mode)
+    text, auto_on, round_mode = await _render_ai_prefs()
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=ai_prefs_kb(auto_on, round_mode))
+    await cb.answer("✅ Yaxlitlash saqlandi")
 
 
 async def _render_groups_status() -> str:

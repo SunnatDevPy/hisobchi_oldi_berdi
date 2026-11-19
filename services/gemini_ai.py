@@ -134,6 +134,20 @@ def _extract_json_object(raw_text: str) -> Dict[str, Any]:
     return {}
 
 
+_HTTP_CLIENT: Optional[httpx.AsyncClient] = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    """Reuse a persistent keep-alive AsyncClient to avoid repeated TLS handshakes."""
+    global _HTTP_CLIENT
+    if _HTTP_CLIENT is None or _HTTP_CLIENT.is_closed:
+        _HTTP_CLIENT = httpx.AsyncClient(
+            timeout=12.0,
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+    return _HTTP_CLIENT
+
+
 async def _call_gemini(parts: list[dict[str, Any]]) -> Dict[str, Any]:
     """Send multimodal content to Gemini generateContent endpoint with model fallback on 404/503."""
     settings = get_settings()
@@ -160,32 +174,32 @@ async def _call_gemini(parts: list[dict[str, Any]]) -> Dict[str, Any]:
 
     last_exc: Optional[Exception] = None
     body: Dict[str, Any] = {}
-    async with httpx.AsyncClient(timeout=12.0) as client:
-        for model_name in candidates_order:
-            url = (
-                f"https://generativelanguage.googleapis.com/v1beta/models/"
-                f"{model_name}:generateContent"
+    client = _get_http_client()
+    for model_name in candidates_order:
+        url = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{model_name}:generateContent"
+        )
+        try:
+            resp = await client.post(
+                url,
+                params={"key": settings.GEMINI_API_KEY},
+                json=payload,
             )
-            try:
-                resp = await client.post(
-                    url,
-                    params={"key": settings.GEMINI_API_KEY},
-                    json=payload,
+            if resp.status_code in (404, 429, 503):
+                last_exc = httpx.HTTPStatusError(
+                    f"Model {model_name} returned {resp.status_code}",
+                    request=resp.request,
+                    response=resp,
                 )
-                if resp.status_code in (404, 429, 503):
-                    last_exc = httpx.HTTPStatusError(
-                        f"Model {model_name} returned {resp.status_code}",
-                        request=resp.request,
-                        response=resp,
-                    )
-                    continue
-                resp.raise_for_status()
-                body = resp.json()
-                last_exc = None
-                break
-            except httpx.HTTPError as exc:
-                last_exc = exc
                 continue
+            resp.raise_for_status()
+            body = resp.json()
+            last_exc = None
+            break
+        except httpx.HTTPError as exc:
+            last_exc = exc
+            continue
 
     if last_exc is not None:
         raise last_exc

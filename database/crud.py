@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from config import get_settings
 from database.models import (
+    AppSetting,
     CashTransaction,
     DailyCashSession,
     GroupConfig,
@@ -444,9 +445,9 @@ async def confirm_nakladnoy(
 
 
 async def set_nakladnoy_group_message(
-    db: AsyncSession, payment_id: int, group_chat_id: int, group_message_id: int
+    db: AsyncSession, payment_id: int, group_chat_id: Optional[int], group_message_id: Optional[int]
 ) -> Optional[NakladnoyPayment]:
-    """Store Telegram group chat_id and message_id after posting nakladnoy."""
+    """Store or clear Telegram group chat_id and message_id after posting nakladnoy."""
     payment = await db.get(NakladnoyPayment, payment_id)
     if payment is None:
         return None
@@ -624,3 +625,46 @@ async def mark_prixod_published(
         report.group_message_id = group_message_id
     await db.commit()
     return await get_prixod_report(db, report_id)
+
+
+# ---------------------------------------------------------------------------
+# App Preferences & Amount Rounding
+# ---------------------------------------------------------------------------
+
+
+async def get_app_setting(db: AsyncSession, key: str, default: str = "") -> str:
+    """Read a bot preference value from app_settings."""
+    obj = await db.get(AppSetting, key)
+    return obj.value if obj is not None else default
+
+
+async def set_app_setting(db: AsyncSession, key: str, value: str) -> AppSetting:
+    """Persist a bot preference value in app_settings."""
+    obj = await db.get(AppSetting, key)
+    if obj is None:
+        obj = AppSetting(key=key, value=value)
+        db.add(obj)
+    else:
+        obj.value = value
+    await db.commit()
+    await db.refresh(obj)
+    return obj
+
+
+def round_nakladnoy_amount(amount: float, mode: str = "floor_1000") -> float:
+    """
+    Round AI-extracted nakladnoy amount according to user preference.
+
+    Modes:
+    - "floor_1000": 192 620 -> 192 000 (default, drops odd hundreds/so'm)
+    - "nearest_1000": 192 620 -> 193 000
+    - "none": 192 620 -> 192 620
+    """
+    val = float(amount)
+    if val <= 0:
+        return 0.0
+    if mode == "floor_1000" and val >= 1000:
+        return float((int(val) // 1000) * 1000)
+    if mode == "nearest_1000" and val >= 1000:
+        return float(round(val / 1000.0) * 1000)
+    return float(round(val))

@@ -163,3 +163,12 @@ class PrixodRow(Base):
     created_at_str: Mapped[str] = mapped_column(String(64), nullable=False, default="")
 
     report: Mapped["PrixodReport"] = relationship(back_populates="rows")
+
+
+class AppSetting(Base):
+    """Key-value bot behavior settings (auto_confirm, round_mode, etc.)."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(255), nullable=False, default="")

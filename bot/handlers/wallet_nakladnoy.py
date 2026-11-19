@@ -18,6 +18,7 @@ from bot.keyboards import (
     BTN_EDIT_CONFIRMED,
     BTN_KASSA_DEBT,
     BTN_STATUS,
+    auto_confirmed_nakladnoy_kb,
     build_add_to_group_url,
     cancel_reply_keyboard,
     cash_tx_edit_kb,
@@ -41,10 +42,12 @@ from database.crud import (
     delete_nakladnoy,
     find_duplicate_confirmed_nakladnoy,
     format_local_dt,
+    get_app_setting,
     get_group_config,
     get_nakladnoy,
     get_or_create_open_session,
     get_outstanding_kassa_debt,
+    round_nakladnoy_amount,
     set_nakladnoy_group_message,
     update_cash_transaction,
     update_nakladnoy,
@@ -361,8 +364,99 @@ async def handle_add_nakladnoy_btn(message: Message, state: FSMContext) -> None:
     )
 
 
+async def _post_payment_to_group(bot, payment: NakladnoyPayment, nak_group) -> tuple[bool, str]:
+    """Send a confirmed nakladnoy payment to the bound Nakladnoy group and save message ID."""
+    caption = render_nakladnoy_group_caption(payment)
+    try:
+        if payment.photo_file_id:
+            sent = await bot.send_photo(
+                chat_id=nak_group.chat_id,
+                photo=payment.photo_file_id,
+                caption=caption,
+                parse_mode="HTML",
+            )
+        else:
+            sent = await bot.send_message(
+                chat_id=nak_group.chat_id,
+                text=caption,
+                parse_mode="HTML",
+            )
+        async with async_session_maker() as db:
+            await set_nakladnoy_group_message(db, payment.id, nak_group.chat_id, sent.message_id)
+        return True, f"📤 <b>{html.escape(nak_group.title)}</b> guruhiga yuborildi!"
+    except Exception as exc:
+        return False, f"⚠️ Guruhga yuborib bo'lmadi: {html.escape(str(exc))}"
+
+
+async def _process_ready_nakladnoy(
+    message: Message,
+    state: FSMContext,
+    supplier_name: str,
+    raw_amount: float,
+    photo_file_id: Optional[str],
+    notes: str,
+    is_confident: bool,
+    prefix_html: str = "",
+) -> None:
+    """Apply rounding, check duplicates, and either auto-confirm+post or show manual confirmation card."""
+    async with async_session_maker() as db:
+        auto_confirm = (await get_app_setting(db, "auto_confirm", "on")) == "on"
+        round_mode = await get_app_setting(db, "round_mode", "floor_1000")
+        rounded_amt = round_nakladnoy_amount(raw_amount, round_mode)
+        round_info = ""
+        if round(rounded_amt) != round(raw_amount):
+            round_info = f"Asli: {format_uzs(raw_amount)} → {format_uzs(rounded_amt)}"
+            notes = f"{notes} | {round_info}".strip(" |") if notes else round_info
+
+        sess = await get_or_create_open_session(db)
+        payment = await create_pending_nakladnoy(
+            db,
+            supplier_name=supplier_name,
+            amount=rounded_amt,
+            photo_file_id=photo_file_id,
+            note=notes,
+            session_id=sess.id,
+        )
+        dup = await find_duplicate_confirmed_nakladnoy(
+            db, sess.id, supplier_name, rounded_amt, exclude_id=payment.id
+        )
+        nak_group = await get_group_config(db, "nakladnoy")
+
+        if auto_confirm and is_confident and dup is None:
+            payment = await confirm_nakladnoy(db, payment.id)
+
+    await state.clear()
+
+    if auto_confirm and is_confident and dup is None and payment is not None:
+        posted = False
+        if nak_group:
+            posted, group_notice = await _post_payment_to_group(message.bot, payment, nak_group)
+        else:
+            group_notice = "<i>(Nakladnoy guruhi ulanmagan — faqat bazaga saqlandi)</i>"
+
+        async with async_session_maker() as db:
+            summary = await compute_session_summary(db, payment.session_id)
+
+        round_line = f"🔄 Yaxlitlandi: <i>{round_info}</i>\n" if round_info else ""
+        await message.answer(
+            f"{prefix_html}"
+            f"⚡ <b>Avto-tasdiqlandi! (#{payment.id})</b>\n"
+            f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
+            f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>\n"
+            f"{round_line}"
+            f"{group_notice}\n\n"
+            f"💵 Qo'lda qolishi kerak: <b>{format_uzs(summary.expected_cash)} so'm</b>",
+            parse_mode="HTML",
+            reply_markup=auto_confirmed_nakladnoy_kb(payment.id, sent_to_group=posted),
+        )
+        return
+
+    await _send_pending_nakladnoy_card(message, payment, duplicate_warning=dup)
+    await message.answer("👇 Tasdiqlang yoki tahrirlang:", reply_markup=main_menu_keyboard())
+
+
 async def _process_nakladnoy_photo(message: Message, state: FSMContext) -> None:
-    """Shared handler for nakladnoy photo processing via Gemini 2.5 Flash."""
+    """Shared handler for nakladnoy photo processing via Gemini Flash."""
     wait_msg = await message.answer("🔍 Nakladnoy rasmi o'qilmoqda...")
     photo = message.photo[-1]
     buf = io.BytesIO()
@@ -376,6 +470,24 @@ async def _process_nakladnoy_photo(message: Message, state: FSMContext) -> None:
     supplier_name = extracted.get("supplier_name") or ""
     amount = extracted.get("amount") or 0.0
     notes = extracted.get("notes") or ""
+    is_clear = bool(extracted.get("is_clear"))
+
+    try:
+        await wait_msg.delete()
+    except Exception:
+        pass
+
+    if supplier_name and amount > 0:
+        await _process_ready_nakladnoy(
+            message=message,
+            state=state,
+            supplier_name=supplier_name,
+            raw_amount=float(amount),
+            photo_file_id=photo.file_id,
+            notes=notes,
+            is_confident=is_clear,
+        )
+        return
 
     async with async_session_maker() as db:
         sess = await get_or_create_open_session(db)
@@ -387,37 +499,22 @@ async def _process_nakladnoy_photo(message: Message, state: FSMContext) -> None:
             note=notes,
             session_id=sess.id,
         )
-        dup = None
-        if supplier_name and amount > 0:
-            dup = await find_duplicate_confirmed_nakladnoy(
-                db, sess.id, supplier_name, float(amount), exclude_id=payment.id
-            )
 
-    try:
-        await wait_msg.delete()
-    except Exception:
-        pass
-
-    if supplier_name and amount > 0:
-        await state.clear()
-        await _send_pending_nakladnoy_card(message, payment, duplicate_warning=dup)
-        await message.answer("👇 Tasdiqlang yoki tahrirlang:", reply_markup=main_menu_keyboard())
-    else:
-        await state.set_state(WalletStates.waiting_nakladnoy_clarify)
-        await state.update_data(payment_id=payment.id)
-        missing_parts = []
-        if not supplier_name:
-            missing_parts.append("postavshik nomi")
-        if not amount or amount <= 0:
-            missing_parts.append("summa")
-        await message.answer(
-            f"🤔 Rasmda <b>{', '.join(missing_parts)}</b> aniq o'qilmadi.\n"
-            f"Hozir topilgani: Postavshik=<code>{html.escape(supplier_name or '?')}</code>, "
-            f"Summa=<code>{format_uzs(amount) if amount else '?'}</code>\n\n"
-            "🎤 Iltimos, ovozli xabar yoki matn yuboring (masalan: <i>«Non Oka 1 657 000»</i>):",
-            parse_mode="HTML",
-            reply_markup=cancel_reply_keyboard(),
-        )
+    await state.set_state(WalletStates.waiting_nakladnoy_clarify)
+    await state.update_data(payment_id=payment.id)
+    missing_parts = []
+    if not supplier_name:
+        missing_parts.append("postavshik nomi")
+    if not amount or amount <= 0:
+        missing_parts.append("summa")
+    await message.answer(
+        f"🤔 Rasmda <b>{', '.join(missing_parts)}</b> aniq o'qilmadi.\n"
+        f"Hozir topilgani: Postavshik=<code>{html.escape(supplier_name or '?')}</code>, "
+        f"Summa=<code>{format_uzs(amount) if amount else '?'}</code>\n\n"
+        "🎤 Iltimos, ovozli xabar yoki matn yuboring (masalan: <i>«Non Oka 1 657 000»</i>):",
+        parse_mode="HTML",
+        reply_markup=cancel_reply_keyboard(),
+    )
 
 
 @router.message(WalletStates.waiting_nakladnoy_clarify, F.chat.type == "private")
@@ -499,26 +596,7 @@ async def _finalize_nakladnoy_confirmation(
         group_notice = "<i>(Guruhga yuborilmadi — faqat hisobingizga olindi)</i>"
     elif nak_group and payment:
         header = f"✅ <b>Tasdiqlandi! (#{payment.id})</b>"
-        caption = render_nakladnoy_group_caption(payment)
-        try:
-            if payment.photo_file_id:
-                sent = await cb.bot.send_photo(
-                    chat_id=nak_group.chat_id,
-                    photo=payment.photo_file_id,
-                    caption=caption,
-                    parse_mode="HTML",
-                )
-            else:
-                sent = await cb.bot.send_message(
-                    chat_id=nak_group.chat_id,
-                    text=caption,
-                    parse_mode="HTML",
-                )
-            async with async_session_maker() as db:
-                await set_nakladnoy_group_message(db, payment.id, nak_group.chat_id, sent.message_id)
-            group_notice = f"📤 <b>{html.escape(nak_group.title)}</b> guruhiga yuborildi!"
-        except Exception as exc:
-            group_notice = f"⚠️ Guruhga yuborib bo'lmadi: {html.escape(str(exc))}"
+        _, group_notice = await _post_payment_to_group(cb.bot, payment, nak_group)
     else:
         header = f"✅ <b>Tasdiqlandi! (#{payment.id})</b>"
         group_notice = "<i>(Nakladnoy guruhi ulanmagan — faqat hisobga olindi)</i>"
@@ -558,6 +636,66 @@ async def cb_nakladnoy_confirm(cb: CallbackQuery) -> None:
 async def cb_nakladnoy_save_only(cb: CallbackQuery) -> None:
     payment_id = int(cb.data.split(":")[-1])
     await _finalize_nakladnoy_confirmation(cb, payment_id, send_to_group=False)
+
+
+@router.callback_query(F.data.startswith("nak:unpost_group:"))
+async def cb_nakladnoy_unpost_group(cb: CallbackQuery) -> None:
+    """Remove auto-sent message from Nakladnoy group while keeping payment saved in DB."""
+    payment_id = int(cb.data.split(":")[-1])
+    async with async_session_maker() as db:
+        payment = await get_nakladnoy(db, payment_id)
+        if not payment or payment.status == "deleted":
+            await cb.answer("Topilmadi", show_alert=True)
+            return
+        old_chat = payment.group_chat_id
+        old_msg = payment.group_message_id
+        await set_nakladnoy_group_message(db, payment.id, None, None)
+        summary = await compute_session_summary(db, payment.session_id)
+
+    if old_chat and old_msg:
+        try:
+            await cb.bot.delete_message(chat_id=old_chat, message_id=old_msg)
+        except Exception:
+            pass
+
+    await cb.message.edit_text(
+        f"🙈 <b>Guruhdan olindi, bazada saqlandi! (#{payment.id})</b>\n"
+        f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
+        f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>\n"
+        f"<i>(Faqat shaxsiy hisobingizda qoldirildi)</i>\n\n"
+        f"💵 Qo'lda qolishi kerak: <b>{format_uzs(summary.expected_cash)} so'm</b>",
+        parse_mode="HTML",
+        reply_markup=auto_confirmed_nakladnoy_kb(payment.id, sent_to_group=False),
+    )
+    await cb.answer("🙈 Guruhdan olib tashlandi!")
+
+
+@router.callback_query(F.data.startswith("nak:repost_group:"))
+async def cb_nakladnoy_repost_group(cb: CallbackQuery) -> None:
+    """Post a saved-only confirmed payment to the Nakladnoy group."""
+    payment_id = int(cb.data.split(":")[-1])
+    async with async_session_maker() as db:
+        payment = await get_nakladnoy(db, payment_id)
+        nak_group = await get_group_config(db, "nakladnoy")
+        if not payment or payment.status != "confirmed":
+            await cb.answer("Topilmadi", show_alert=True)
+            return
+        if not nak_group:
+            await cb.answer("Nakladnoy guruhi ulanmagan!", show_alert=True)
+            return
+        summary = await compute_session_summary(db, payment.session_id)
+
+    posted, notice = await _post_payment_to_group(cb.bot, payment, nak_group)
+    await cb.message.edit_text(
+        f"✅ <b>Bazada saqlangan (#{payment.id})</b>\n"
+        f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
+        f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>\n"
+        f"{notice}\n\n"
+        f"💵 Qo'lda qolishi kerak: <b>{format_uzs(summary.expected_cash)} so'm</b>",
+        parse_mode="HTML",
+        reply_markup=auto_confirmed_nakladnoy_kb(payment.id, sent_to_group=posted),
+    )
+    await cb.answer("📤 Yuborildi!")
 
 
 @router.callback_query(F.data.startswith("nak:cancel:"))
@@ -1033,17 +1171,16 @@ async def _handle_parsed_command(
         return True
 
     if intent == "pay_supplier" and amount and amount > 0 and supplier:
-        await state.clear()
-        async with async_session_maker() as db:
-            sess = await get_or_create_open_session(db)
-            payment = await create_pending_nakladnoy(
-                db, supplier_name=supplier, amount=amount, note=raw_note, session_id=sess.id
-            )
-            dup = await find_duplicate_confirmed_nakladnoy(
-                db, sess.id, supplier, amount, exclude_id=payment.id
-            )
-        await _send_pending_nakladnoy_card(message, payment, duplicate_warning=dup)
-        await message.answer("👇 Tasdiqlang:", reply_markup=main_menu_keyboard())
+        await _process_ready_nakladnoy(
+            message=message,
+            state=state,
+            supplier_name=supplier,
+            raw_amount=float(amount),
+            photo_file_id=None,
+            notes=raw_note,
+            is_confident=True,
+            prefix_html=voice_header,
+        )
         return True
 
     return False

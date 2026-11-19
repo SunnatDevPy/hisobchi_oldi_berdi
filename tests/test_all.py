@@ -299,9 +299,30 @@ def test_utc_to_tashkent_local_formatting():
 
 
 def test_nakladnoy_confirm_keyboard_has_skip_group_button():
-    from bot.keyboards import nakladnoy_confirm_kb
+    from bot.keyboards import auto_confirmed_nakladnoy_kb, nakladnoy_confirm_kb
 
     kb = nakladnoy_confirm_kb(42)
     callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
     assert "nak:confirm:42" in callbacks
     assert "nak:save_only:42" in callbacks
+
+    akb = auto_confirmed_nakladnoy_kb(42, sent_to_group=True)
+    acbs = [btn.callback_data for row in akb.inline_keyboard for btn in row]
+    assert "nak:unpost_group:42" in acbs
+    assert "nak:delete_conf:42" in acbs
+
+
+def test_nakladnoy_amount_rounding_and_app_settings(tmp_path: Path):
+    from database.crud import get_app_setting, round_nakladnoy_amount, set_app_setting
+
+    assert round_nakladnoy_amount(192_620, "floor_1000") == 192_000
+    assert round_nakladnoy_amount(192_000, "floor_1000") == 192_000
+    assert round_nakladnoy_amount(192_620, "nearest_1000") == 193_000
+    assert round_nakladnoy_amount(192_620, "none") == 192_620
+
+    async def scenario(db_session: AsyncSession) -> None:
+        assert await get_app_setting(db_session, "auto_confirm", "on") == "on"
+        await set_app_setting(db_session, "auto_confirm", "off")
+        assert await get_app_setting(db_session, "auto_confirm", "on") == "off"
+
+    asyncio.run(_run_with_db(tmp_path, scenario))

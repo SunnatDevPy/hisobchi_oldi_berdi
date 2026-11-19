@@ -1,6 +1,7 @@
 """Database package for Hisobot Bot."""
 
 from database.models import (
+    AppSetting,
     Base,
     CashTransaction,
     DailyCashSession,
@@ -13,6 +14,7 @@ from database.models import (
 from database.session import async_session_maker, create_engine_and_session, engine, init_db
 
 __all__ = [
+    "AppSetting",
     "Base",
     "CashTransaction",
     "DailyCashSession",

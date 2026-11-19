@@ -89,6 +89,37 @@ def nakladnoy_confirm_kb(payment_id: int) -> InlineKeyboardMarkup:
     )
 
 
+def auto_confirmed_nakladnoy_kb(
+    payment_id: int, sent_to_group: bool = True
+) -> InlineKeyboardMarkup:
+    """Quick edit/undo controls shown after instant auto-confirmation."""
+    second_row = [
+        InlineKeyboardButton(
+            text="🙈 Guruhdan olish (Faqat baza)" if sent_to_group else "📤 Guruhga yuborish",
+            callback_data=f"nak:unpost_group:{payment_id}" if sent_to_group else f"nak:repost_group:{payment_id}",
+        ),
+        InlineKeyboardButton(
+            text="🗑 O'chirish",
+            callback_data=f"nak:delete_conf:{payment_id}",
+        ),
+    ]
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💰 Summa",
+                    callback_data=f"nak:edit_amt:{payment_id}",
+                ),
+                InlineKeyboardButton(
+                    text="🏢 Postavshik",
+                    callback_data=f"nak:edit_sup:{payment_id}",
+                ),
+            ],
+            second_row,
+        ]
+    )
+
+
 def status_actions_kb(session_id: int) -> InlineKeyboardMarkup:
     """Inline buttons under Status message."""
     return InlineKeyboardMarkup(
@@ -263,10 +294,31 @@ def settings_menu_kb() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text="⚡ Tez rejim & Yaxlitlash",
+                    callback_data="set:ai_prefs",
+                ),
+                InlineKeyboardButton(
                     text="📥 Tarixni Excel yuklash",
                     callback_data="export:history",
-                )
+                ),
             ],
+        ]
+    )
+
+
+def ai_prefs_kb(auto_confirm: bool, round_mode: str) -> InlineKeyboardMarkup:
+    """Toggle auto-confirm speed mode and nakladnoy amount rounding mode."""
+    auto_lbl = "⚡ Tez rejim (Avto-guruhga): ✅ YOQILGAN" if auto_confirm else "⚡ Tez rejim (Avto-guruhga): ❌ O'CHIQ"
+    r_floor = "✅ 1 000 ga pastga (192 620 → 192 000)" if round_mode == "floor_1000" else "1 000 ga pastga (192 620 → 192 000)"
+    r_near = "✅ Yaqin 1 000 ga (192 620 → 193 000)" if round_mode == "nearest_1000" else "Yaqin 1 000 ga (192 620 → 193 000)"
+    r_none = "✅ Yaxlitlamaslik (192 620 → 192 620)" if round_mode == "none" else "Yaxlitlamaslik (192 620 → 192 620)"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=auto_lbl, callback_data="pref:toggle_auto")],
+            [InlineKeyboardButton(text=r_floor, callback_data="pref:round:floor_1000")],
+            [InlineKeyboardButton(text=r_near, callback_data="pref:round:nearest_1000")],
+            [InlineKeyboardButton(text=r_none, callback_data="pref:round:none")],
+            [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="set:back")],
         ]
     )
 
