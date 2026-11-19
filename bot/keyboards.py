@@ -116,6 +116,12 @@ def auto_confirmed_nakladnoy_kb(
                 ),
             ],
             second_row,
+            [
+                InlineKeyboardButton(
+                    text="✅ Tayyor",
+                    callback_data=f"nak:done:{payment_id}",
+                )
+            ],
         ]
     )
 

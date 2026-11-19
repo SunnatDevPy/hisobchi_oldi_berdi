@@ -672,15 +672,41 @@ async def cb_nakladnoy_unpost_group(cb: CallbackQuery) -> None:
             pass
 
     await cb.message.edit_text(
-        f"🙈 <b>Guruhdan olindi, bazada saqlandi! (#{payment.id})</b>\n"
+        f"✅ <b>Faqat shaxsiy hisobingizda saqlandi! (#{payment.id})</b>\n"
         f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
         f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>\n"
-        f"<i>(Faqat shaxsiy hisobingizda qoldirildi)</i>\n\n"
+        f"🙈 <i>(Guruhdan olib tashlandi)</i>\n\n"
+        f"📊 <b>Sizda natija shu:</b>\n"
         f"💵 Qo'lda qolishi kerak: <b>{format_uzs(summary.expected_cash)} so'm</b>",
         parse_mode="HTML",
-        reply_markup=auto_confirmed_nakladnoy_kb(payment.id, sent_to_group=False),
+        reply_markup=None,
     )
-    await cb.answer("🙈 Guruhdan olib tashlandi!")
+    await cb.answer("✅ Shaxsiy hisobga saqlandi!")
+
+
+@router.callback_query(F.data.startswith("nak:done:"))
+async def cb_nakladnoy_done(cb: CallbackQuery) -> None:
+    """Collapse quick-edit buttons and leave clean final result summary."""
+    payment_id = int(cb.data.split(":")[-1])
+    async with async_session_maker() as db:
+        payment = await get_nakladnoy(db, payment_id)
+        if not payment or payment.status == "deleted":
+            await cb.answer("Topilmadi", show_alert=True)
+            return
+        summary = await compute_session_summary(db, payment.session_id)
+
+    where = "📤 Guruhga yuborilgan" if payment.group_message_id else "💾 Faqat shaxsiy hisobda"
+    await cb.message.edit_text(
+        f"✅ <b>Saqlandi! (#{payment.id})</b>\n"
+        f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
+        f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>\n"
+        f"<i>({where})</i>\n\n"
+        f"📊 <b>Sizda natija shu:</b>\n"
+        f"💵 Qo'lda qolishi kerak: <b>{format_uzs(summary.expected_cash)} so'm</b>",
+        parse_mode="HTML",
+        reply_markup=None,
+    )
+    await cb.answer("✅ Tayyor!")
 
 
 @router.callback_query(F.data.startswith("nak:repost_group:"))
