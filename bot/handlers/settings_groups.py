@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import html
+import time
 
 from aiogram import F, Router
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, ChatMemberUpdated, Message
 
 from bot.keyboards import (
     BTN_SETTINGS,
@@ -17,6 +19,7 @@ from bot.keyboards import (
     history_sessions_kb,
     main_menu_keyboard,
     prixod_history_kb,
+    quick_bind_group_kb,
     settings_menu_kb,
     supplier_detail_kb,
     suppliers_list_kb,
@@ -53,6 +56,24 @@ ROLE_TITLES = {
     "prixod": "👑 Prixod (ITOG) guruhi",
     "kassa": "💰 Kassa / Rahbariyat guruhi",
 }
+
+DEEP_LINK_ROLE_MAP = {
+    "bind_nakladnoy": "nakladnoy",
+    "bind_prixod": "prixod",
+    "bind_kassa": "kassa",
+}
+
+_BOT_USERNAME: str | None = None
+_recently_bound_chats: dict[int, float] = {}
+
+
+async def get_bot_username(bot) -> str:
+    """Fetch and cache the bot username."""
+    global _BOT_USERNAME
+    if not _BOT_USERNAME:
+        me = await bot.get_me()
+        _BOT_USERNAME = me.username or "hisobchi_my_bot"
+    return _BOT_USERNAME
 
 
 def is_authorized(user_id: int | None) -> bool:
@@ -144,6 +165,135 @@ async def cmd_group_id(message: Message) -> None:
     await message.answer(f"🆔 Chat ID: <code>{message.chat.id}</code>", parse_mode="HTML")
 
 
+@router.message(CommandStart(deep_link=True), F.chat.type.in_({"group", "supergroup"}))
+async def cmd_start_group_bind(message: Message, command: CommandObject) -> None:
+    """Auto-bind group when bot is added via Telegram startgroup=<role>&admin=... deep link."""
+    user_id = message.from_user.id if message.from_user else None
+    if not is_authorized(user_id):
+        return
+
+    role = DEEP_LINK_ROLE_MAP.get((command.args or "").strip())
+    if not role:
+        return
+
+    title = message.chat.title or f"Group {message.chat.id}"
+    _recently_bound_chats[message.chat.id] = time.monotonic()
+
+    async with async_session_maker() as db:
+        await set_group_config(db, role=role, chat_id=message.chat.id, title=title)
+
+    await message.answer(
+        f"✅ Ushbu guruh avtomatik <b>{ROLE_TITLES[role]}</b> sifatida ulandi!\n"
+        f"🆔 Chat ID: <code>{message.chat.id}</code>",
+        parse_mode="HTML",
+    )
+
+    if user_id:
+        try:
+            status_text = await _render_groups_status()
+            username = await get_bot_username(message.bot)
+            await message.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    f"✅ <b>{html.escape(title)}</b> guruhi avtomatik "
+                    f"<b>{ROLE_TITLES[role]}</b> sifatida bazaga saqlandi! (<code>{message.chat.id}</code>)\n\n"
+                    + status_text
+                ),
+                parse_mode="HTML",
+                reply_markup=groups_config_kb(username),
+            )
+        except Exception:
+            pass
+
+
+@router.my_chat_member(F.chat.type.in_({"group", "supergroup"}))
+async def on_bot_added_to_group(event: ChatMemberUpdated) -> None:
+    """Auto-detect when bot is added to or promoted in a group and offer 1-tap role binding in DM."""
+    new_status = event.new_chat_member.status
+    old_status = event.old_chat_member.status
+    if new_status not in ("member", "administrator") or new_status == old_status:
+        return
+
+    user_id = event.from_user.id if event.from_user else None
+    if not is_authorized(user_id) or not user_id:
+        return
+
+    # Allow startgroup deep-link handler to complete first if both updates arrive together
+    await asyncio.sleep(1.5)
+    bound_ts = _recently_bound_chats.get(event.chat.id, 0.0)
+    if time.monotonic() - bound_ts < 10.0:
+        return
+
+    title = event.chat.title or f"Guruh ({event.chat.id})"
+    async with async_session_maker() as db:
+        groups = await get_all_group_configs(db)
+        existing_role = next((r for r, cfg in groups.items() if cfg.chat_id == event.chat.id), None)
+        if existing_role and new_status == "administrator":
+            await set_group_config(db, role=existing_role, chat_id=event.chat.id, title=title)
+            try:
+                await event.bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        f"✅ <b>{html.escape(title)}</b> (<code>{event.chat.id}</code>) "
+                        f"<b>{ROLE_TITLES[existing_role]}</b> da botga admin huquqi berildi!"
+                    ),
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+            return
+
+    admin_note = (
+        "✅ Bot guruhga <b>admin</b> sifatida qo'shildi."
+        if new_status == "administrator"
+        else "ℹ️ Bot guruhga qo'shildi (xabarlarni o'zgartirish uchun admin huquqi tavsiya etiladi)."
+    )
+    try:
+        await event.bot.send_message(
+            chat_id=user_id,
+            text=(
+                f"🆕 <b>Yangi guruh aniqlandi!</b>\n"
+                f"📌 Nomi: <b>{html.escape(title)}</b>\n"
+                f"🆔 Chat ID: <code>{event.chat.id}</code>\n"
+                f"{admin_note}\n\n"
+                "Ushbu guruhni qaysi vazifa uchun saqlaymiz?"
+            ),
+            parse_mode="HTML",
+            reply_markup=quick_bind_group_kb(event.chat.id),
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data.startswith("grp:qbind:"))
+async def cb_group_quick_bind(cb: CallbackQuery) -> None:
+    """Save auto-detected group role from quick-bind DM prompt."""
+    parts = cb.data.split(":")
+    role = parts[2]
+    chat_id = int(parts[3])
+
+    title = f"Guruh ({chat_id})"
+    try:
+        chat = await cb.bot.get_chat(chat_id)
+        if chat.title:
+            title = chat.title
+    except Exception:
+        pass
+
+    async with async_session_maker() as db:
+        await set_group_config(db, role=role, chat_id=chat_id, title=title)
+
+    username = await get_bot_username(cb.bot)
+    status_text = await _render_groups_status()
+    await cb.message.edit_text(
+        f"✅ <b>{html.escape(title)}</b> (<code>{chat_id}</code>) — "
+        f"<b>{ROLE_TITLES.get(role, role)}</b> sifatida saqlandi!\n\n{status_text}",
+        parse_mode="HTML",
+        reply_markup=groups_config_kb(username),
+    )
+    await cb.answer("✅ Guruh saqlandi!")
+
+
 # ---------------------------------------------------------------------------
 # Settings & History Menu
 # ---------------------------------------------------------------------------
@@ -185,11 +335,9 @@ async def _render_groups_status() -> str:
         else:
             lines.append(f"• <b>{title}:</b> <i>Ulanmagan</i>")
     lines.append(
-        "\n💡 <b>Oson ulash:</b> Botni guruhga qo'shing (admin qiling) va guruhda:\n"
-        "<code>/set_nakladnoy_group</code>\n"
-        "<code>/set_prixod_group</code>\n"
-        "<code>/set_kassa_group</code>\n"
-        "buyruqlaridan birini yozing — yoki quyidan ID kiriting."
+        "\n💡 <b>1 bosishda oson ulash:</b> Pastdagi <b>«➕ ... guruhiga qo'shish (Admin)»</b> "
+        "tugmasini bosing — Telegram guruh tanlash va admin qilish oynasini ochadi, "
+        "bot esa guruh ID sini avtomatik bazaga saqlab oladi!"
     )
     return "\n".join(lines)
 
@@ -197,7 +345,8 @@ async def _render_groups_status() -> str:
 @router.callback_query(F.data == "set:groups")
 async def cb_groups_menu(cb: CallbackQuery) -> None:
     text = await _render_groups_status()
-    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=groups_config_kb())
+    username = await get_bot_username(cb.bot)
+    await cb.message.edit_text(text, parse_mode="HTML", reply_markup=groups_config_kb(username))
     await cb.answer()
 
 

@@ -265,27 +265,41 @@ def settings_menu_kb() -> InlineKeyboardMarkup:
     )
 
 
-def groups_config_kb() -> InlineKeyboardMarkup:
-    """Group binding menu."""
+GROUP_ADMIN_RIGHTS = "change_info+delete_messages+invite_users+pin_messages+manage_chat"
+
+
+def build_add_to_group_url(bot_username: str, role: str) -> str:
+    """Build Telegram deep-link that opens group picker with admin permission prompt and auto-binds role."""
+    clean_username = bot_username.lstrip("@") or "hisobchi_my_bot"
+    return f"https://t.me/{clean_username}?startgroup=bind_{role}&admin={GROUP_ADMIN_RIGHTS}"
+
+
+def groups_config_kb(bot_username: str = "hisobchi_my_bot") -> InlineKeyboardMarkup:
+    """Group binding menu with 1-click Telegram Admin Picker + manual ID fallback."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="📸 Nakladnoy guruhi ID kiritish",
-                    callback_data="grp:set_id:nakladnoy",
+                    text="➕ 📸 Nakladnoy guruhiga qo'shish (Admin)",
+                    url=build_add_to_group_url(bot_username, "nakladnoy"),
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="👑 Prixod (ITOG) guruhi ID kiritish",
-                    callback_data="grp:set_id:prixod",
+                    text="➕ 👑 Prixod (ITOG) guruhiga qo'shish (Admin)",
+                    url=build_add_to_group_url(bot_username, "prixod"),
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="💰 Kassa / Rahbariyat guruhi ID kiritish",
-                    callback_data="grp:set_id:kassa",
+                    text="➕ 💰 Kassa guruhiga qo'shish (Admin)",
+                    url=build_add_to_group_url(bot_username, "kassa"),
                 )
+            ],
+            [
+                InlineKeyboardButton(text="🆔 Nakladnoy", callback_data="grp:set_id:nakladnoy"),
+                InlineKeyboardButton(text="🆔 Prixod", callback_data="grp:set_id:prixod"),
+                InlineKeyboardButton(text="🆔 Kassa", callback_data="grp:set_id:kassa"),
             ],
             [
                 InlineKeyboardButton(
@@ -294,6 +308,32 @@ def groups_config_kb() -> InlineKeyboardMarkup:
                 )
             ],
             [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="set:back")],
+        ]
+    )
+
+
+def quick_bind_group_kb(chat_id: int) -> InlineKeyboardMarkup:
+    """One-tap role assignment when bot is added to a group manually."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📸 Nakladnoy guruhi",
+                    callback_data=f"grp:qbind:nakladnoy:{chat_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="👑 Prixod (ITOG) guruhi",
+                    callback_data=f"grp:qbind:prixod:{chat_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💰 Kassa / Rahbariyat guruhi",
+                    callback_data=f"grp:qbind:kassa:{chat_id}",
+                )
+            ],
         ]
     )
 

@@ -262,3 +262,21 @@ def test_heuristic_text_intents():
         assert res4["intent"] == "status"
 
     asyncio.run(scenario())
+
+
+def test_group_admin_deeplinks_and_quick_bind_kb():
+    from bot.keyboards import GROUP_ADMIN_RIGHTS, groups_config_kb, quick_bind_group_kb
+
+    kb = groups_config_kb("hisobchi_my_bot")
+    urls = [row[0].url for row in kb.inline_keyboard[:3]]
+    assert urls[0] == f"https://t.me/hisobchi_my_bot?startgroup=bind_nakladnoy&admin={GROUP_ADMIN_RIGHTS}"
+    assert urls[1] == f"https://t.me/hisobchi_my_bot?startgroup=bind_prixod&admin={GROUP_ADMIN_RIGHTS}"
+    assert urls[2] == f"https://t.me/hisobchi_my_bot?startgroup=bind_kassa&admin={GROUP_ADMIN_RIGHTS}"
+
+    qkb = quick_bind_group_kb(-100999)
+    cbs = [row[0].callback_data for row in qkb.inline_keyboard]
+    assert cbs == [
+        "grp:qbind:nakladnoy:-100999",
+        "grp:qbind:prixod:-100999",
+        "grp:qbind:kassa:-100999",
+    ]

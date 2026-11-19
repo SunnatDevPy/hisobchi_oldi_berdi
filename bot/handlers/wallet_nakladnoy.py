@@ -8,9 +8,9 @@ from typing import Optional
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from bot.handlers.settings_groups import is_authorized
+from bot.handlers.settings_groups import get_bot_username, is_authorized
 from bot.keyboards import (
     BTN_ADD_NAKLADNOY,
     BTN_CASH_IN,
@@ -18,6 +18,7 @@ from bot.keyboards import (
     BTN_EDIT_CONFIRMED,
     BTN_KASSA_DEBT,
     BTN_STATUS,
+    build_add_to_group_url,
     cancel_reply_keyboard,
     cash_tx_edit_kb,
     close_day_confirm_kb,
@@ -492,6 +493,7 @@ async def cb_nakladnoy_confirm(cb: CallbackQuery) -> None:
         payment = await confirm_nakladnoy(db, payment_id)
 
     group_notice = "<i>(Nakladnoy guruhi ulanmagan — faqat hisobga olindi)</i>"
+    missing_group_kb = None
     if nak_group and payment:
         caption = render_nakladnoy_group_caption(payment)
         try:
@@ -513,6 +515,18 @@ async def cb_nakladnoy_confirm(cb: CallbackQuery) -> None:
             group_notice = f"📤 <b>{html.escape(nak_group.title)}</b> guruhiga yuborildi!"
         except Exception as exc:
             group_notice = f"⚠️ Guruhga yuborib bo'lmadi: {html.escape(str(exc))}"
+    elif not nak_group:
+        username = await get_bot_username(cb.bot)
+        missing_group_kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="➕ 📸 Nakladnoy guruhini hozir ulash (Admin)",
+                        url=build_add_to_group_url(username, "nakladnoy"),
+                    )
+                ]
+            ]
+        )
 
     async with async_session_maker() as db:
         summary = await compute_session_summary(db, payment.session_id)
@@ -523,6 +537,7 @@ async def cb_nakladnoy_confirm(cb: CallbackQuery) -> None:
         f"{group_notice}\n\n"
         f"💰 Qo'lda qolishi kerak: <b>{format_uzs(summary.expected_cash)} so'm</b>",
         parse_mode="HTML",
+        reply_markup=missing_group_kb,
     )
     await cb.answer("✅ Tasdiqlandi!")
 

@@ -367,7 +367,7 @@ async def cb_prixod_publish(cb: CallbackQuery) -> None:
         return
     if not prixod_group:
         await cb.answer(
-            "Prixod guruhi ulanmagan! Guruhga botni qo'shib /set_prixod_group yozing.",
+            "Prixod guruhi ulanmagan! Sozlamalar -> Guruhlarni sozlash orqali 1 bosishda ulang.",
             show_alert=True,
         )
         return
