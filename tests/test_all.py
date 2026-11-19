@@ -285,3 +285,14 @@ def test_group_admin_deeplinks_and_quick_bind_kb():
         "grp:qbind:prixod:-100999",
         "grp:qbind:kassa:-100999",
     ]
+
+
+def test_utc_to_tashkent_local_formatting():
+    from datetime import datetime, timezone
+    from database.crud import format_local_dt
+
+    utc_dt = datetime(2026, 11, 19, 6, 29, tzinfo=timezone.utc)
+    assert format_local_dt(utc_dt, "%d.%m.%Y %H:%M") == "19.11.2026 11:29"
+
+    naive_utc_dt = datetime(2026, 11, 19, 6, 29)
+    assert format_local_dt(naive_utc_dt, "%d.%m.%Y %H:%M") == "19.11.2026 11:29"

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from zoneinfo import ZoneInfo
 
@@ -27,6 +27,21 @@ def now_local() -> datetime:
     """Return current datetime in configured local timezone."""
     tz = ZoneInfo(get_settings().TIMEZONE)
     return datetime.now(tz)
+
+
+def to_local_dt(dt: Optional[datetime]) -> datetime:
+    """Convert any UTC/naive/aware datetime into configured local timezone."""
+    tz = ZoneInfo(get_settings().TIMEZONE)
+    if dt is None:
+        return datetime.now(tz)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(tz)
+
+
+def format_local_dt(dt: Optional[datetime], fmt: str = "%d.%m.%Y %H:%M") -> str:
+    """Format a datetime in local timezone."""
+    return to_local_dt(dt).strftime(fmt)
 
 
 def today_iso() -> str:

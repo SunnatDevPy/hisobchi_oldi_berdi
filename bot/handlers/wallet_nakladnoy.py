@@ -40,11 +40,11 @@ from database.crud import (
     delete_cash_transaction,
     delete_nakladnoy,
     find_duplicate_confirmed_nakladnoy,
+    format_local_dt,
     get_group_config,
     get_nakladnoy,
     get_or_create_open_session,
     get_outstanding_kassa_debt,
-    now_local,
     set_nakladnoy_group_message,
     update_cash_transaction,
     update_nakladnoy,
@@ -98,7 +98,7 @@ def render_nakladnoy_group_caption(
     payment: NakladnoyPayment, tag: str = ""
 ) -> str:
     """Build caption/message sent to the Nakladnoy Telegram group."""
-    ts = (payment.created_at or now_local()).strftime("%d.%m.%Y %H:%M")
+    ts = format_local_dt(payment.created_at, "%d.%m.%Y %H:%M")
     prefix = f"{tag}\n" if tag else ""
     if payment.status == "deleted":
         return (

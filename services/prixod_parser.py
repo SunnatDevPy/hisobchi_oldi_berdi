@@ -8,9 +8,11 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional, Sequence, Tuple
+from zoneinfo import ZoneInfo
 
 from openpyxl import load_workbook
 
+from config import get_settings
 from database.models import PrixodRow, SupplierConfig
 from services.gemini_ai import format_uzs, parse_uzbek_amount
 
@@ -185,7 +187,7 @@ def _find_report_date_from_table(table: List[List[str]], created_dates: List[str
                 return dt.strftime("%d.%m.%y")
             except ValueError:
                 continue
-    return datetime.now().strftime("%d.%m.%y")
+    return datetime.now(ZoneInfo(get_settings().TIMEZONE)).strftime("%d.%m.%y")
 
 
 def parse_yespos_table(
@@ -397,8 +399,9 @@ def parse_manual_itog_text(
         karta: 525 000
         16.11: 409 400
     """
+    now_tz = datetime.now(ZoneInfo(get_settings().TIMEZONE))
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    report_date = datetime.now().strftime("%d.%m.%y")
+    report_date = now_tz.strftime("%d.%m.%y")
     rows: List[ParsedRowItem] = []
     row_counter = 1
 
@@ -409,7 +412,7 @@ def parse_manual_itog_text(
         if low.startswith("itog"):
             m = DATE_NOTE_PATTERN.search(ln)
             if m:
-                yr = m.group(3) or datetime.now().strftime("%y")
+                yr = m.group(3) or now_tz.strftime("%y")
                 if len(yr) == 4:
                     yr = yr[2:]
                 report_date = f"{int(m.group(1)):02d}.{int(m.group(2)):02d}.{yr}"

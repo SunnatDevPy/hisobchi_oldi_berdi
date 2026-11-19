@@ -8,7 +8,7 @@ from typing import Sequence
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
-from database.crud import SessionSummary
+from database.crud import SessionSummary, format_local_dt
 from database.models import DailyCashSession, PrixodReport
 
 
@@ -60,7 +60,7 @@ def build_session_excel(summary: SessionSummary) -> bytes:
         amt_cell = ws.cell(row=r, column=3, value=round(item.amount))
         amt_cell.number_format = MONEY_FORMAT
         ws.cell(row=r, column=4, value=item.note or "")
-        ts = item.created_at.strftime("%Y-%m-%d %H:%M") if item.created_at else ""
+        ts = format_local_dt(item.created_at, "%Y-%m-%d %H:%M") if item.created_at else ""
         ws.cell(row=r, column=5, value=ts)
 
     # Cash transactions sheet
@@ -83,7 +83,11 @@ def build_session_excel(summary: SessionSummary) -> bytes:
         c = ws2.cell(row=r, column=3, value=round(tx.amount))
         c.number_format = MONEY_FORMAT
         ws2.cell(row=r, column=4, value=tx.note)
-        ws2.cell(row=r, column=5, value=tx.created_at.strftime("%Y-%m-%d %H:%M") if tx.created_at else "")
+        ws2.cell(
+            row=r,
+            column=5,
+            value=format_local_dt(tx.created_at, "%Y-%m-%d %H:%M") if tx.created_at else "",
+        )
 
     for sheet in (ws, ws2):
         sheet.column_dimensions["A"].width = 26
@@ -131,7 +135,7 @@ def build_history_excel(sessions: Sequence[DailyCashSession]) -> bytes:
         ws.cell(
             row=i,
             column=7,
-            value=sess.closed_at.strftime("%Y-%m-%d %H:%M") if sess.closed_at else "",
+            value=format_local_dt(sess.closed_at, "%Y-%m-%d %H:%M") if sess.closed_at else "",
         )
 
     for col_letter in ("A", "B", "C", "D", "E", "F", "G"):
