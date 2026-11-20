@@ -57,6 +57,15 @@ def today_iso() -> str:
     return now_local().strftime("%Y-%m-%d")
 
 
+VALID_PAYMENT_METHODS = ("cash", "card", "transfer")
+
+
+def normalize_payment_method(payment_method: Optional[str]) -> str:
+    """Normalize payment_method to one of cash | card | transfer (defaults to cash)."""
+    val = (payment_method or "cash").strip().lower()
+    return val if val in VALID_PAYMENT_METHODS else "cash"
+
+
 @dataclass
 class SessionSummary:
     """Calculated balances and line items for a DailyCashSession."""
@@ -76,6 +85,9 @@ class SessionSummary:
     total_debt_nakladnoy: float = 0.0
     all_unpaid_debt_count: int = 0
     all_unpaid_debt_total: float = 0.0
+    noncash_nakladnoys: List[NakladnoyPayment] = field(default_factory=list)
+    total_card_spent: float = 0.0
+    total_transfer_spent: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +328,16 @@ async def compute_session_summary(
             )
         ).all()
     )
-    nakladnoys = [n for n in all_confirmed if not n.is_debt]
+    nakladnoys = [
+        n
+        for n in all_confirmed
+        if not n.is_debt and normalize_payment_method(getattr(n, "payment_method", "cash")) == "cash"
+    ]
+    noncash_nakladnoys = [
+        n
+        for n in all_confirmed
+        if not n.is_debt and normalize_payment_method(getattr(n, "payment_method", "cash")) in ("card", "transfer")
+    ]
     debt_nakladnoys = [n for n in all_confirmed if n.is_debt]
 
     opening = float(sess.opening_balance or 0.0)
@@ -325,6 +346,16 @@ async def compute_session_summary(
     kassa_repay_today = sum(t.amount for t in txs if t.source_type == "kassa_repay")
     total_available_inflow = opening + main_in + kassa_debt_today - kassa_repay_today
     total_nakladnoy_spent = sum(n.amount for n in nakladnoys)
+    total_card_spent = sum(
+        n.amount
+        for n in noncash_nakladnoys
+        if normalize_payment_method(getattr(n, "payment_method", "cash")) == "card"
+    )
+    total_transfer_spent = sum(
+        n.amount
+        for n in noncash_nakladnoys
+        if normalize_payment_method(getattr(n, "payment_method", "cash")) == "transfer"
+    )
     total_debt_nakladnoy = sum(n.amount for n in debt_nakladnoys)
     expected_cash = total_available_inflow - total_nakladnoy_spent
 
@@ -354,6 +385,9 @@ async def compute_session_summary(
         total_debt_nakladnoy=total_debt_nakladnoy,
         all_unpaid_debt_count=len(all_unpaid),
         all_unpaid_debt_total=sum(float(n.amount) for n, _ in all_unpaid),
+        noncash_nakladnoys=noncash_nakladnoys,
+        total_card_spent=total_card_spent,
+        total_transfer_spent=total_transfer_spent,
     )
 
 
@@ -508,13 +542,16 @@ async def confirm_nakladnoy(
     group_message_id: Optional[int] = None,
     user_id: Optional[int] = None,
     is_debt: bool = False,
+    payment_method: str = "cash",
 ) -> Optional[NakladnoyPayment]:
-    """Confirm a pending nakladnoy payment (paid or on credit) and attach group metadata."""
+    """Confirm a pending nakladnoy payment (cash/card/transfer or debt) and attach group metadata."""
     payment = await db.get(NakladnoyPayment, payment_id)
     if payment is None or payment.status == "deleted":
         return None
+    pm = "cash" if is_debt else normalize_payment_method(payment_method)
     payment.status = "confirmed"
     payment.is_debt = bool(is_debt)
+    payment.payment_method = pm
     payment.paid_at = None if is_debt else now_local()
     if group_chat_id is not None:
         payment.group_chat_id = group_chat_id
@@ -522,12 +559,24 @@ async def confirm_nakladnoy(
         payment.group_message_id = group_message_id
     await db.commit()
     await db.refresh(payment)
+    if is_debt:
+        action = "confirm_debt"
+        tag = " [QARZ]"
+    elif pm == "card":
+        action = "confirm_card"
+        tag = " [KARTA]"
+    elif pm == "transfer":
+        action = "confirm_transfer"
+        tag = " [O'TKAZMA]"
+    else:
+        action = "confirm"
+        tag = ""
     await log_action(
         db,
-        "confirm_debt" if is_debt else "confirm",
+        action,
         "nakladnoy",
         payment.id,
-        f"{payment.supplier_name} / {payment.amount:.0f}" + (" [QARZ]" if is_debt else ""),
+        f"{payment.supplier_name} / {payment.amount:.0f}" + tag,
         user_id=user_id,
     )
     await compute_session_summary(db, payment.session_id)
@@ -559,6 +608,7 @@ async def mark_nakladnoy_as_debt(
         return None
     payment.status = "confirmed"
     payment.is_debt = True
+    payment.payment_method = "cash"
     payment.paid_at = None
     await db.commit()
     await db.refresh(payment)
@@ -575,9 +625,12 @@ async def mark_nakladnoy_as_debt(
 
 
 async def mark_nakladnoy_as_paid(
-    db: AsyncSession, payment_id: int, user_id: Optional[int] = None
+    db: AsyncSession,
+    payment_id: int,
+    user_id: Optional[int] = None,
+    payment_method: str = "cash",
 ) -> Optional[Tuple[NakladnoyPayment, bool]]:
-    """Mark an unpaid debt nakladnoy as paid; moves closed-day debts into today's open session."""
+    """Mark an unpaid debt nakladnoy as paid (cash/card/transfer); rolls closed-day debts into today."""
     payment = await db.get(NakladnoyPayment, payment_id)
     if payment is None or payment.status == "deleted":
         return None
@@ -593,21 +646,65 @@ async def mark_nakladnoy_as_paid(
                 payment.note = f"{cur_note} | {tag_note}".strip(" |")
             moved_to_today = True
 
+    pm = normalize_payment_method(payment_method)
     payment.status = "confirmed"
     payment.is_debt = False
+    payment.payment_method = pm
     payment.paid_at = now_local()
     await db.commit()
     await db.refresh(payment)
+    pm_suffix = " [KARTA]" if pm == "card" else (" [O'TKAZMA]" if pm == "transfer" else "")
     await log_action(
         db,
         "mark_paid",
         "nakladnoy",
         payment.id,
-        f"{payment.supplier_name} / {payment.amount:.0f}" + (" (bugunga o'tkazildi)" if moved_to_today else ""),
+        f"{payment.supplier_name} / {payment.amount:.0f}"
+        + pm_suffix
+        + (" (bugunga o'tkazildi)" if moved_to_today else ""),
         user_id=user_id,
     )
     await compute_session_summary(db, payment.session_id)
     return payment, moved_to_today
+
+
+async def set_nakladnoy_payment_method(
+    db: AsyncSession,
+    payment_id: int,
+    payment_method: str,
+    user_id: Optional[int] = None,
+) -> Optional[Tuple[NakladnoyPayment, bool]]:
+    """Switch a confirmed nakladnoy's payment method (cash | card | transfer).
+
+    If it was currently an unpaid debt, delegates to ``mark_nakladnoy_as_paid`` so
+    closed-day debts roll into today's open session. Returns ``(payment, moved_to_today)``.
+    """
+    pm = normalize_payment_method(payment_method)
+    payment = await db.get(NakladnoyPayment, payment_id)
+    if payment is None or payment.status == "deleted":
+        return None
+    if payment.is_debt:
+        return await mark_nakladnoy_as_paid(db, payment_id, user_id=user_id, payment_method=pm)
+
+    old_pm = normalize_payment_method(getattr(payment, "payment_method", "cash"))
+    payment.status = "confirmed"
+    payment.payment_method = pm
+    if payment.paid_at is None:
+        payment.paid_at = now_local()
+    await db.commit()
+    await db.refresh(payment)
+    if old_pm != pm:
+        pm_tags = {"cash": "NAQD", "card": "KARTA", "transfer": "O'TKAZMA"}
+        await log_action(
+            db,
+            f"confirm_{pm}" if pm != "cash" else "confirm_cash",
+            "nakladnoy",
+            payment.id,
+            f"{payment.supplier_name} / {payment.amount:.0f} [{pm_tags.get(pm, pm.upper())}]",
+            user_id=user_id,
+        )
+    await compute_session_summary(db, payment.session_id)
+    return payment, False
 
 
 async def set_nakladnoy_group_message(
@@ -1061,6 +1158,7 @@ async def get_supplier_sverka(
                 "supplier": canon_name,
                 "amount": float(pay.amount),
                 "original_amount": float(pay.original_amount) if pay.original_amount is not None else None,
+                "payment_method": normalize_payment_method(getattr(pay, "payment_method", "cash")),
                 "in_group": bool(pay.group_message_id),
                 "photo_file_id": pay.photo_file_id,
                 "group_chat_id": pay.group_chat_id,
@@ -1177,10 +1275,15 @@ async def get_period_statistics(db: AsyncSession, date_from: str, date_to: str) 
 
     total_spent = sum(float(n.amount) for n, _ in nak_rows)
     count = len(nak_rows)
+    pm_totals = {"cash": 0.0, "card": 0.0, "transfer": 0.0}
+    pm_counts = {"cash": 0, "card": 0, "transfer": 0}
     by_day: Dict[str, float] = {}
     by_sup: Dict[str, list] = {}
 
     for pay, r_date in nak_rows:
+        pm = normalize_payment_method(getattr(pay, "payment_method", "cash"))
+        pm_totals[pm] += float(pay.amount)
+        pm_counts[pm] += 1
         by_day[r_date] = by_day.get(r_date, 0.0) + float(pay.amount)
         raw_name = " ".join(pay.supplier_name.strip().split())
         canon = alias_map.get(raw_name.lower(), raw_name)
@@ -1202,6 +1305,12 @@ async def get_period_statistics(db: AsyncSession, date_from: str, date_to: str) 
         "date_from": date_from,
         "date_to": date_to,
         "total_spent": total_spent,
+        "cash_spent": pm_totals["cash"],
+        "card_spent": pm_totals["card"],
+        "transfer_spent": pm_totals["transfer"],
+        "cash_count": pm_counts["cash"],
+        "card_count": pm_counts["card"],
+        "transfer_count": pm_counts["transfer"],
         "payment_count": count,
         "active_days": active_days,
         "avg_daily_spend": avg_daily,

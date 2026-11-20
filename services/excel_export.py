@@ -49,6 +49,12 @@ def _parse_legacy_original_amount(note: Optional[str]) -> Tuple[Optional[float],
     return orig, cleaned
 
 
+def _pm_label(pm: Optional[str]) -> str:
+    """Human-readable Uzbek label for payment_method (cash | card | transfer)."""
+    val = (pm or "cash").strip().lower()
+    return {"cash": "Naqd", "card": "Karta", "transfer": "Perechesleniya"}.get(val, "Naqd")
+
+
 def _telegram_group_link(chat_id: Optional[int], msg_id: Optional[int]) -> Optional[str]:
     """Build clickable Telegram message URL for supergroups (-100...)."""
     if not chat_id or not msg_id:
@@ -266,6 +272,9 @@ def build_session_excel(summary: SessionSummary) -> bytes:
     )
 
     debt_items = list(getattr(summary, "debt_nakladnoys", []) or [])
+    noncash_items = list(getattr(summary, "noncash_nakladnoys", []) or [])
+    total_card = round(getattr(summary, "total_card_spent", 0.0) or 0.0)
+    total_transfer = round(getattr(summary, "total_transfer_spent", 0.0) or 0.0)
     stat_rows = [
         ("Umumiy kassa qarzi qoldig'i", round(summary.total_kassa_debt_outstanding)),
         ("Nakladnoylar soni", cnt),
@@ -273,6 +282,17 @@ def build_session_excel(summary: SessionSummary) -> bytes:
         ("O'rtacha to'lov", avg_amt),
         ("Sarflanish ulushi (%)", spend_pct),
     ]
+    if noncash_items:
+        if total_card > 0:
+            stat_rows.append(("Karta orqali to'lovlar (naqdsiz)", total_card))
+        if total_transfer > 0:
+            stat_rows.append(("Perechesleniya / o'tkazma (naqdsiz)", total_transfer))
+        stat_rows.append(
+            (
+                "Jami barcha to'lovlar (Naqd+Karta+O'tkazma)",
+                round(summary.total_nakladnoy_spent) + total_card + total_transfer,
+            )
+        )
     if debt_items:
         stat_rows.append(
             (
@@ -375,6 +395,43 @@ def build_session_excel(summary: SessionSummary) -> bytes:
         _autowidth(ws_d, skip_rows=2)
         ws_d.column_dimensions["A"].width = 7
         _finish(ws_d, "A4", 7, 3, last_d, landscape=True)
+
+    # Optional Sheet 5: Non-cash nakladnoys (Karta / Perechesleniya)
+    if noncash_items:
+        ws_nc = wb.create_sheet("Karta va Perechesleniya")
+        _title(ws_nc, f"KARTA VA PERECHESLENIYA — {summary.session.report_date}", 8)
+        _header(
+            ws_nc,
+            3,
+            ["#", "Postavshik", "To'lov turi", "Summa", "Asl summa", "Guruhga yuborilgan", "Rasm", "Vaqt"],
+        )
+        for i, item in enumerate(noncash_items, start=1):
+            r = 3 + i
+            zebra = i % 2 == 0
+            orig_val, _ = _extract_orig_and_note(item)
+            in_grp = "Ha" if getattr(item, "group_message_id", None) else "Yo'q"
+            _body_row(
+                ws_nc,
+                r,
+                [
+                    i,
+                    item.supplier_name,
+                    _pm_label(getattr(item, "payment_method", "cash")),
+                    round(item.amount),
+                    orig_val,
+                    in_grp,
+                    "",
+                    _ts(item.created_at),
+                ],
+                money_cols=(4, 5),
+                zebra=zebra,
+            )
+            _write_photo_cell(ws_nc, r, 7, item, zebra)
+        last_nc = 3 + len(noncash_items)
+        _total_row(ws_nc, last_nc + 1, "JAMI (NAQDSIZ)", 3, {4: f"=SUM(D4:D{last_nc})"}, 8)
+        _autowidth(ws_nc, skip_rows=2)
+        ws_nc.column_dimensions["A"].width = 7
+        _finish(ws_nc, "A4", 8, 3, last_nc, landscape=True)
 
     return _to_bytes(wb)
 
@@ -664,23 +721,28 @@ def build_sverka_excel(month: str, rows: Sequence[dict]) -> bytes:
 
     # Sheet 3: Barcha to'lovlar
     ws2 = wb.create_sheet("Barcha to'lovlar")
-    _title(ws2, f"BARCHA TO'LOVLAR — {month}", 7)
-    _header(ws2, 3, ["Sana", "Vaqt", "Postavshik", "Summa", "Asl summa", "Guruhga yuborilgan", "Izoh"])
+    _title(ws2, f"BARCHA TO'LOVLAR — {month}", 8)
+    _header(
+        ws2,
+        3,
+        ["Sana", "Vaqt", "Postavshik", "Summa", "Asl summa", "Guruhga yuborilgan", "Izoh", "To'lov turi"],
+    )
     for i, r in enumerate(rows, start=1):
         orig = r.get("original_amount")
         orig_cell = round(orig) if (orig is not None and round(orig) != round(r["amount"])) else ""
         _, cleaned_note = _parse_legacy_original_amount(r.get("note", ""))
         in_grp = "Ha" if r.get("in_group") else "Yo'q"
+        pm_lbl = _pm_label(r.get("payment_method", "cash"))
         _body_row(
             ws2,
             3 + i,
-            [r["date"], r["time"], r["supplier"], round(r["amount"]), orig_cell, in_grp, cleaned_note],
+            [r["date"], r["time"], r["supplier"], round(r["amount"]), orig_cell, in_grp, cleaned_note, pm_lbl],
             money_cols=(4, 5),
             zebra=i % 2 == 0,
         )
     if rows:
         end = 3 + len(rows)
-        _total_row(ws2, end + 1, "JAMI", 3, {4: f"=SUM(D4:D{end})"}, 7)
+        _total_row(ws2, end + 1, "JAMI", 3, {4: f"=SUM(D4:D{end})"}, 8)
     _autowidth(ws2, skip_rows=2)
-    _finish(ws2, "A4", 7, 3, 3 + len(rows), landscape=True)
+    _finish(ws2, "A4", 8, 3, 3 + len(rows), landscape=True)
     return _to_bytes(wb)

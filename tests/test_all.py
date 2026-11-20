@@ -855,3 +855,135 @@ def test_nakladnoy_debt_and_mark_paid_same_day_and_next_day(tmp_path: Path):
         assert day1_check.difference == 0.0
 
     asyncio.run(_run_with_db(tmp_path, scenario))
+
+
+def test_nakladnoy_card_and_transfer_do_not_deduct_cash_and_show_in_stats(tmp_path: Path):
+    import io
+    from openpyxl import load_workbook
+    from bot.handlers.admin_tools import _render_period_stats_text
+    from bot.handlers.wallet_nakladnoy import render_nakladnoy_group_caption, render_status_text
+    from bot.keyboards import (
+        auto_confirmed_nakladnoy_kb,
+        confirmed_nakladnoy_edit_kb,
+        nakladnoy_confirm_kb,
+    )
+    from database.crud import (
+        get_period_statistics,
+        get_supplier_sverka,
+        set_nakladnoy_payment_method,
+    )
+    from services.excel_export import build_session_excel, build_sverka_excel
+
+    confirm_cbs = [b.callback_data for row in nakladnoy_confirm_kb(1).inline_keyboard for b in row]
+    assert "nak:confirm:1" in confirm_cbs
+    assert "nak:save_pm:1:card" in confirm_cbs
+    assert "nak:save_pm:1:transfer" in confirm_cbs
+    assert "nak:save_debt:1" in confirm_cbs
+
+    auto_cbs = [
+        b.callback_data
+        for row in auto_confirmed_nakladnoy_kb(1, is_debt=False, payment_method="cash").inline_keyboard
+        for b in row
+    ]
+    assert "nak:set_pm:1:card" in auto_cbs
+    assert "nak:set_pm:1:transfer" in auto_cbs
+    assert "nak:set_pm:1:cash" in auto_cbs
+
+    debt_edit_cbs = [
+        b.callback_data
+        for row in confirmed_nakladnoy_edit_kb(1, is_debt=True, is_admin=False).inline_keyboard
+        for b in row
+    ]
+    assert "nak:mark_paid:1" in debt_edit_cbs
+    assert "nak:set_pm:1:card" in debt_edit_cbs
+    assert "nak:set_pm:1:transfer" in debt_edit_cbs
+
+    async def scenario(db_session: AsyncSession) -> None:
+        sess1 = await get_or_create_open_session(db_session, report_date="2026-11-22")
+        await add_cash_transaction(db_session, 10_000_000, source_type="main", session_id=sess1.id)
+
+        p_cash = await create_pending_nakladnoy(db_session, "Naqd Supplier", 1_000_000, session_id=sess1.id)
+        p_card = await create_pending_nakladnoy(db_session, "Karta Supplier", 2_000_000, session_id=sess1.id)
+        p_xfer = await create_pending_nakladnoy(db_session, "Otkazma Supplier", 3_000_000, session_id=sess1.id)
+        p_debt = await create_pending_nakladnoy(db_session, "Qarz Supplier", 500_000, session_id=sess1.id)
+
+        # Default payment_method is cash
+        confirmed_cash = await confirm_nakladnoy(db_session, p_cash.id)
+        assert confirmed_cash.payment_method == "cash"
+        confirmed_card = await confirm_nakladnoy(db_session, p_card.id, payment_method="card")
+        confirmed_xfer = await confirm_nakladnoy(db_session, p_xfer.id, payment_method="transfer")
+        await confirm_nakladnoy(db_session, p_debt.id, is_debt=True)
+
+        assert "KARTA" in render_nakladnoy_group_caption(confirmed_card)
+        assert "PERECHESLENIYA" in render_nakladnoy_group_caption(confirmed_xfer)
+
+        # Only cash nakladnoy (1,000,000) deducts from expected_cash (9,000,000)!
+        s1 = await compute_session_summary(db_session, sess1.id)
+        assert s1.total_nakladnoy_spent == 1_000_000.0
+        assert s1.total_card_spent == 2_000_000.0
+        assert s1.total_transfer_spent == 3_000_000.0
+        assert s1.expected_cash == 9_000_000.0
+        assert len(s1.confirmed_nakladnoys) == 1
+        assert len(s1.noncash_nakladnoys) == 2
+
+        status_txt = render_status_text(s1)
+        assert "Karta / Perechesleniya" in status_txt
+        assert "9 000 000" in status_txt
+
+        # Switch cash -> card restores cash-on-hand to 10,000,000; switch back restores 9,000,000
+        await set_nakladnoy_payment_method(db_session, p_cash.id, "card", user_id=777)
+        s_after_switch = await compute_session_summary(db_session, sess1.id)
+        assert s_after_switch.expected_cash == 10_000_000.0
+        assert s_after_switch.total_card_spent == 3_000_000.0
+
+        await set_nakladnoy_payment_method(db_session, p_cash.id, "cash", user_id=777)
+        s_restored = await compute_session_summary(db_session, sess1.id)
+        assert s_restored.expected_cash == 9_000_000.0
+
+        # Period statistics breakdown & Sverka + Session Excel
+        st = await get_period_statistics(db_session, "2026-11-22", "2026-11-22")
+        assert st["cash_spent"] == 1_000_000.0
+        assert st["card_spent"] == 2_000_000.0
+        assert st["transfer_spent"] == 3_000_000.0
+        assert st["total_spent"] == 6_000_000.0
+        stats_txt = _render_period_stats_text("Statistika", st)
+        assert "Karta" in stats_txt and "Perechesleniya" in stats_txt
+
+        sverka_rows = await get_supplier_sverka(db_session, "2026-11")
+        pm_by_sup = {r["supplier"]: r["payment_method"] for r in sverka_rows}
+        assert pm_by_sup["Naqd Supplier"] == "cash"
+        assert pm_by_sup["Karta Supplier"] == "card"
+        assert pm_by_sup["Otkazma Supplier"] == "transfer"
+
+        wb_sess = load_workbook(io.BytesIO(build_session_excel(s_restored)))
+        assert "Karta va Perechesleniya" in wb_sess.sheetnames
+        assert wb_sess["Nakladnoylar"].cell(4, 3).value == 1_000_000
+
+        wb_sv = load_workbook(io.BytesIO(build_sverka_excel("2026-11", sverka_rows)))
+        assert wb_sv["Barcha to'lovlar"].cell(3, 8).value == "To'lov turi"
+        methods_col = [
+            wb_sv["Barcha to'lovlar"].cell(r, 8).value
+            for r in range(4, 4 + len(sverka_rows))
+        ]
+        assert {"Naqd", "Karta", "Perechesleniya"}.issubset(set(methods_col))
+
+        # Close Day 1 and pay unpaid debt using transfer on Day 2 -> moves to Day 2 without deducting cash!
+        await close_cash_session(db_session, sess1.id, actual_counted_cash=9_000_000)
+        sess2 = await get_or_create_open_session(db_session, report_date="2026-11-23")
+        await add_cash_transaction(db_session, 1_000_000, source_type="main", session_id=sess2.id)
+
+        paid_debt, moved = await set_nakladnoy_payment_method(db_session, p_debt.id, "transfer", user_id=777)
+        assert moved is True
+        assert paid_debt.is_debt is False
+        assert paid_debt.payment_method == "transfer"
+        assert paid_debt.session_id == sess2.id
+        cap = render_nakladnoy_group_caption(paid_debt, tag="✅ [QARZ TO'LANDI — O'TKAZMA]")
+        assert "QARZ TO'LANDI" in cap and "PERECHESLENIYA" in cap
+
+        s2 = await compute_session_summary(db_session, sess2.id)
+        assert s2.opening_balance == 9_000_000.0
+        assert s2.expected_cash == 10_000_000.0
+        assert s2.total_nakladnoy_spent == 0.0
+        assert s2.total_transfer_spent == 500_000.0
+
+    asyncio.run(_run_with_db(tmp_path, scenario))

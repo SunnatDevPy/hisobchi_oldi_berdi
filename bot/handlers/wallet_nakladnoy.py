@@ -59,6 +59,7 @@ from database.crud import (
     resolve_supplier_name,
     round_nakladnoy_amount,
     set_nakladnoy_group_message,
+    set_nakladnoy_payment_method,
     update_cash_transaction,
     update_nakladnoy,
 )
@@ -122,6 +123,24 @@ def render_status_text(summary: SessionSummary) -> str:
                 f"{idx}) {html.escape(n.supplier_name)} — <b>{format_uzs(n.amount)}</b> <i>({tm})</i>{where}"
             )
 
+    if summary.noncash_nakladnoys:
+        lines.append("-------------------------------")
+        lines.append(
+            f"💳🏦 <b>Karta / Perechesleniya ({len(summary.noncash_nakladnoys)} ta — naqd puldan ayrilmagan):</b>"
+        )
+        for idx, n in enumerate(summary.noncash_nakladnoys, start=1):
+            tm = format_local_dt(n.created_at, "%H:%M")
+            pm = (getattr(n, "payment_method", "cash") or "cash").lower()
+            pm_icon = "💳" if pm == "card" else "🏦"
+            where = "" if n.group_message_id else " 💾"
+            lines.append(
+                f"{idx}) {pm_icon} {html.escape(n.supplier_name)} — <b>{format_uzs(n.amount)}</b> <i>({tm})</i>{where}"
+            )
+        if summary.total_card_spent > 0:
+            lines.append(f"• Karta jami: <b>{format_uzs(summary.total_card_spent)} so'm</b>")
+        if summary.total_transfer_spent > 0:
+            lines.append(f"• Perechesleniya jami: <b>{format_uzs(summary.total_transfer_spent)} so'm</b>")
+
     if summary.debt_nakladnoys:
         lines.append("-------------------------------")
         lines.append(
@@ -150,7 +169,7 @@ def render_status_text(summary: SessionSummary) -> str:
     top_payment = max(summary.confirmed_nakladnoys, key=lambda n: n.amount, default=None)
 
     lines.append("\n📈 <b>Statistika:</b>")
-    lines.append(f"• Sarflanish: <b>{spend_pct:.1f}%</b> ({count} ta to'lov)")
+    lines.append(f"• Sarflanish: <b>{spend_pct:.1f}%</b> ({count} ta naqd to'lov)")
     if count > 0:
         lines.append(f"• O'rtacha to'lov: <b>{format_uzs(avg_amt)} so'm</b>")
     if top_payment is not None:
@@ -159,6 +178,13 @@ def render_status_text(summary: SessionSummary) -> str:
         )
     if count > 0:
         lines.append(f"• Guruhda / Shaxsiy bazada: 📤 {in_group_cnt} ta | 💾 {db_only_cnt} ta")
+    if summary.total_card_spent > 0:
+        lines.append(f"• Karta orqali: <b>{format_uzs(summary.total_card_spent)} so'm</b>")
+    if summary.total_transfer_spent > 0:
+        lines.append(f"• Perechesleniya orqali: <b>{format_uzs(summary.total_transfer_spent)} so'm</b>")
+    if summary.noncash_nakladnoys:
+        all_paid_total = summary.total_nakladnoy_spent + summary.total_card_spent + summary.total_transfer_spent
+        lines.append(f"• Barcha to'lovlar jami: <b>{format_uzs(all_paid_total)} so'm</b>")
     lines.append(f"• Kassa qarzi qoldig'i: <b>{format_uzs(summary.total_kassa_debt_outstanding)} so'm</b>")
     if summary.all_unpaid_debt_count > 0:
         lines.append(
@@ -176,7 +202,6 @@ def render_nakladnoy_group_caption(
 ) -> str:
     """Build caption/message sent to the Nakladnoy Telegram group."""
     ts = format_local_dt(payment.created_at, "%d.%m.%Y %H:%M")
-    prefix = f"{tag}\n" if tag else ""
     if payment.status == "deleted":
         return (
             f"❌ <b>[O'CHIRILDI / BEKOR QILINDI]</b>\n"
@@ -193,20 +218,46 @@ def render_nakladnoy_group_caption(
             f"📌 Holat: <b>QARZGA (to'lanmagan)</b>\n"
             f"📅 Vaqt: {ts}"
         )
-    if getattr(payment, "paid_at", None) is not None and tag == "✅ [QARZ TO'LANDI]":
+    pm = (getattr(payment, "payment_method", "cash") or "cash").strip().lower()
+    if getattr(payment, "paid_at", None) is not None and tag.startswith("✅ [QARZ TO'LANDI"):
         paid_ts = format_local_dt(payment.paid_at, "%d.%m.%Y %H:%M")
+        if pm == "card":
+            paid_head = "✅ <b>[QARZ TO'LANDI — KARTA]</b>"
+            paid_state = f"💳 Holat: <b>KARTA ORQALI TO'LANDI ({paid_ts})</b>"
+        elif pm == "transfer":
+            paid_head = "✅ <b>[QARZ TO'LANDI — O'TKAZMA]</b>"
+            paid_state = f"🏦 Holat: <b>PERECHESLENIYA BILAN TO'LANDI ({paid_ts})</b>"
+        else:
+            paid_head = "✅ <b>[QARZ TO'LANDI]</b>"
+            paid_state = f"✅ Holat: <b>TO'LANDI ({paid_ts})</b>"
         return (
-            f"✅ <b>[QARZ TO'LANDI]</b>\n"
+            f"{paid_head}\n"
             f"📸 <b>Nakladnoy #{payment.id}</b>\n"
             f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
             f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>\n"
-            f"✅ Holat: <b>TO'LANDI ({paid_ts})</b>\n"
+            f"{paid_state}\n"
             f"📅 Vaqt: {ts}"
         )
+
+    if tag:
+        header_tag = f"{tag}\n"
+    elif pm == "card":
+        header_tag = "💳 <b>[KARTA ORQALI TO'LANDI]</b>\n"
+    elif pm == "transfer":
+        header_tag = "🏦 <b>[PERECHESLENIYA / O'TKAZMA]</b>\n"
+    else:
+        header_tag = ""
+
+    pm_line = (
+        "\n💳 To'lov turi: <b>Karta (naqdsiz)</b>"
+        if pm == "card"
+        else ("\n🏦 To'lov turi: <b>Perechesleniya (o'tkazma)</b>" if pm == "transfer" else "")
+    )
     return (
-        f"{prefix}📸 <b>Nakladnoy #{payment.id}</b>\n"
+        f"{header_tag}📸 <b>Nakladnoy #{payment.id}</b>\n"
         f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
-        f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>\n"
+        f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>"
+        f"{pm_line}\n"
         f"📅 Vaqt: {ts}"
     )
 
@@ -695,12 +746,17 @@ async def _post_payment_to_group(bot, payment: NakladnoyPayment, nak_group) -> t
 
 def _format_balance_summary_block(summary: SessionSummary) -> str:
     """Compact balance breakdown shown in confirmation and done messages."""
-    return (
-        f"📊 <b>Sizda natija shu:</b>\n"
-        f"💵 Jami pul (kirim): <b>{format_uzs(summary.total_available_inflow)} so'm</b>\n"
-        f"➖ Jami rasxod ({len(summary.confirmed_nakladnoys)} ta): <b>{format_uzs(summary.total_nakladnoy_spent)} so'm</b>\n"
-        f"💰 <b>Qo'lda qolgani: {format_uzs(summary.expected_cash)} so'm</b>"
-    )
+    lines = [
+        "📊 <b>Sizda natija shu:</b>",
+        f"💵 Jami pul (kirim): <b>{format_uzs(summary.total_available_inflow)} so'm</b>",
+        f"➖ Jami rasxod ({len(summary.confirmed_nakladnoys)} ta): <b>{format_uzs(summary.total_nakladnoy_spent)} so'm</b>",
+    ]
+    if summary.total_card_spent > 0:
+        lines.append(f"💳 Karta (naqdsiz): <b>{format_uzs(summary.total_card_spent)} so'm</b>")
+    if summary.total_transfer_spent > 0:
+        lines.append(f"🏦 Perechesleniya (naqdsiz): <b>{format_uzs(summary.total_transfer_spent)} so'm</b>")
+    lines.append(f"💰 <b>Qo'lda qolgani: {format_uzs(summary.expected_cash)} so'm</b>")
+    return "\n".join(lines)
 
 
 async def _process_ready_nakladnoy(
@@ -969,8 +1025,9 @@ async def _finalize_nakladnoy_confirmation(
     payment_id: int,
     send_to_group: bool,
     is_debt: bool = False,
+    payment_method: str = "cash",
 ) -> None:
-    """Confirm a pending nakladnoy payment (paid or credit), optionally posting to group."""
+    """Confirm a pending nakladnoy payment (cash/card/transfer or debt), optionally posting to group."""
     if await deny_if_unauthorized(cb, ("admin", "kassir")):
         return
     uid = cb.from_user.id if cb.from_user else None
@@ -983,8 +1040,15 @@ async def _finalize_nakladnoy_confirmation(
             await cb.answer("Postavshik nomi va summa to'liq bo'lishi kerak!", show_alert=True)
             return
         nak_group = await get_group_config(db, "nakladnoy") if send_to_group else None
-        payment = await confirm_nakladnoy(db, payment_id, user_id=uid, is_debt=is_debt)
+        payment = await confirm_nakladnoy(
+            db,
+            payment_id,
+            user_id=uid,
+            is_debt=is_debt,
+            payment_method=payment_method,
+        )
 
+    pm = (getattr(payment, "payment_method", "cash") or "cash").strip().lower()
     posted = False
     reply_kb = None
     if is_debt:
@@ -994,16 +1058,54 @@ async def _finalize_nakladnoy_confirmation(
         else:
             group_notice = "<i>(Nakladnoy guruhi ulanmagan — faqat bazaga qarzga olindi)</i>"
         group_notice += "\n📌 <i>Holat: Qarzga (qo'ldagi puldan ayrilmadi)</i>"
-        reply_kb = auto_confirmed_nakladnoy_kb(payment.id, sent_to_group=posted, is_debt=True)
+        reply_kb = auto_confirmed_nakladnoy_kb(
+            payment.id, sent_to_group=posted, is_debt=True, payment_method="cash"
+        )
+        toast = "📌 Qarzga saqlandi!"
     elif not send_to_group:
         header = f"⏭ <b>Bazaga saqlandi! (#{payment.id})</b>"
         group_notice = "<i>(Guruhga yuborilmadi — faqat hisobingizga olindi)</i>"
+        toast = "✅ Saqlandi!"
     elif nak_group and payment:
-        header = f"✅ <b>Tasdiqlandi! (#{payment.id})</b>"
+        if pm == "card":
+            header = f"💳 <b>Karta orqali saqlandi! (#{payment.id})</b>"
+            toast = "💳 Karta orqali saqlandi!"
+        elif pm == "transfer":
+            header = f"🏦 <b>Perechesleniya saqlandi! (#{payment.id})</b>"
+            toast = "🏦 Perechesleniya saqlandi!"
+        else:
+            header = f"✅ <b>Tasdiqlandi! (#{payment.id})</b>"
+            toast = "✅ Saqlandi!"
         posted, group_notice = await _post_payment_to_group(cb.bot, payment, nak_group)
+        if pm == "card":
+            group_notice += "\n💳 <i>To'lov turi: Karta (qo'ldagi puldan ayrilmadi)</i>"
+            reply_kb = auto_confirmed_nakladnoy_kb(
+                payment.id, sent_to_group=posted, is_debt=False, payment_method="card"
+            )
+        elif pm == "transfer":
+            group_notice += "\n🏦 <i>To'lov turi: Perechesleniya / o'tkazma (qo'ldagi puldan ayrilmadi)</i>"
+            reply_kb = auto_confirmed_nakladnoy_kb(
+                payment.id, sent_to_group=posted, is_debt=False, payment_method="transfer"
+            )
     else:
-        header = f"✅ <b>Tasdiqlandi! (#{payment.id})</b>"
-        group_notice = "<i>(Nakladnoy guruhi ulanmagan — faqat hisobga olindi)</i>"
+        if pm == "card":
+            header = f"💳 <b>Karta orqali saqlandi! (#{payment.id})</b>"
+            group_notice = (
+                "<i>(Nakladnoy guruhi ulanmagan — faqat bazaga saqlandi)</i>\n"
+                "💳 <i>To'lov turi: Karta (qo'ldagi puldan ayrilmadi)</i>"
+            )
+            toast = "💳 Karta orqali saqlandi!"
+        elif pm == "transfer":
+            header = f"🏦 <b>Perechesleniya saqlandi! (#{payment.id})</b>"
+            group_notice = (
+                "<i>(Nakladnoy guruhi ulanmagan — faqat bazaga saqlandi)</i>\n"
+                "🏦 <i>To'lov turi: Perechesleniya / o'tkazma (qo'ldagi puldan ayrilmadi)</i>"
+            )
+            toast = "🏦 Perechesleniya saqlandi!"
+        else:
+            header = f"✅ <b>Tasdiqlandi! (#{payment.id})</b>"
+            group_notice = "<i>(Nakladnoy guruhi ulanmagan — faqat hisobga olindi)</i>"
+            toast = "✅ Saqlandi!"
         username = await get_bot_username(cb.bot)
         reply_kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -1027,7 +1129,7 @@ async def _finalize_nakladnoy_confirmation(
         f"{_format_balance_summary_block(summary)}",
         reply_markup=reply_kb,
     )
-    await cb.answer("📌 Qarzga saqlandi!" if is_debt else "✅ Saqlandi!")
+    await cb.answer(toast)
 
 
 @router.callback_query(F.data.startswith("nak:confirm:"))
@@ -1049,6 +1151,18 @@ async def cb_nakladnoy_save_debt(cb: CallbackQuery) -> None:
     await _finalize_nakladnoy_confirmation(cb, payment_id, send_to_group=True, is_debt=True)
 
 
+@router.callback_query(F.data.startswith("nak:save_pm:"))
+async def cb_nakladnoy_save_pm(cb: CallbackQuery) -> None:
+    """Confirm pending nakladnoy as card or transfer (does not deduct from cash-on-hand)."""
+    parts = cb.data.split(":")
+    if len(parts) < 4:
+        await cb.answer("Noto'g'ri buyruq", show_alert=True)
+        return
+    await _finalize_nakladnoy_confirmation(
+        cb, int(parts[2]), send_to_group=True, is_debt=False, payment_method=parts[3]
+    )
+
+
 @router.callback_query(F.data.startswith("nak:mark_debt:"))
 async def cb_nakladnoy_mark_debt(cb: CallbackQuery) -> None:
     """Convert an already confirmed paid nakladnoy into unpaid credit (Qarzga)."""
@@ -1064,6 +1178,17 @@ async def cb_nakladnoy_mark_debt(cb: CallbackQuery) -> None:
 
     in_group = bool(payment.group_chat_id and payment.group_message_id)
     _, sync_msg = await _sync_nakladnoy_group_message(cb.bot, payment)
+    kb = (
+        confirmed_nakladnoy_edit_kb(
+            payment.id,
+            in_group=in_group,
+            is_debt=True,
+            is_admin=is_admin_role(cb.from_user.id),
+            payment_method="cash",
+        )
+        if "Tasdiqlangan Nakladnoy" in (cb.message.text or "")
+        else auto_confirmed_nakladnoy_kb(payment.id, sent_to_group=in_group, is_debt=True)
+    )
     await _safe_edit_text(
         cb.message,
         f"📌 <b>Qarzga o'tkazildi! (#{payment.id})</b>\n"
@@ -1072,40 +1197,114 @@ async def cb_nakladnoy_mark_debt(cb: CallbackQuery) -> None:
         f"<i>(Qo'ldagi puldan ayrilmadi)</i>\n"
         f"{sync_msg}\n\n"
         f"{_format_balance_summary_block(summary)}",
-        reply_markup=auto_confirmed_nakladnoy_kb(payment.id, sent_to_group=in_group, is_debt=True),
+        reply_markup=kb,
     )
     await cb.answer("📌 Qarzga o'tkazildi!")
 
 
-@router.callback_query(F.data.startswith("nak:mark_paid:"))
-async def cb_nakladnoy_mark_paid(cb: CallbackQuery) -> None:
-    """Mark an unpaid credit nakladnoy as paid (To'landi) and deduct from active cash."""
+async def _handle_set_payment_method(cb: CallbackQuery, payment_id: int, pm: str) -> None:
+    """Shared handler for paying off debt or switching payment method (cash | card | transfer)."""
     if await deny_if_unauthorized(cb, ("admin", "kassir")):
         return
-    payment_id = int(cb.data.split(":")[-1])
     async with async_session_maker() as db:
-        res = await mark_nakladnoy_as_paid(db, payment_id, user_id=cb.from_user.id)
+        existing = await get_nakladnoy(db, payment_id)
+        if not existing or existing.status == "deleted":
+            await cb.answer("Topilmadi", show_alert=True)
+            return
+        was_debt = bool(existing.is_debt)
+        res = await set_nakladnoy_payment_method(db, payment_id, pm, user_id=cb.from_user.id)
         if not res:
             await cb.answer("Topilmadi", show_alert=True)
             return
         payment, moved_to_today = res
         summary = await compute_session_summary(db, payment.session_id)
 
+    actual_pm = (getattr(payment, "payment_method", "cash") or "cash").strip().lower()
     in_group = bool(payment.group_chat_id and payment.group_message_id)
-    _, sync_msg = await _sync_nakladnoy_group_message(
-        cb.bot, payment, tag="✅ [QARZ TO'LANDI]"
-    )
+    if was_debt:
+        tag_map = {
+            "cash": "✅ [QARZ TO'LANDI]",
+            "card": "✅ [QARZ TO'LANDI — KARTA]",
+            "transfer": "✅ [QARZ TO'LANDI — O'TKAZMA]",
+        }
+    else:
+        tag_map = {
+            "cash": "💵 [NAQD TO'LANDI]",
+            "card": "💳 [KARTA ORQALI TO'LANDI]",
+            "transfer": "🏦 [PERECHESLENIYA / O'TKAZMA]",
+        }
+    _, sync_msg = await _sync_nakladnoy_group_message(cb.bot, payment, tag=tag_map.get(actual_pm, ""))
     moved_line = "\n📅 <i>O'tgan kundan bugungi kassaga yozildi</i>" if moved_to_today else ""
+
+    if actual_pm == "card":
+        heading = (
+            f"💳 <b>Qarz karta bilan to'landi! (#{payment.id})</b>"
+            if was_debt
+            else f"💳 <b>Karta to'lovga o'tkazildi! (#{payment.id})</b>"
+        )
+        note_line = "\n<i>(Qo'ldagi puldan ayrilmadi)</i>"
+        toast = "💳 Karta orqali saqlandi!"
+    elif actual_pm == "transfer":
+        heading = (
+            f"🏦 <b>Qarz o'tkazma bilan to'landi! (#{payment.id})</b>"
+            if was_debt
+            else f"🏦 <b>Perechesleniyaga o'tkazildi! (#{payment.id})</b>"
+        )
+        note_line = "\n<i>(Qo'ldagi puldan ayrilmadi)</i>"
+        toast = "🏦 Perechesleniya saqlandi!"
+    else:
+        heading = (
+            f"💵 <b>Qarz to'landi! (#{payment.id})</b>"
+            if was_debt
+            else f"💵 <b>Naqd to'lovga o'tkazildi! (#{payment.id})</b>"
+        )
+        note_line = ""
+        toast = "✅ To'landi!" if was_debt else "💵 Naqd to'lovga o'tkazildi!"
+
+    msg_txt = cb.message.text or ""
+    if "Tasdiqlangan Nakladnoy" in msg_txt:
+        kb = confirmed_nakladnoy_edit_kb(
+            payment.id,
+            in_group=in_group,
+            is_debt=False,
+            is_admin=is_admin_role(cb.from_user.id),
+            payment_method=actual_pm,
+        )
+    else:
+        kb = auto_confirmed_nakladnoy_kb(
+            payment.id,
+            sent_to_group=in_group,
+            is_debt=False,
+            payment_method=actual_pm,
+        )
+
     await _safe_edit_text(
         cb.message,
-        f"💵 <b>Qarz to'landi! (#{payment.id})</b>\n"
+        f"{heading}\n"
         f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
-        f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>{moved_line}\n"
+        f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>{moved_line}{note_line}\n"
         f"{sync_msg}\n\n"
         f"{_format_balance_summary_block(summary)}",
-        reply_markup=auto_confirmed_nakladnoy_kb(payment.id, sent_to_group=in_group, is_debt=False),
+        reply_markup=kb,
     )
-    await cb.answer("✅ To'landi!")
+    await cb.answer(toast)
+
+
+@router.callback_query(F.data.startswith("nak:mark_paid:"))
+async def cb_nakladnoy_mark_paid(cb: CallbackQuery) -> None:
+    """Mark an unpaid credit nakladnoy as paid by cash (To'landi) and deduct from active cash."""
+    payment_id = int(cb.data.split(":")[-1])
+    await _handle_set_payment_method(cb, payment_id, "cash")
+
+
+@router.callback_query(F.data.startswith("nak:set_pm:"))
+async def cb_nakladnoy_set_payment_method(cb: CallbackQuery) -> None:
+    """Switch confirmed nakladnoy payment method or pay debt via card / transfer / cash."""
+    parts = cb.data.split(":")
+    if len(parts) < 4:
+        await cb.answer("Noto'g'ri buyruq", show_alert=True)
+        return
+    await _handle_set_payment_method(cb, int(parts[2]), parts[3])
 
 
 @router.callback_query(F.data == "nak:debts")
@@ -1167,6 +1366,7 @@ async def cb_nakladnoy_use_suggested(cb: CallbackQuery) -> None:
                 in_group=in_group,
                 is_debt=payment.is_debt,
                 is_admin=is_admin_role(cb.from_user.id),
+                payment_method=getattr(payment, "payment_method", "cash"),
             ),
         )
     else:
@@ -1243,8 +1443,20 @@ async def cb_nakladnoy_done(cb: CallbackQuery) -> None:
             return
         summary = await compute_session_summary(db, payment.session_id)
 
+    pm = (getattr(payment, "payment_method", "cash") or "cash").strip().lower()
     where = "📤 Guruhga yuborilgan" if payment.group_message_id else "💾 Faqat shaxsiy hisobda"
-    status_line = "📌 Qarzga (pul berilmagan)" if payment.is_debt else where
+    if payment.is_debt:
+        status_line = "📌 Qarzga (pul berilmagan)"
+        icon = "📌"
+    elif pm == "card":
+        status_line = f"💳 Karta orqali (naqd puldan ayrilmadi) | {where}"
+        icon = "💳"
+    elif pm == "transfer":
+        status_line = f"🏦 Perechesleniya (naqd puldan ayrilmadi) | {where}"
+        icon = "🏦"
+    else:
+        status_line = where
+        icon = "✅"
     done_kb = (
         InlineKeyboardMarkup(
             inline_keyboard=[
@@ -1253,7 +1465,17 @@ async def cb_nakladnoy_done(cb: CallbackQuery) -> None:
                         text="💵 To'landi (Pul berildi)",
                         callback_data=f"nak:mark_paid:{payment.id}",
                     )
-                ]
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="💳 Karta",
+                        callback_data=f"nak:set_pm:{payment.id}:card",
+                    ),
+                    InlineKeyboardButton(
+                        text="🏦 O'tkazma",
+                        callback_data=f"nak:set_pm:{payment.id}:transfer",
+                    ),
+                ],
             ]
         )
         if payment.is_debt
@@ -1261,7 +1483,7 @@ async def cb_nakladnoy_done(cb: CallbackQuery) -> None:
     )
     await _safe_edit_text(
         cb.message,
-        f"{'📌' if payment.is_debt else '✅'} <b>Saqlandi! (#{payment.id})</b>\n"
+        f"{icon} <b>Saqlandi! (#{payment.id})</b>\n"
         f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
         f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>\n"
         f"<i>({status_line})</i>\n\n"
@@ -1289,6 +1511,7 @@ async def cb_nakladnoy_repost_group(cb: CallbackQuery) -> None:
         summary = await compute_session_summary(db, payment.session_id)
 
     posted, notice = await _post_payment_to_group(cb.bot, payment, nak_group)
+    pm = (getattr(payment, "payment_method", "cash") or "cash").strip().lower()
     await _safe_edit_text(
         cb.message,
         f"✅ <b>Bazada saqlangan (#{payment.id})</b>\n"
@@ -1297,7 +1520,7 @@ async def cb_nakladnoy_repost_group(cb: CallbackQuery) -> None:
         f"{notice}\n\n"
         f"💵 Qo'lda qolishi kerak: <b>{format_uzs(summary.expected_cash)} so'm</b>",
         reply_markup=auto_confirmed_nakladnoy_kb(
-            payment.id, sent_to_group=posted, is_debt=payment.is_debt
+            payment.id, sent_to_group=posted, is_debt=payment.is_debt, payment_method=pm
         ),
     )
     await cb.answer("📤 Yuborildi!")
@@ -1350,7 +1573,12 @@ async def handle_edit_confirmed_btn(
     await state.clear()
     async with async_session_maker() as db:
         summary = await compute_session_summary(db)
-    if not summary.confirmed_nakladnoys and not summary.debt_nakladnoys and not summary.cash_transactions:
+    if (
+        not summary.confirmed_nakladnoys
+        and not summary.noncash_nakladnoys
+        and not summary.debt_nakladnoys
+        and not summary.cash_transactions
+    ):
         await message.answer("ℹ️ Bugungi ochiq smenada hali tahrirlanadigan yozuvlar yo'q.")
         return
     await message.answer(
@@ -1362,6 +1590,7 @@ async def handle_edit_confirmed_btn(
             summary.confirmed_nakladnoys,
             summary.cash_transactions,
             debt_nakladnoys=summary.debt_nakladnoys,
+            noncash_nakladnoys=summary.noncash_nakladnoys,
         ),
     )
 
@@ -1372,7 +1601,12 @@ async def cb_edit_menu_open(cb: CallbackQuery) -> None:
         return
     async with async_session_maker() as db:
         summary = await compute_session_summary(db)
-    if not summary.confirmed_nakladnoys and not summary.debt_nakladnoys and not summary.cash_transactions:
+    if (
+        not summary.confirmed_nakladnoys
+        and not summary.noncash_nakladnoys
+        and not summary.debt_nakladnoys
+        and not summary.cash_transactions
+    ):
         await cb.answer("Bugungi smenada yozuvlar yo'q.", show_alert=True)
         return
     await _safe_edit_text(
@@ -1382,6 +1616,7 @@ async def cb_edit_menu_open(cb: CallbackQuery) -> None:
             summary.confirmed_nakladnoys,
             summary.cash_transactions,
             debt_nakladnoys=summary.debt_nakladnoys,
+            noncash_nakladnoys=summary.noncash_nakladnoys,
         ),
     )
     await cb.answer()
@@ -1413,7 +1648,15 @@ async def cb_nakladnoy_edit_view(cb: CallbackQuery) -> None:
         if in_group
         else "💾 Faqat bazada (guruhga yuborilmagan)"
     )
-    pay_state = "📌 QARZGA (pul berilmagan)" if payment.is_debt else "✅ To'langan"
+    pm = (getattr(payment, "payment_method", "cash") or "cash").strip().lower()
+    if payment.is_debt:
+        pay_state = "📌 QARZGA (pul berilmagan)"
+    elif pm == "card":
+        pay_state = "💳 Karta orqali to'langan (naqdsiz)"
+    elif pm == "transfer":
+        pay_state = "🏦 Perechesleniya / o'tkazma (naqdsiz)"
+    else:
+        pay_state = "✅ Naqd to'langan"
     await _safe_edit_text(
         cb.message,
         f"📸 <b>Tasdiqlangan Nakladnoy #{payment.id}</b>\n"
@@ -1426,6 +1669,7 @@ async def cb_nakladnoy_edit_view(cb: CallbackQuery) -> None:
             in_group=in_group,
             is_debt=payment.is_debt,
             is_admin=is_admin_role(cb.from_user.id),
+            payment_method=pm,
         ),
     )
     await cb.answer()
@@ -1571,7 +1815,11 @@ async def process_edit_nakladnoy_amount(message: Message, state: FSMContext) -> 
             f"💰 Qo'lda qolishi kerak: <b>{format_uzs(summary.expected_cash)} so'm</b>",
             parse_mode="HTML",
             reply_markup=confirmed_nakladnoy_edit_kb(
-                payment.id, in_group=in_group, is_debt=payment.is_debt, is_admin=is_admin_role(uid)
+                payment.id,
+                in_group=in_group,
+                is_debt=payment.is_debt,
+                is_admin=is_admin_role(uid),
+                payment_method=getattr(payment, "payment_method", "cash"),
             ),
         )
         await message.answer("👇 Asosiy menyu:", reply_markup=main_menu_keyboard())
@@ -1649,7 +1897,11 @@ async def process_edit_nakladnoy_supplier(message: Message, state: FSMContext) -
             f"{sync_msg}",
             parse_mode="HTML",
             reply_markup=confirmed_nakladnoy_edit_kb(
-                payment.id, in_group=in_group, is_debt=payment.is_debt, is_admin=is_admin_role(uid)
+                payment.id,
+                in_group=in_group,
+                is_debt=payment.is_debt,
+                is_admin=is_admin_role(uid),
+                payment_method=getattr(payment, "payment_method", "cash"),
             ),
         )
         await message.answer("👇 Asosiy menyu:", reply_markup=main_menu_keyboard())

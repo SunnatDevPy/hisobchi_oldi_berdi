@@ -90,6 +90,10 @@ def upgrade_existing_schema(sync_conn: Connection) -> None:
             sync_conn.execute(
                 text(f"ALTER TABLE nakladnoy_payments ADD COLUMN paid_at {col_type}")
             )
+        if "payment_method" not in cols:
+            sync_conn.execute(
+                text("ALTER TABLE nakladnoy_payments ADD COLUMN payment_method VARCHAR(16) NOT NULL DEFAULT 'cash'")
+            )
         indexes = {ix["name"] for ix in inspector.get_indexes("nakladnoy_payments")}
         if "ix_nakladnoy_payments_photo_unique_id" not in indexes:
             sync_conn.execute(
@@ -103,6 +107,13 @@ def upgrade_existing_schema(sync_conn: Connection) -> None:
                 text(
                     "CREATE INDEX IF NOT EXISTS ix_nakladnoy_payments_is_debt "
                     "ON nakladnoy_payments (is_debt)"
+                )
+            )
+        if "ix_nakladnoy_payments_payment_method" not in indexes:
+            sync_conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_nakladnoy_payments_payment_method "
+                    "ON nakladnoy_payments (payment_method)"
                 )
             )
 

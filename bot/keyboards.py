@@ -147,9 +147,17 @@ def nakladnoy_confirm_kb(
             ],
             [
                 InlineKeyboardButton(
-                    text="📌 Qarzga (Pul berilmadi)",
+                    text="📌 Qarzga",
                     callback_data=f"nak:save_debt:{payment_id}",
-                )
+                ),
+                InlineKeyboardButton(
+                    text="💳 Karta",
+                    callback_data=f"nak:save_pm:{payment_id}:card",
+                ),
+                InlineKeyboardButton(
+                    text="🏦 O'tkazma",
+                    callback_data=f"nak:save_pm:{payment_id}:transfer",
+                ),
             ],
             [
                 InlineKeyboardButton(
@@ -172,13 +180,33 @@ def nakladnoy_confirm_kb(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _payment_method_row(
+    payment_id: int, current_pm: str = "cash", include_cash: bool = True
+) -> list[InlineKeyboardButton]:
+    """Row of payment-mode selector buttons with active-state checkmark."""
+    cur = (current_pm or "cash").strip().lower()
+    items = (
+        [("cash", "💵 Naqd"), ("card", "💳 Karta"), ("transfer", "🏦 O'tkazma")]
+        if include_cash
+        else [("card", "💳 Karta"), ("transfer", "🏦 O'tkazma")]
+    )
+    return [
+        InlineKeyboardButton(
+            text=(f"✅ {lbl}" if include_cash and cur == key else lbl),
+            callback_data=f"nak:set_pm:{payment_id}:{key}",
+        )
+        for key, lbl in items
+    ]
+
+
 def auto_confirmed_nakladnoy_kb(
     payment_id: int,
     sent_to_group: bool = True,
     suggested_supplier: Optional[str] = None,
     is_debt: bool = False,
+    payment_method: str = "cash",
 ) -> InlineKeyboardMarkup:
-    """Quick edit/undo/debt-toggle controls shown after instant auto-confirmation."""
+    """Quick edit/undo/debt/payment-mode controls shown after instant auto-confirmation."""
     rows: list[list[InlineKeyboardButton]] = []
     if suggested_supplier:
         rows.append(
@@ -189,17 +217,6 @@ def auto_confirmed_nakladnoy_kb(
                 )
             ]
         )
-    debt_btn = (
-        InlineKeyboardButton(
-            text="💵 To'landi (Pul berildi)",
-            callback_data=f"nak:mark_paid:{payment_id}",
-        )
-        if is_debt
-        else InlineKeyboardButton(
-            text="📌 Qarzga (Pul berilmadi)",
-            callback_data=f"nak:mark_debt:{payment_id}",
-        )
-    )
     rows.extend(
         [
             [
@@ -224,13 +241,34 @@ def auto_confirmed_nakladnoy_kb(
                     callback_data=f"nak:delete_conf:{payment_id}",
                 ),
             ],
-            [debt_btn],
+        ]
+    )
+    if is_debt:
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text="✅ Tayyor",
-                    callback_data=f"nak:done:{payment_id}",
+                    text="💵 To'landi (Pul berildi)",
+                    callback_data=f"nak:mark_paid:{payment_id}",
                 )
-            ],
+            ]
+        )
+        rows.append(_payment_method_row(payment_id, payment_method, include_cash=False))
+    else:
+        rows.append(_payment_method_row(payment_id, payment_method, include_cash=True))
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="📌 Qarzga (Pul berilmadi)",
+                    callback_data=f"nak:mark_debt:{payment_id}",
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="✅ Tayyor",
+                callback_data=f"nak:done:{payment_id}",
+            )
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -390,8 +428,9 @@ def edit_items_list_kb(
     nakladnoys: Sequence[NakladnoyPayment],
     cash_txs: Sequence[CashTransaction],
     debt_nakladnoys: Sequence[NakladnoyPayment] = (),
+    noncash_nakladnoys: Sequence[NakladnoyPayment] = (),
 ) -> InlineKeyboardMarkup:
-    """Inline list of confirmed nakladnoy payments, debt nakladnoys, and cash transactions for editing."""
+    """Inline list of confirmed nakladnoy payments, noncash/debt items, and cash transactions."""
     buttons = []
     for n in nakladnoys:
         sup = n.supplier_name[:20]
@@ -400,6 +439,20 @@ def edit_items_list_kb(
             [
                 InlineKeyboardButton(
                     text=f"{where} {sup} — {format_uzs(n.amount)}",
+                    callback_data=f"nak_view:{n.id}",
+                )
+            ]
+        )
+
+    for n in noncash_nakladnoys:
+        sup = n.supplier_name[:16]
+        pm = (getattr(n, "payment_method", "cash") or "cash").lower()
+        icon = "💳" if pm == "card" else "🏦"
+        tag = "KARTA" if pm == "card" else "O'TKAZMA"
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{icon} {sup} — {format_uzs(n.amount)} [{tag}]",
                     callback_data=f"nak_view:{n.id}",
                 )
             ]
@@ -437,6 +490,7 @@ def confirmed_nakladnoy_edit_kb(
     in_group: bool = False,
     is_debt: bool = False,
     is_admin: bool = True,
+    payment_method: str = "cash",
 ) -> InlineKeyboardMarkup:
     """Edit options for an already confirmed nakladnoy (or paying an unpaid debt nakladnoy)."""
     if not is_admin:
@@ -450,6 +504,7 @@ def confirmed_nakladnoy_edit_kb(
                     )
                 ]
             )
+            rows.append(_payment_method_row(payment_id, payment_method, include_cash=False))
         rows.append([InlineKeyboardButton(text="⬅️ Qarzlar ro'yxati", callback_data="nak:debts")])
         return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -474,6 +529,7 @@ def confirmed_nakladnoy_edit_kb(
                 )
             ]
         )
+        rows.append(_payment_method_row(payment_id, payment_method, include_cash=False))
     rows.extend(
         [
             [
@@ -496,6 +552,7 @@ def confirmed_nakladnoy_edit_kb(
         ]
     )
     if not is_debt:
+        rows.append(_payment_method_row(payment_id, payment_method, include_cash=True))
         rows.append(
             [
                 InlineKeyboardButton(

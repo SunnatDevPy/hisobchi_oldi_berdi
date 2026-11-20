@@ -38,6 +38,9 @@ ACTION_ICONS = {
     "edit": "✏️",
     "delete": "🗑",
     "confirm": "✅",
+    "confirm_cash": "💵",
+    "confirm_card": "💳",
+    "confirm_transfer": "🏦",
     "confirm_debt": "📌",
     "mark_debt": "📌",
     "mark_paid": "💵",
@@ -103,7 +106,9 @@ async def _send_sverka_report(
     if supplier:
         lines = [f"🏢 <b>{html.escape(rows[0]['supplier'])}</b> — {month}"]
         for r in rows[:50]:
-            lines.append(f"{r['date'][8:]}.{r['date'][5:7]} {r['time']} — <b>{format_uzs(r['amount'])}</b>")
+            pm = r.get("payment_method", "cash")
+            pm_tag = " 💳" if pm == "card" else (" 🏦" if pm == "transfer" else "")
+            lines.append(f"{r['date'][8:]}.{r['date'][5:7]} {r['time']} — <b>{format_uzs(r['amount'])}</b>{pm_tag}")
         if len(rows) > 50:
             lines.append(f"<i>...yana {len(rows) - 50} ta (to'liq ro'yxat Excel'da)</i>")
         lines.append(f"\n💰 Jami: <b>{format_uzs(sum(r['amount'] for r in rows))}</b> so'm ({len(rows)} ta)")
@@ -132,10 +137,22 @@ def _render_period_stats_text(title: str, st: dict) -> str:
         f"📈 <b>{title}</b> (<code>{st['date_from']}</code> → <code>{st['date_to']}</code>)",
         "===============================",
         f"💸 Jami rasxod ({st['payment_count']} ta nakladnoy): <b>{format_uzs(st['total_spent'])} so'm</b>",
-        f"📅 Faol kunlar: <b>{st['active_days']} kun</b> | Kunlik o'rtacha: <b>{format_uzs(st['avg_daily_spend'])} so'm</b>",
-        f"🧾 O'rtacha to'lov: <b>{format_uzs(st['avg_payment'])} so'm</b>",
-        f"➕ Asosiy kirim: <b>{format_uzs(st['total_cash_in'])} so'm</b>",
     ]
+    if st.get("card_spent", 0.0) > 0 or st.get("transfer_spent", 0.0) > 0:
+        lines.append(f"   💵 Naqd ({st.get('cash_count', 0)} ta): <b>{format_uzs(st.get('cash_spent', 0.0))} so'm</b>")
+        if st.get("card_spent", 0.0) > 0:
+            lines.append(f"   💳 Karta ({st.get('card_count', 0)} ta): <b>{format_uzs(st.get('card_spent', 0.0))} so'm</b>")
+        if st.get("transfer_spent", 0.0) > 0:
+            lines.append(
+                f"   🏦 Perechesleniya ({st.get('transfer_count', 0)} ta): <b>{format_uzs(st.get('transfer_spent', 0.0))} so'm</b>"
+            )
+    lines.extend(
+        [
+            f"📅 Faol kunlar: <b>{st['active_days']} kun</b> | Kunlik o'rtacha: <b>{format_uzs(st['avg_daily_spend'])} so'm</b>",
+            f"🧾 O'rtacha to'lov: <b>{format_uzs(st['avg_payment'])} so'm</b>",
+            f"➕ Asosiy kirim: <b>{format_uzs(st['total_cash_in'])} so'm</b>",
+        ]
+    )
     if st["busiest_day"]:
         bd, bt = st["busiest_day"]
         lines.append(f"🔥 Eng katta rasxod kuni: <code>{bd}</code> — <b>{format_uzs(bt)} so'm</b>")
