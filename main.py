@@ -15,6 +15,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from bot.handlers import get_main_router
 from config import get_settings
 from database.session import init_db
+from services.backup import backup_scheduler
 
 
 logging.basicConfig(
@@ -52,6 +53,7 @@ async def run_bot() -> None:
     dp.include_router(get_main_router())
 
     logger.info("Starting Hisobot Bot polling...")
+    backup_task = asyncio.create_task(backup_scheduler(bot))
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(
         bot,

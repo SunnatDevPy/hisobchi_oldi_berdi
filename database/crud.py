@@ -1,4 +1,4 @@
-"""Async CRUD operations for wallet sessions, nakladnoy payments, groups, suppliers, and prixod reports."""
+﻿"""Async CRUD operations for wallet sessions, nakladnoy payments, groups, suppliers, and prixod reports."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 from config import get_settings
 from database.models import (
     AppSetting,
+    AuditLog,
     CashTransaction,
     DailyCashSession,
     GroupConfig,
@@ -370,12 +371,14 @@ async def update_cash_transaction(
     tx = await db.get(CashTransaction, tx_id)
     if tx is None or tx.is_deleted:
         return None
+    old = f"summa={tx.amount:.0f}, izoh={tx.note}"
     if new_amount is not None:
         tx.amount = float(new_amount)
     if new_note is not None:
         tx.note = new_note.strip()
     await db.commit()
     await db.refresh(tx)
+    await log_action(db, "edit", "cash", tx.id, f"{old} -> summa={tx.amount:.0f}, izoh={tx.note}")
     await compute_session_summary(db, tx.session_id)
     return tx
 
@@ -388,6 +391,7 @@ async def delete_cash_transaction(db: AsyncSession, tx_id: int) -> Optional[Cash
     tx.is_deleted = True
     await db.commit()
     await db.refresh(tx)
+    await log_action(db, "delete", "cash", tx.id, f"summa={tx.amount:.0f}, izoh={tx.note}")
     await compute_session_summary(db, tx.session_id)
     return tx
 
@@ -458,6 +462,7 @@ async def confirm_nakladnoy(
     if payment is None or payment.status == "deleted":
         return None
     payment.status = "confirmed"
+    await log_action(db, "confirm", "nakladnoy", payment.id, f"{payment.supplier_name} / {payment.amount:.0f}")
     if group_chat_id is not None:
         payment.group_chat_id = group_chat_id
     if group_message_id is not None:
@@ -493,6 +498,7 @@ async def update_nakladnoy(
     payment = await db.get(NakladnoyPayment, payment_id)
     if payment is None or payment.status == "deleted":
         return None
+    old = f"{payment.supplier_name} / {payment.amount:.0f}"
     if supplier_name is not None:
         payment.supplier_name = supplier_name.strip()
     if amount is not None:
@@ -501,6 +507,7 @@ async def update_nakladnoy(
         payment.note = note
     await db.commit()
     await db.refresh(payment)
+    await log_action(db, "edit", "nakladnoy", payment.id, f"{old} -> {payment.supplier_name} / {payment.amount:.0f}")
     if payment.status == "confirmed":
         await compute_session_summary(db, payment.session_id)
     return payment
@@ -515,6 +522,7 @@ async def delete_nakladnoy(db: AsyncSession, payment_id: int) -> Optional[Naklad
     payment.status = "deleted"
     await db.commit()
     await db.refresh(payment)
+    await log_action(db, "delete", "nakladnoy", payment.id, f"{payment.supplier_name} / {payment.amount:.0f}")
     if was_confirmed:
         await compute_session_summary(db, payment.session_id)
     return payment
@@ -726,3 +734,25 @@ def round_nakladnoy_amount(amount: float, mode: str = "floor_1000") -> float:
     if mode == "nearest_1000" and val >= 1000:
         return float(round(val / 1000.0) * 1000)
     return float(round(val))
+
+
+# ---------------------------------------------------------------------------
+# Audit log
+# ---------------------------------------------------------------------------
+
+
+async def log_action(
+    db: AsyncSession, action: str, entity: str, entity_id: int, details: str = ""
+) -> None:
+    """Persist an audit record (own commit; failures never break the main flow)."""
+    try:
+        db.add(AuditLog(action=action, entity=entity, entity_id=int(entity_id), details=details[:2000]))
+        await db.commit()
+    except Exception:
+        await db.rollback()
+
+
+async def list_audit_logs(db: AsyncSession, limit: int = 20) -> List[AuditLog]:
+    """Return the most recent audit records."""
+    stmt = select(AuditLog).order_by(desc(AuditLog.id)).limit(limit)
+    return list((await db.scalars(stmt)).all())

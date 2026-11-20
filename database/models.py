@@ -1,4 +1,4 @@
-"""SQLAlchemy 2.0 ORM models for Hisobot Bot."""
+﻿"""SQLAlchemy 2.0 ORM models for Hisobot Bot."""
 
 from __future__ import annotations
 
@@ -172,3 +172,18 @@ class AppSetting(Base):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+
+
+class AuditLog(Base):
+    """Immutable log of edits/deletes/confirmations for money-related records."""
+
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    action: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    entity: Mapped[str] = mapped_column(String(32), nullable=False)
+    entity_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    details: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
