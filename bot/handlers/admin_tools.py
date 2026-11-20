@@ -11,7 +11,10 @@ from aiogram.filters import Command
 from aiogram.types import ErrorEvent, Message
 
 from config import get_settings
-from database.crud import format_local_dt, list_audit_logs
+from aiogram.types import BufferedInputFile
+
+from database.crud import format_local_dt, get_supplier_sverka, list_audit_logs, now_local
+from services.excel_export import build_sverka_excel
 from database.session import async_session_maker
 from services.backup import send_backup
 
@@ -68,3 +71,48 @@ async def on_error(event: ErrorEvent, bot: Bot) -> bool:
         except Exception:
             pass
     return True
+
+
+def _fmt(n: float) -> str:
+    return f"{round(n):,}".replace(",", " ")
+
+
+@router.message(Command("sverka"), F.chat.type == "private")
+async def cmd_sverka(message: Message) -> None:
+    """/sverka [YYYY-MM] [postavshik] — monthly totals per supplier + Excel."""
+    if not _is_admin(message.from_user.id):
+        return
+    parts = (message.text or "").split(maxsplit=2)[1:]
+    month = now_local().strftime("%Y-%m")
+    if parts and len(parts[0]) == 7 and parts[0][4] == "-" and parts[0].replace("-", "").isdigit():
+        month = parts.pop(0)
+    supplier = " ".join(parts).strip() or None
+    async with async_session_maker() as db:
+        rows = await get_supplier_sverka(db, month, supplier)
+    if not rows:
+        await message.answer(
+            f"📭 {month} oyida ma'lumot topilmadi."
+            "\n<i>Foydalanish: /sverka [2026-11] [postavshik nomi]</i>",
+            parse_mode="HTML",
+        )
+        return
+    if supplier:
+        lines = [f"🏢 <b>{html.escape(rows[0]['supplier'])}</b> — {month}"]
+        for r in rows:
+            lines.append(f"{r['date'][8:]}.{r['date'][5:7]} {r['time']} — <b>{_fmt(r['amount'])}</b>")
+        lines.append(f"\n💰 Jami: <b>{_fmt(sum(r['amount'] for r in rows))}</b> so'm ({len(rows)} ta)")
+    else:
+        totals: dict[str, list] = {}
+        for r in rows:
+            e = totals.setdefault(r["supplier"].lower(), [r["supplier"], 0, 0.0])
+            e[1] += 1
+            e[2] += r["amount"]
+        lines = [f"📊 <b>Postavshiklar sverkasi — {month}</b>"]
+        for i, (name, cnt, total) in enumerate(sorted(totals.values(), key=lambda e: -e[2]), 1):
+            lines.append(f"{i}) {html.escape(name)} — <b>{_fmt(total)}</b> ({cnt} ta)")
+        lines.append(f"\n💰 Jami: <b>{_fmt(sum(r['amount'] for r in rows))}</b> so'm")
+    text = "\n".join(lines)
+    await message.answer(text[:4000], parse_mode="HTML")
+    await message.answer_document(
+        BufferedInputFile(build_sverka_excel(month, rows), filename=f"sverka_{month}.xlsx")
+    )

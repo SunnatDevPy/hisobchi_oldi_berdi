@@ -756,3 +756,42 @@ async def list_audit_logs(db: AsyncSession, limit: int = 20) -> List[AuditLog]:
     """Return the most recent audit records."""
     stmt = select(AuditLog).order_by(desc(AuditLog.id)).limit(limit)
     return list((await db.scalars(stmt)).all())
+
+# ---------------------------------------------------------------------------
+# Supplier reconciliation (sverka)
+# ---------------------------------------------------------------------------
+
+
+async def get_supplier_sverka(
+    db: AsyncSession, month: str, supplier: Optional[str] = None
+) -> List[dict]:
+    """Confirmed nakladnoys for ``month`` (YYYY-MM), optionally for one supplier (case-insensitive).
+
+    Returns rows: {supplier, amount, date, time, note}, sorted by date/time.
+    """
+    stmt = (
+        select(NakladnoyPayment, DailyCashSession.report_date)
+        .join(DailyCashSession, DailyCashSession.id == NakladnoyPayment.session_id)
+        .where(
+            NakladnoyPayment.status == "confirmed",
+            DailyCashSession.report_date.like(f"{month}-%"),
+        )
+        .order_by(DailyCashSession.report_date, NakladnoyPayment.id)
+    )
+    rows = (await db.execute(stmt)).all()
+    target = supplier.strip().lower() if supplier else None
+    result: List[dict] = []
+    for pay, report_date in rows:
+        name = pay.supplier_name.strip()
+        if target and name.lower() != target:
+            continue
+        result.append(
+            {
+                "supplier": name,
+                "amount": float(pay.amount),
+                "date": report_date,
+                "time": format_local_dt(pay.created_at, "%H:%M") if pay.created_at else "",
+                "note": pay.note or "",
+            }
+        )
+    return result

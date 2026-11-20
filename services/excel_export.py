@@ -1,4 +1,4 @@
-"""OpenPyXL Excel report generator for daily wallet sessions and prixod reports."""
+﻿"""OpenPyXL Excel report generator for daily wallet sessions and prixod reports."""
 
 from __future__ import annotations
 
@@ -249,4 +249,44 @@ def build_prixod_excel(report: PrixodReport) -> bytes:
     _autowidth(ws, skip_rows=2)
     ws.column_dimensions["A"].width = 8
     _finish(ws, "A4", ncols, 3, 3 + len(rows))
+    return _to_bytes(wb)
+
+
+def build_sverka_excel(month: str, rows: Sequence[dict]) -> bytes:
+    """Supplier reconciliation workbook: summary sheet + all payments sheet."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Postavshiklar"
+    totals: dict[str, list[float]] = {}
+    for r in rows:
+        key = r["supplier"].lower()
+        entry = totals.setdefault(key, [r["supplier"], 0, 0.0])
+        entry[1] += 1
+        entry[2] += r["amount"]
+    ordered = sorted(totals.values(), key=lambda e: -e[2])
+
+    _title(ws, f"POSTAVSHIKLAR SVERKASI — {month}", 4)
+    _header(ws, 3, ["#", "Postavshik", "Nakladnoylar soni", "Jami summa"])
+    for i, (name, cnt, total) in enumerate(ordered, start=1):
+        _body_row(ws, 3 + i, [i, name, int(cnt), round(total)], money_cols=(3, 4), zebra=i % 2 == 0)
+    if ordered:
+        end = 3 + len(ordered)
+        _total_row(ws, end + 1, "JAMI", 2, {3: f"=SUM(C4:C{end})", 4: f"=SUM(D4:D{end})"}, 4)
+    _autowidth(ws, skip_rows=2)
+    ws.column_dimensions["A"].width = 8
+    _finish(ws, "A4", 4, 3, 3 + len(ordered))
+
+    ws2 = wb.create_sheet("Barcha to'lovlar")
+    _title(ws2, f"BARCHA TO'LOVLAR — {month}", 5)
+    _header(ws2, 3, ["Sana", "Vaqt", "Postavshik", "Summa", "Izoh"])
+    for i, r in enumerate(rows, start=1):
+        _body_row(
+            ws2, 3 + i, [r["date"], r["time"], r["supplier"], round(r["amount"]), r["note"]],
+            money_cols=(4,), zebra=i % 2 == 0,
+        )
+    if rows:
+        end = 3 + len(rows)
+        _total_row(ws2, end + 1, "JAMI", 3, {4: f"=SUM(D4:D{end})"}, 5)
+    _autowidth(ws2, skip_rows=2)
+    _finish(ws2, "A4", 5, 3, 3 + len(rows))
     return _to_bytes(wb)
