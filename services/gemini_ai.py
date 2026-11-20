@@ -337,20 +337,53 @@ async def _call_gemini(
     return _extract_json_object(raw_text), usage, used_model
 
 
+def parse_photo_caption(caption: Optional[str]) -> Tuple[Optional[str], Optional[float]]:
+    """Extract explicit supplier override and/or amount (>= 500) from a photo caption."""
+    if not caption or not caption.strip():
+        return None, None
+    raw = " ".join(caption.strip().split())
+    amt = parse_uzbek_amount(raw)
+    cap_amount: Optional[float] = float(amt) if (amt is not None and amt >= 500) else None
+
+    if cap_amount is not None:
+        cleaned = re.sub(
+            r"(?i)\b(?:so'm|som|sum|сўм|mln|million|ming|mlrd|milliard|млн|миллион|тыс|тысяч)\b",
+            " ",
+            raw,
+        )
+        cleaned = re.sub(r"(?i)(?<![A-Za-zА-Яа-яЁё])\d+(?:[.,]\d+)?\s*k\b", " ", cleaned)
+        cleaned = re.sub(
+            r"(?<![A-Za-zА-Яа-яЁё])\d[\d\s.,+_]*(?![A-Za-zА-Яа-яЁё])",
+            " ",
+            cleaned,
+        )
+        cleaned = " ".join(cleaned.strip(" :-").split())
+    else:
+        cleaned = raw
+
+    cap_supplier = cleaned if re.search(r"[A-Za-zА-Яа-яЁё]{2,}", cleaned) else None
+    return cap_supplier, cap_amount
+
+
 async def extract_nakladnoy_from_image(
     image_bytes: bytes,
     mime_type: str = "image/jpeg",
     caption: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Analyze a supplier nakladnoy image via Gemini Vision after client-side resize."""
-    settings = get_settings()
-    cap_supplier = None
-    cap_amount = parse_uzbek_amount(caption) if caption else None
-    if caption:
-        cap_clean = re.sub(r"\d[\d\s.,kKmlnmingmillionso'msomсўм]*", " ", caption).strip()
-        if re.search(r"[A-Za-zА-Яа-яЁё]{2,}", cap_clean):
-            cap_supplier = cap_clean
+    cap_supplier, cap_amount = parse_photo_caption(caption)
 
+    # Zero-token shortcut when user already wrote both supplier & amount under the photo
+    if cap_supplier and cap_amount is not None and cap_amount > 0:
+        return {
+            "supplier_name": cap_supplier,
+            "amount": float(cap_amount),
+            "is_clear": True,
+            "notes": "",
+            "error_code": None,
+        }
+
+    settings = get_settings()
     if not settings.GEMINI_API_KEY:
         return {
             "supplier_name": cap_supplier,
@@ -362,7 +395,12 @@ async def extract_nakladnoy_from_image(
 
     resized_bytes, out_mime = compress_image_for_ocr(image_bytes, max_side=1280, quality=82)
     prompt = OCR_PROMPT
-    if caption:
+    if cap_supplier:
+        prompt += (
+            f" Postavshik nomi aniq belgilangan: '{cap_supplier}'. "
+            "Rasmdan faqat yakuniy summani (amount) o'qing; summa aniq o'qilsa is_clear=true qaytaring."
+        )
+    elif caption:
         prompt += f" Izoh: {caption}"
 
     encoded = base64.b64encode(resized_bytes).decode("ascii")
@@ -406,13 +444,17 @@ async def extract_nakladnoy_from_image(
     elif isinstance(raw_amount, str):
         amount = parse_uzbek_amount(raw_amount)
 
-    if caption:
-        if amount is None:
-            amount = cap_amount
-        if supplier is None:
-            supplier = cap_supplier
+    # Strict caption precedence over OCR
+    if cap_supplier:
+        supplier = cap_supplier
+    if cap_amount is not None:
+        amount = float(cap_amount)
 
-    is_clear = bool(data.get("is_clear")) and supplier is not None and amount is not None and amount > 0
+    if supplier is not None and amount is not None and amount > 0:
+        is_clear = True if cap_supplier else bool(data.get("is_clear"))
+    else:
+        is_clear = False
+
     return {
         "supplier_name": supplier,
         "amount": amount,

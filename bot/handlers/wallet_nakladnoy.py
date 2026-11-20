@@ -65,6 +65,7 @@ from services.gemini_ai import (
     VoiceTooLongError,
     extract_nakladnoy_from_image,
     format_uzs,
+    parse_photo_caption,
     parse_uzbek_amount,
     parse_voice_or_text,
 )
@@ -503,7 +504,7 @@ async def handle_add_nakladnoy_btn(
     await state.update_data(quick_suppliers=recents)
     prompt = (
         "📸 <b>Nakladnoy rasmini tashlang</b>\n"
-        "<i>(Rasm tiniq bo'lsa bot o'zi o'qiydi va guruhga yuboradi)</i>\n\n"
+        "<i>(Postavshik nomi rasmda bo'lmasa yoki xato bo'lsa, rasm tagiga nomini yozib tashlang — bot o'sha nomni oladi.)</i>\n\n"
         "Yoki matn/ovozda yozing: <i>«Non Oka 1 657 000»</i>\n"
         + ("👇 Yoki oxirgi postavshiklardan birini tanlang:" if recents else "")
     )
@@ -587,7 +588,14 @@ async def process_quick_nakladnoy_amount(message: Message, state: FSMContext) ->
     sup = data.get("selected_supplier")
     if not sup:
         await state.clear()
-        await handle_any_text(message, state)
+        if message.photo:
+            await _process_nakladnoy_photo(message, state)
+        else:
+            await handle_any_text(message, state)
+        return
+
+    if message.photo:
+        await _process_nakladnoy_photo(message, state, override_supplier=sup)
         return
 
     amt: Optional[float] = None
@@ -739,9 +747,14 @@ async def _process_ready_nakladnoy(
         await message.answer("👇 Tasdiqlang yoki tahrirlang:", reply_markup=main_menu_keyboard())
 
 
-async def _process_nakladnoy_photo(message: Message, state: FSMContext) -> None:
+async def _process_nakladnoy_photo(
+    message: Message, state: FSMContext, override_supplier: Optional[str] = None
+) -> None:
     """Shared handler for nakladnoy photo processing via dedup cache + Gemini Vision."""
     full_photo = message.photo[-1]
+    cap_sup, cap_amt = parse_photo_caption(message.caption)
+    effective_sup = override_supplier or cap_sup
+
     # A6: Zero-token deduplication via Telegram file_unique_id before calling Gemini
     async with async_session_maker() as db:
         cached = await find_nakladnoy_by_photo_unique_id(db, full_photo.file_unique_id)
@@ -750,9 +763,9 @@ async def _process_nakladnoy_photo(message: Message, state: FSMContext) -> None:
             sess = await get_or_create_open_session(db)
             dup_pending = await create_pending_nakladnoy(
                 db,
-                supplier_name=cached.supplier_name,
-                amount=float(cached.amount),
-                original_amount=cached.original_amount,
+                supplier_name=effective_sup or cached.supplier_name,
+                amount=float(cap_amt) if cap_amt else float(cached.amount),
+                original_amount=None if cap_amt else cached.original_amount,
                 photo_file_id=full_photo.file_id,
                 photo_unique_id=full_photo.file_unique_id,
                 note=cached.note,
@@ -770,14 +783,19 @@ async def _process_nakladnoy_photo(message: Message, state: FSMContext) -> None:
     wait_msg = await message.answer("🔍 Nakladnoy rasmi o'qilmoqda...")
     buf = io.BytesIO()
     await message.bot.download(dl_photo, destination=buf)
+    effective_caption = (
+        f"{override_supplier} {message.caption or ''}".strip()
+        if override_supplier
+        else message.caption
+    )
     extracted = await extract_nakladnoy_from_image(
         image_bytes=buf.getvalue(),
         mime_type="image/jpeg",
-        caption=message.caption,
+        caption=effective_caption,
     )
     await maybe_warn_ai_limit(message.bot)
 
-    supplier_name = extracted.get("supplier_name") or ""
+    supplier_name = effective_sup or extracted.get("supplier_name") or ""
     amount = extracted.get("amount") or 0.0
     notes = extracted.get("notes") or ""
     is_clear = bool(extracted.get("is_clear"))

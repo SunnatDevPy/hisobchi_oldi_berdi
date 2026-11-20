@@ -569,7 +569,6 @@ def test_navigation_router_overrides_active_fsm_state(tmp_path: Path, monkeypatc
         asyncio.run(scenario())
     finally:
         asyncio.run(eng.dispose())
-        get_settings.cache_clear()
 
 
 def test_supplier_normalization_fuzzy_and_recent_suggestions(tmp_path: Path):
@@ -733,3 +732,48 @@ def test_idempotent_schema_upgrade_from_legacy_db(tmp_path: Path):
         asyncio.run(scenario())
     finally:
         asyncio.run(eng.dispose())
+
+
+def test_photo_caption_overrides_ocr_supplier_and_zero_token_shortcut(monkeypatch):
+    from config import get_settings
+    import services.gemini_ai as ai_mod
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    get_settings.cache_clear()
+
+    assert ai_mod.parse_photo_caption("Nafis") == ("Nafis", None)
+    assert ai_mod.parse_photo_caption("Dilshod Tovuq") == ("Dilshod Tovuq", None)
+    assert ai_mod.parse_photo_caption("S4 dan kelgan") == ("S4 dan kelgan", None)
+    assert ai_mod.parse_photo_caption("500 000 Nafis") == ("Nafis", 500_000.0)
+    assert ai_mod.parse_photo_caption("Nafis 330 000") == ("Nafis", 330_000.0)
+    assert ai_mod.parse_photo_caption("330 000") == (None, 330_000.0)
+
+    async def scenario() -> None:
+        # 1. Caption supplier strictly overrides wrong/unclear OCR supplier and sets is_clear=True
+        async def fake_gemini(parts, response_schema=None):
+            return (
+                {"supplier_name": "Wrong Co", "amount": 450000, "is_clear": False, "notes": ""},
+                {"promptTokenCount": 10, "candidatesTokenCount": 5, "totalTokenCount": 15},
+                "gemini-flash-lite-latest",
+            )
+
+        monkeypatch.setattr(ai_mod, "_call_gemini", fake_gemini)
+        res1 = await ai_mod.extract_nakladnoy_from_image(b"img", caption="Nafis")
+        assert res1["supplier_name"] == "Nafis"
+        assert res1["amount"] == 450_000.0
+        assert res1["is_clear"] is True
+
+        # 2. Zero-token fast path when caption has both supplier and amount
+        async def boom_gemini(*args, **kwargs):
+            raise AssertionError("Gemini must not be called when caption provides both supplier and amount")
+
+        monkeypatch.setattr(ai_mod, "_call_gemini", boom_gemini)
+        res2 = await ai_mod.extract_nakladnoy_from_image(b"img", caption="Nafis 330 000")
+        assert res2["supplier_name"] == "Nafis"
+        assert res2["amount"] == 330_000.0
+        assert res2["is_clear"] is True
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        get_settings.cache_clear()
