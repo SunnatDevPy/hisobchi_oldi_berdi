@@ -1026,10 +1026,13 @@ async def _finalize_nakladnoy_confirmation(
     send_to_group: bool,
     is_debt: bool = False,
     payment_method: str = "cash",
+    state: Optional[FSMContext] = None,
 ) -> None:
     """Confirm a pending nakladnoy payment (cash/card/transfer or debt), optionally posting to group."""
     if await deny_if_unauthorized(cb, ("admin", "kassir")):
         return
+    if state is not None:
+        await state.clear()
     uid = cb.from_user.id if cb.from_user else None
     async with async_session_maker() as db:
         payment = await get_nakladnoy(db, payment_id)
@@ -1133,33 +1136,39 @@ async def _finalize_nakladnoy_confirmation(
 
 
 @router.callback_query(F.data.startswith("nak:confirm:"))
-async def cb_nakladnoy_confirm(cb: CallbackQuery) -> None:
+async def cb_nakladnoy_confirm(cb: CallbackQuery, state: FSMContext) -> None:
     payment_id = int(cb.data.split(":")[-1])
-    await _finalize_nakladnoy_confirmation(cb, payment_id, send_to_group=True, is_debt=False)
+    await _finalize_nakladnoy_confirmation(
+        cb, payment_id, send_to_group=True, is_debt=False, state=state
+    )
 
 
 @router.callback_query(F.data.startswith("nak:save_only:"))
-async def cb_nakladnoy_save_only(cb: CallbackQuery) -> None:
+async def cb_nakladnoy_save_only(cb: CallbackQuery, state: FSMContext) -> None:
     payment_id = int(cb.data.split(":")[-1])
-    await _finalize_nakladnoy_confirmation(cb, payment_id, send_to_group=False, is_debt=False)
+    await _finalize_nakladnoy_confirmation(
+        cb, payment_id, send_to_group=False, is_debt=False, state=state
+    )
 
 
 @router.callback_query(F.data.startswith("nak:save_debt:"))
-async def cb_nakladnoy_save_debt(cb: CallbackQuery) -> None:
+async def cb_nakladnoy_save_debt(cb: CallbackQuery, state: FSMContext) -> None:
     """Confirm pending nakladnoy as unpaid credit (Qarzga) and post QARZGA label to group."""
     payment_id = int(cb.data.split(":")[-1])
-    await _finalize_nakladnoy_confirmation(cb, payment_id, send_to_group=True, is_debt=True)
+    await _finalize_nakladnoy_confirmation(
+        cb, payment_id, send_to_group=True, is_debt=True, state=state
+    )
 
 
 @router.callback_query(F.data.startswith("nak:save_pm:"))
-async def cb_nakladnoy_save_pm(cb: CallbackQuery) -> None:
+async def cb_nakladnoy_save_pm(cb: CallbackQuery, state: FSMContext) -> None:
     """Confirm pending nakladnoy as card or transfer (does not deduct from cash-on-hand)."""
     parts = cb.data.split(":")
     if len(parts) < 4:
         await cb.answer("Noto'g'ri buyruq", show_alert=True)
         return
     await _finalize_nakladnoy_confirmation(
-        cb, int(parts[2]), send_to_group=True, is_debt=False, payment_method=parts[3]
+        cb, int(parts[2]), send_to_group=True, is_debt=False, payment_method=parts[3], state=state
     )
 
 
@@ -1379,7 +1388,8 @@ async def cb_nakladnoy_use_suggested(cb: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("nak:back_card:"))
-async def cb_nakladnoy_back_card(cb: CallbackQuery) -> None:
+async def cb_nakladnoy_back_card(cb: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
     payment_id = int(cb.data.split(":")[-1])
     async with async_session_maker() as db:
         payment = await get_nakladnoy(db, payment_id)
@@ -1433,8 +1443,9 @@ async def cb_nakladnoy_unpost_group(cb: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("nak:done:"))
-async def cb_nakladnoy_done(cb: CallbackQuery) -> None:
+async def cb_nakladnoy_done(cb: CallbackQuery, state: FSMContext) -> None:
     """Collapse quick-edit buttons and show remaining balance summary."""
+    await state.clear()
     payment_id = int(cb.data.split(":")[-1])
     async with async_session_maker() as db:
         payment = await get_nakladnoy(db, payment_id)
@@ -1527,9 +1538,10 @@ async def cb_nakladnoy_repost_group(cb: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("nak:cancel:"))
-async def cb_nakladnoy_cancel(cb: CallbackQuery) -> None:
+async def cb_nakladnoy_cancel(cb: CallbackQuery, state: FSMContext) -> None:
     if await deny_if_unauthorized(cb, ("admin", "kassir")):
         return
+    await state.clear()
     payment_id = int(cb.data.split(":")[-1])
     async with async_session_maker() as db:
         await delete_nakladnoy(db, payment_id, user_id=cb.from_user.id)
@@ -1596,9 +1608,10 @@ async def handle_edit_confirmed_btn(
 
 
 @router.callback_query(F.data == "edit_menu:open")
-async def cb_edit_menu_open(cb: CallbackQuery) -> None:
+async def cb_edit_menu_open(cb: CallbackQuery, state: FSMContext) -> None:
     if await deny_if_unauthorized(cb, ("admin",)):
         return
+    await state.clear()
     async with async_session_maker() as db:
         summary = await compute_session_summary(db)
     if (
@@ -1632,7 +1645,7 @@ async def cb_menu_dismiss(cb: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("nak_view:"))
-async def cb_nakladnoy_edit_view(cb: CallbackQuery) -> None:
+async def cb_nakladnoy_edit_view(cb: CallbackQuery, state: FSMContext) -> None:
     payment_id = int(cb.data.split(":")[-1])
     async with async_session_maker() as db:
         payment = await get_nakladnoy(db, payment_id)
@@ -1642,6 +1655,7 @@ async def cb_nakladnoy_edit_view(cb: CallbackQuery) -> None:
     allowed = ("admin", "kassir") if payment.is_debt else ("admin",)
     if await deny_if_unauthorized(cb, allowed):
         return
+    await state.clear()
     in_group = bool(payment.group_chat_id and payment.group_message_id)
     group_state = (
         "📤 Guruhga yuborilgan (tahrirlasangiz u yerda ham yangilanadi)"
@@ -1675,9 +1689,21 @@ async def cb_nakladnoy_edit_view(cb: CallbackQuery) -> None:
     await cb.answer()
 
 
+async def _arm_amount_input_state(
+    state: FSMContext, payment_id: int, cb: CallbackQuery, used_cancel_kb: bool = False
+) -> None:
+    """Keep waiting_edit_nakladnoy_amount active so direct text/voice input works alongside buttons."""
+    await state.set_state(WalletStates.waiting_edit_nakladnoy_amount)
+    await state.update_data(
+        payment_id=payment_id,
+        edit_msg_id=cb.message.message_id if cb.message else None,
+        used_cancel_kb=used_cancel_kb,
+    )
+
+
 @router.callback_query(F.data.startswith("nak:edit_amt:"))
-async def cb_nakladnoy_edit_amt_prompt(cb: CallbackQuery) -> None:
-    """Open T5 quick-adjust amount buttons (-10k / -1k / +1k / +10k / Round / Manual)."""
+async def cb_nakladnoy_edit_amt_prompt(cb: CallbackQuery, state: FSMContext) -> None:
+    """Open quick-adjust amount buttons while immediately accepting typed/voice amount input."""
     payment_id = int(cb.data.split(":")[-1])
     async with async_session_maker() as db:
         payment = await get_nakladnoy(db, payment_id)
@@ -1687,18 +1713,21 @@ async def cb_nakladnoy_edit_amt_prompt(cb: CallbackQuery) -> None:
     allowed = ("admin",) if payment.status == "confirmed" else ("admin", "kassir")
     if await deny_if_unauthorized(cb, allowed):
         return
+    await _arm_amount_input_state(state, payment_id, cb, used_cancel_kb=False)
     await _safe_edit_text(
         cb.message,
         f"💰 <b>Summani tahrirlash (#{payment.id})</b>\n"
         f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
         f"💵 Hozirgi summa: <b>{format_uzs(payment.amount)} so'm</b>\n\n"
-        "Tez tugmalardan foydalaning yoki qo'lda kiriting:",
+        "👇 Tez tugmalarni bosing yoki to'g'ridan-to'g'ri yangi summani yozib (yoki ovozda aytib) yuboring (masalan: <code>260 000</code>):",
         reply_markup=nakladnoy_quick_amount_kb(payment.id, is_confirmed=(payment.status == "confirmed")),
     )
     await cb.answer()
 
 
-async def _apply_quick_amount_change(cb: CallbackQuery, payment_id: int, mode: str, delta: int = 0) -> None:
+async def _apply_quick_amount_change(
+    cb: CallbackQuery, state: FSMContext, payment_id: int, mode: str, delta: int = 0
+) -> None:
     async with async_session_maker() as db:
         payment = await get_nakladnoy(db, payment_id)
         if not payment or payment.status == "deleted":
@@ -1716,6 +1745,8 @@ async def _apply_quick_amount_change(cb: CallbackQuery, payment_id: int, mode: s
         payment = await update_nakladnoy(db, payment_id, amount=new_amt, user_id=cb.from_user.id)
         summary = await compute_session_summary(db, payment.session_id)
 
+    await _arm_amount_input_state(state, payment_id, cb, used_cancel_kb=False)
+
     sync_line = ""
     if payment.status == "confirmed":
         _, sync_msg = await _sync_nakladnoy_group_message(
@@ -1727,22 +1758,23 @@ async def _apply_quick_amount_change(cb: CallbackQuery, payment_id: int, mode: s
         cb.message,
         f"✅ <b>Summa yangilandi (#{payment.id})</b>\n"
         f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
-        f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>{sync_line}",
+        f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>{sync_line}\n\n"
+        "<i>Yana tez tugmalarni bosing yoki yangi summani yozib yuboring:</i>",
         reply_markup=nakladnoy_quick_amount_kb(payment.id, is_confirmed=(payment.status == "confirmed")),
     )
     await cb.answer(f"💰 {format_uzs(payment.amount)} so'm")
 
 
 @router.callback_query(F.data.startswith("nak:adj:"))
-async def cb_nakladnoy_quick_delta(cb: CallbackQuery) -> None:
+async def cb_nakladnoy_quick_delta(cb: CallbackQuery, state: FSMContext) -> None:
     parts = cb.data.split(":")
-    await _apply_quick_amount_change(cb, int(parts[2]), mode="delta", delta=int(parts[3]))
+    await _apply_quick_amount_change(cb, state, int(parts[2]), mode="delta", delta=int(parts[3]))
 
 
 @router.callback_query(F.data.startswith("nak:adj_round:"))
-async def cb_nakladnoy_quick_round(cb: CallbackQuery) -> None:
+async def cb_nakladnoy_quick_round(cb: CallbackQuery, state: FSMContext) -> None:
     payment_id = int(cb.data.split(":")[-1])
-    await _apply_quick_amount_change(cb, payment_id, mode="round")
+    await _apply_quick_amount_change(cb, state, payment_id, mode="round")
 
 
 @router.callback_query(F.data.startswith("nak:edit_amt_manual:"))
@@ -1756,8 +1788,7 @@ async def cb_nakladnoy_edit_amt_manual(cb: CallbackQuery, state: FSMContext) -> 
     allowed = ("admin",) if payment.status == "confirmed" else ("admin", "kassir")
     if await deny_if_unauthorized(cb, allowed):
         return
-    await state.set_state(WalletStates.waiting_edit_nakladnoy_amount)
-    await state.update_data(payment_id=payment_id)
+    await _arm_amount_input_state(state, payment_id, cb, used_cancel_kb=True)
     await cb.message.answer(
         "💰 Yangi summani yozing yoki ovozda ayting (masalan: <code>1 657 000</code>):",
         parse_mode="HTML",
@@ -1766,7 +1797,11 @@ async def cb_nakladnoy_edit_amt_manual(cb: CallbackQuery, state: FSMContext) -> 
     await cb.answer()
 
 
-@router.message(WalletStates.waiting_edit_nakladnoy_amount, F.chat.type == "private")
+@router.message(
+    WalletStates.waiting_edit_nakladnoy_amount,
+    F.chat.type == "private",
+    F.text | F.voice | F.audio,
+)
 async def process_edit_nakladnoy_amount(message: Message, state: FSMContext) -> None:
     if await deny_if_unauthorized(message, ("admin", "kassir")):
         return
@@ -1789,6 +1824,8 @@ async def process_edit_nakladnoy_amount(message: Message, state: FSMContext) -> 
 
     data = await state.get_data()
     payment_id = data["payment_id"]
+    edit_msg_id = data.get("edit_msg_id")
+    used_cancel_kb = bool(data.get("used_cancel_kb"))
     uid = message.from_user.id if message.from_user else None
     async with async_session_maker() as db:
         existing = await get_nakladnoy(db, payment_id)
@@ -1804,6 +1841,15 @@ async def process_edit_nakladnoy_amount(message: Message, state: FSMContext) -> 
         summary = await compute_session_summary(db, payment.session_id)
 
     await state.clear()
+    if edit_msg_id:
+        try:
+            await message.bot.edit_message_reply_markup(
+                chat_id=message.chat.id,
+                message_id=edit_msg_id,
+                reply_markup=None,
+            )
+        except Exception:
+            pass
     if payment.status == "confirmed":
         in_group = bool(payment.group_chat_id and payment.group_message_id)
         _, sync_msg = await _sync_nakladnoy_group_message(
@@ -1822,10 +1868,12 @@ async def process_edit_nakladnoy_amount(message: Message, state: FSMContext) -> 
                 payment_method=getattr(payment, "payment_method", "cash"),
             ),
         )
-        await message.answer("👇 Asosiy menyu:", reply_markup=main_menu_keyboard())
+        if used_cancel_kb:
+            await message.answer("👇 Asosiy menyu:", reply_markup=main_menu_keyboard())
     else:
         await _send_pending_nakladnoy_card(message, payment)
-        await message.answer("👇 Tasdiqlang:", reply_markup=main_menu_keyboard())
+        if used_cancel_kb:
+            await message.answer("👇 Tasdiqlang:", reply_markup=main_menu_keyboard())
 
 
 @router.callback_query(F.data.startswith("nak:edit_sup:"))

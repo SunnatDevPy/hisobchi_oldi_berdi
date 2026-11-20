@@ -987,3 +987,149 @@ def test_nakladnoy_card_and_transfer_do_not_deduct_cash_and_show_in_stats(tmp_pa
         assert s2.total_transfer_spent == 500_000.0
 
     asyncio.run(_run_with_db(tmp_path, scenario))
+
+
+def test_quick_amount_direct_input_and_benign_error_filter(tmp_path: Path, monkeypatch):
+    from types import SimpleNamespace
+    from aiogram.exceptions import TelegramBadRequest
+    from aiogram.methods import AnswerCallbackQuery
+    from bot.handlers import admin_tools as admin_mod
+    from bot.handlers import wallet_nakladnoy as wallet_mod
+    from bot.keyboards import nakladnoy_quick_amount_kb
+    from bot.states import WalletStates
+    from config import get_settings
+
+    # 1. Quick-amount keyboard removes redundant manual button & retains adjustments + back
+    kb = nakladnoy_quick_amount_kb(27, is_confirmed=True)
+    cbs = [b.callback_data for row in kb.inline_keyboard for b in row]
+    assert cbs == [
+        "nak:adj:27:-10000",
+        "nak:adj:27:-1000",
+        "nak:adj:27:1000",
+        "nak:adj:27:10000",
+        "nak:adj_round:27",
+        "nak_view:27",
+    ]
+    assert "nak:edit_amt_manual:27" not in cbs
+
+    # 2. Global error handler ignores stale Telegram callback timeout errors, alerts on real ones
+    monkeypatch.setenv("BOT_TOKEN", "test-token")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("ADMIN_IDS", "111")
+    get_settings.cache_clear()
+
+    sent_alerts: list[str] = []
+
+    class DummyBot:
+        def __init__(self) -> None:
+            self.cleared_markups: list[tuple[int, int]] = []
+
+        async def send_message(self, chat_id: int, text: str, **kwargs) -> None:
+            sent_alerts.append(text)
+
+        async def edit_message_reply_markup(self, chat_id: int, message_id: int, reply_markup=None) -> None:
+            self.cleared_markups.append((chat_id, message_id))
+
+    class FakeState:
+        def __init__(self) -> None:
+            self.cur_state = None
+            self.data: dict = {}
+
+        async def get_state(self):
+            return self.cur_state
+
+        async def set_state(self, st) -> None:
+            self.cur_state = st.state if hasattr(st, "state") else st
+
+        async def update_data(self, **kwargs) -> None:
+            self.data.update(kwargs)
+
+        async def get_data(self) -> dict:
+            return dict(self.data)
+
+        async def clear(self) -> None:
+            self.cur_state = None
+            self.data.clear()
+
+    async def scenario() -> None:
+        dummy_bot = DummyBot()
+        stale_exc = TelegramBadRequest(
+            method=AnswerCallbackQuery(callback_query_id="1"),
+            message="Bad Request: query is too old and response timeout expired or query ID is invalid",
+        )
+        assert await admin_mod.on_error(SimpleNamespace(exception=stale_exc), dummy_bot) is True
+        assert sent_alerts == []
+
+        assert await admin_mod.on_error(SimpleNamespace(exception=RuntimeError("boom")), dummy_bot) is True
+        assert len(sent_alerts) == 1 and "boom" in sent_alerts[0]
+
+        # 3. Direct amount typing works immediately after clicking nak:edit_amt:<id> without extra button
+        db_file = tmp_path / "direct_amt.db"
+        eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+        monkeypatch.setattr(wallet_mod, "async_session_maker", maker)
+        try:
+            await init_db(engine_override=eng, session_maker_override=maker)
+            async with maker() as db:
+                sess = await get_or_create_open_session(db, report_date="2026-11-24")
+                p = await create_pending_nakladnoy(db, "ISMAT KEPAK NON", 130_000, session_id=sess.id)
+                await confirm_nakladnoy(db, p.id, user_id=111)
+
+            state = FakeState()
+            user = SimpleNamespace(id=111, full_name="Admin")
+            chat = SimpleNamespace(id=111, type="private")
+            replies: list[str] = []
+
+            class FakeMsg:
+                def __init__(self, msg_id: int = 50, text: str = "") -> None:
+                    self.message_id = msg_id
+                    self.chat = chat
+                    self.from_user = user
+                    self.text = text
+                    self.voice = None
+                    self.audio = None
+                    self.bot = dummy_bot
+
+                async def edit_text(self, text: str, **kwargs) -> None:
+                    replies.append(text)
+
+                async def answer(self, text: str, **kwargs) -> None:
+                    replies.append(text)
+
+            class FakeCb:
+                def __init__(self, data: str, msg: FakeMsg) -> None:
+                    self.data = data
+                    self.from_user = user
+                    self.message = msg
+                    self.bot = dummy_bot
+
+                async def answer(self, *args, **kwargs) -> None:
+                    return None
+
+            prompt_msg = FakeMsg(msg_id=50)
+            await wallet_mod.cb_nakladnoy_edit_amt_prompt(FakeCb(f"nak:edit_amt:{p.id}", prompt_msg), state)
+            assert state.cur_state == WalletStates.waiting_edit_nakladnoy_amount.state
+            assert state.data["payment_id"] == p.id
+            assert state.data["edit_msg_id"] == 50
+
+            # User types "260000" directly below without tapping another button
+            await wallet_mod.process_edit_nakladnoy_amount(FakeMsg(msg_id=51, text="260000"), state)
+            assert state.cur_state is None
+            assert (111, 50) in dummy_bot.cleared_markups
+            assert any("260 000" in r for r in replies)
+
+            async with maker() as db:
+                updated = await db.get(type(p), p.id)
+                assert float(updated.amount) == 260_000.0
+
+            # Opening quick-adjust then pressing Back clears FSM state
+            await wallet_mod.cb_nakladnoy_edit_amt_prompt(FakeCb(f"nak:edit_amt:{p.id}", prompt_msg), state)
+            assert state.cur_state == WalletStates.waiting_edit_nakladnoy_amount.state
+            await wallet_mod.cb_nakladnoy_edit_view(FakeCb(f"nak_view:{p.id}", prompt_msg), state)
+            assert state.cur_state is None
+        finally:
+            await eng.dispose()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        get_settings.cache_clear()

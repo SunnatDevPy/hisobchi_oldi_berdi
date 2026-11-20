@@ -275,7 +275,7 @@ def auto_confirmed_nakladnoy_kb(
 
 
 def nakladnoy_quick_amount_kb(payment_id: int, is_confirmed: bool = True) -> InlineKeyboardMarkup:
-    """Quick step adjustments (-10k/-1k/+1k/+10k/round) + manual input fallback (T5)."""
+    """Quick step adjustments (-10k/-1k/+1k/+10k/round) with direct manual/voice input (T5)."""
     back_cb = f"nak_view:{payment_id}" if is_confirmed else f"nak:back_card:{payment_id}"
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -287,12 +287,8 @@ def nakladnoy_quick_amount_kb(payment_id: int, is_confirmed: bool = True) -> Inl
             ],
             [
                 InlineKeyboardButton(text="🔄 Yaxlitlash", callback_data=f"nak:adj_round:{payment_id}"),
-                InlineKeyboardButton(
-                    text="⌨️ Qo'lda kiritish",
-                    callback_data=f"nak:edit_amt_manual:{payment_id}",
-                ),
+                InlineKeyboardButton(text="⬅️ Orqaga", callback_data=back_cb),
             ],
-            [InlineKeyboardButton(text="⬅️ Orqaga", callback_data=back_cb)],
         ]
     )
 

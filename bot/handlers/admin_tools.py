@@ -9,6 +9,7 @@ import re
 import traceback
 
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.types import BufferedInputFile, CallbackQuery, ErrorEvent, Message
 
@@ -280,8 +281,18 @@ async def cmd_roles(message: Message) -> None:
 @router.errors()
 async def on_error(event: ErrorEvent, bot: Bot) -> bool:
     """Log full traceback and send concise alert to admins so silent failures are noticed."""
-    logger.error("Unhandled error", exc_info=event.exception)
-    tb = "".join(traceback.format_exception_only(type(event.exception), event.exception)).strip()
+    exc = event.exception
+    if isinstance(exc, TelegramBadRequest):
+        msg_l = str(exc).lower()
+        if (
+            "query is too old" in msg_l
+            or "query id is invalid" in msg_l
+            or "message is not modified" in msg_l
+        ):
+            logger.warning("Ignored benign TelegramBadRequest: %s", exc)
+            return True
+    logger.error("Unhandled error", exc_info=exc)
+    tb = "".join(traceback.format_exception_only(type(exc), exc)).strip()
     for admin_id in get_settings().admin_id_list:
         try:
             await bot.send_message(
