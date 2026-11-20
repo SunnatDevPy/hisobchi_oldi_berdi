@@ -147,6 +147,12 @@ def nakladnoy_confirm_kb(
             ],
             [
                 InlineKeyboardButton(
+                    text="📌 Qarzga (Pul berilmadi)",
+                    callback_data=f"nak:save_debt:{payment_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text="💰 Summani o'zgartirish",
                     callback_data=f"nak:edit_amt:{payment_id}",
                 ),
@@ -167,9 +173,12 @@ def nakladnoy_confirm_kb(
 
 
 def auto_confirmed_nakladnoy_kb(
-    payment_id: int, sent_to_group: bool = True, suggested_supplier: Optional[str] = None
+    payment_id: int,
+    sent_to_group: bool = True,
+    suggested_supplier: Optional[str] = None,
+    is_debt: bool = False,
 ) -> InlineKeyboardMarkup:
-    """Quick edit/undo controls shown after instant auto-confirmation."""
+    """Quick edit/undo/debt-toggle controls shown after instant auto-confirmation."""
     rows: list[list[InlineKeyboardButton]] = []
     if suggested_supplier:
         rows.append(
@@ -180,6 +189,17 @@ def auto_confirmed_nakladnoy_kb(
                 )
             ]
         )
+    debt_btn = (
+        InlineKeyboardButton(
+            text="💵 To'landi (Pul berildi)",
+            callback_data=f"nak:mark_paid:{payment_id}",
+        )
+        if is_debt
+        else InlineKeyboardButton(
+            text="📌 Qarzga (Pul berilmadi)",
+            callback_data=f"nak:mark_debt:{payment_id}",
+        )
+    )
     rows.extend(
         [
             [
@@ -204,6 +224,7 @@ def auto_confirmed_nakladnoy_kb(
                     callback_data=f"nak:delete_conf:{payment_id}",
                 ),
             ],
+            [debt_btn],
             [
                 InlineKeyboardButton(
                     text="✅ Tayyor",
@@ -270,8 +291,13 @@ def quick_amounts_kb(amounts: Sequence[float]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def status_actions_kb(session_id: int) -> InlineKeyboardMarkup:
+def status_actions_kb(session_id: int, unpaid_debt_count: int = 0) -> InlineKeyboardMarkup:
     """Inline buttons under Status message."""
+    debt_lbl = (
+        f"📌 Qarz nakladnoylar ({unpaid_debt_count})"
+        if unpaid_debt_count > 0
+        else "📌 Qarz nakladnoylar"
+    )
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -293,6 +319,12 @@ def status_actions_kb(session_id: int) -> InlineKeyboardMarkup:
                     text="📜 History & Qidiruv",
                     callback_data="set:history",
                 ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=debt_lbl,
+                    callback_data="nak:debts",
+                )
             ],
         ]
     )
@@ -357,8 +389,9 @@ def kassa_debt_actions_kb() -> InlineKeyboardMarkup:
 def edit_items_list_kb(
     nakladnoys: Sequence[NakladnoyPayment],
     cash_txs: Sequence[CashTransaction],
+    debt_nakladnoys: Sequence[NakladnoyPayment] = (),
 ) -> InlineKeyboardMarkup:
-    """Inline list of confirmed nakladnoy payments and cash transactions for editing."""
+    """Inline list of confirmed nakladnoy payments, debt nakladnoys, and cash transactions for editing."""
     buttons = []
     for n in nakladnoys:
         sup = n.supplier_name[:20]
@@ -367,6 +400,17 @@ def edit_items_list_kb(
             [
                 InlineKeyboardButton(
                     text=f"{where} {sup} — {format_uzs(n.amount)}",
+                    callback_data=f"nak_view:{n.id}",
+                )
+            ]
+        )
+
+    for n in debt_nakladnoys:
+        sup = n.supplier_name[:18]
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=f"📌 {sup} — {format_uzs(n.amount)} [QARZ]",
                     callback_data=f"nak_view:{n.id}",
                 )
             ]
@@ -388,8 +432,27 @@ def edit_items_list_kb(
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def confirmed_nakladnoy_edit_kb(payment_id: int, in_group: bool = False) -> InlineKeyboardMarkup:
-    """Edit options for an already confirmed nakladnoy."""
+def confirmed_nakladnoy_edit_kb(
+    payment_id: int,
+    in_group: bool = False,
+    is_debt: bool = False,
+    is_admin: bool = True,
+) -> InlineKeyboardMarkup:
+    """Edit options for an already confirmed nakladnoy (or paying an unpaid debt nakladnoy)."""
+    if not is_admin:
+        rows: list[list[InlineKeyboardButton]] = []
+        if is_debt:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text="💵 To'landi (Pul berildi)",
+                        callback_data=f"nak:mark_paid:{payment_id}",
+                    )
+                ]
+            )
+        rows.append([InlineKeyboardButton(text="⬅️ Qarzlar ro'yxati", callback_data="nak:debts")])
+        return InlineKeyboardMarkup(inline_keyboard=rows)
+
     group_btn = (
         InlineKeyboardButton(
             text="🙈 Guruhdan olish (Faqat baza)",
@@ -401,8 +464,18 @@ def confirmed_nakladnoy_edit_kb(payment_id: int, in_group: bool = False) -> Inli
             callback_data=f"nak:repost_group:{payment_id}",
         )
     )
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    rows = []
+    if is_debt:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="💵 To'landi (Pul berildi)",
+                    callback_data=f"nak:mark_paid:{payment_id}",
+                )
+            ]
+        )
+    rows.extend(
+        [
             [
                 InlineKeyboardButton(
                     text="💰 Summani o'zgartirish",
@@ -420,14 +493,51 @@ def confirmed_nakladnoy_edit_kb(payment_id: int, in_group: bool = False) -> Inli
                     callback_data=f"nak:delete_conf:{payment_id}",
                 ),
             ],
+        ]
+    )
+    if not is_debt:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="📌 Qarzga o'tkazish",
+                    callback_data=f"nak:mark_debt:{payment_id}",
+                )
+            ]
+        )
+        rows.append(
             [
                 InlineKeyboardButton(
                     text="⬅️ Ro'yxatga qaytish",
                     callback_data="edit_menu:open",
                 )
-            ],
-        ]
-    )
+            ]
+        )
+    else:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Qarzlar ro'yxati",
+                    callback_data="nak:debts",
+                )
+            ]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def debt_nakladnoys_list_kb(items: Sequence[tuple[NakladnoyPayment, str]]) -> InlineKeyboardMarkup:
+    """List of all unpaid debt nakladnoys across all days."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for pay, report_date in items[:25]:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"📌 {report_date} | {pay.supplier_name[:18]} — {format_uzs(pay.amount)}",
+                    callback_data=f"nak_view:{pay.id}",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="🔙 Yopish", callback_data="menu:dismiss")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def cash_tx_edit_kb(tx_id: int) -> InlineKeyboardMarkup:
@@ -602,6 +712,7 @@ def nasiya_main_kb(balances: Sequence[dict], can_write: bool = True) -> InlineKe
         )
     if can_write:
         rows.append([InlineKeyboardButton(text="➕ Yangi nasiya (qarz) yozish", callback_data="nasiya:add_debt")])
+    rows.append([InlineKeyboardButton(text="📌 Qarz nakladnoylar", callback_data="nak:debts")])
     rows.append(
         [
             InlineKeyboardButton(text="📜 Oxirgi yozuvlar", callback_data="nasiya:hist"),

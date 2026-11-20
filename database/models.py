@@ -116,6 +116,8 @@ class NakladnoyPayment(Base):
     photo_unique_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
+    is_debt: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     group_chat_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     group_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

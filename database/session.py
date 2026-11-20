@@ -81,12 +81,28 @@ def upgrade_existing_schema(sync_conn: Connection) -> None:
             sync_conn.execute(
                 text("ALTER TABLE nakladnoy_payments ADD COLUMN photo_unique_id VARCHAR(128)")
             )
+        if "is_debt" not in cols:
+            sync_conn.execute(
+                text("ALTER TABLE nakladnoy_payments ADD COLUMN is_debt BOOLEAN NOT NULL DEFAULT FALSE")
+            )
+        if "paid_at" not in cols:
+            col_type = "TIMESTAMPTZ" if sync_conn.dialect.name == "postgresql" else "DATETIME"
+            sync_conn.execute(
+                text(f"ALTER TABLE nakladnoy_payments ADD COLUMN paid_at {col_type}")
+            )
         indexes = {ix["name"] for ix in inspector.get_indexes("nakladnoy_payments")}
         if "ix_nakladnoy_payments_photo_unique_id" not in indexes:
             sync_conn.execute(
                 text(
                     "CREATE INDEX IF NOT EXISTS ix_nakladnoy_payments_photo_unique_id "
                     "ON nakladnoy_payments (photo_unique_id)"
+                )
+            )
+        if "ix_nakladnoy_payments_is_debt" not in indexes:
+            sync_conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_nakladnoy_payments_is_debt "
+                    "ON nakladnoy_payments (is_debt)"
                 )
             )
 

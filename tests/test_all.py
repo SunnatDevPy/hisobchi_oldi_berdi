@@ -777,3 +777,81 @@ def test_photo_caption_overrides_ocr_supplier_and_zero_token_shortcut(monkeypatc
         asyncio.run(scenario())
     finally:
         get_settings.cache_clear()
+
+
+def test_nakladnoy_debt_and_mark_paid_same_day_and_next_day(tmp_path: Path):
+    from bot.handlers.wallet_nakladnoy import render_nakladnoy_group_caption, render_status_text
+    from bot.keyboards import auto_confirmed_nakladnoy_kb, nakladnoy_confirm_kb
+    from database.crud import (
+        list_unpaid_debt_nakladnoys,
+        mark_nakladnoy_as_debt,
+        mark_nakladnoy_as_paid,
+    )
+
+    assert any(
+        "nak:save_debt:1" in (b.callback_data or "")
+        for row in nakladnoy_confirm_kb(1).inline_keyboard
+        for b in row
+    )
+    assert any(
+        "nak:mark_debt:1" in (b.callback_data or "")
+        for row in auto_confirmed_nakladnoy_kb(1, is_debt=False).inline_keyboard
+        for b in row
+    )
+    assert any(
+        "nak:mark_paid:1" in (b.callback_data or "")
+        for row in auto_confirmed_nakladnoy_kb(1, is_debt=True).inline_keyboard
+        for b in row
+    )
+
+    async def scenario(db_session: AsyncSession) -> None:
+        sess1 = await get_or_create_open_session(db_session, report_date="2026-11-20")
+        await add_cash_transaction(db_session, 10_000_000, source_type="main", session_id=sess1.id)
+
+        p1 = await create_pending_nakladnoy(
+            db_session, "Иброхимов В. Х.", 1_300_000, session_id=sess1.id
+        )
+        await confirm_nakladnoy(db_session, p1.id, group_chat_id=-1001, group_message_id=10)
+
+        sum_paid = await compute_session_summary(db_session, sess1.id)
+        assert sum_paid.expected_cash == 8_700_000
+
+        # Toggle paid nakladnoy -> Qarzga: cash-on-hand restored, group caption marked QARZGA
+        debt_pay = await mark_nakladnoy_as_debt(db_session, p1.id, user_id=555)
+        assert debt_pay is not None and debt_pay.is_debt is True
+        assert "QARZGA" in render_nakladnoy_group_caption(debt_pay)
+
+        sum_debt = await compute_session_summary(db_session, sess1.id)
+        assert sum_debt.expected_cash == 10_000_000
+        assert sum_debt.total_nakladnoy_spent == 0.0
+        assert len(sum_debt.debt_nakladnoys) == 1
+        assert sum_debt.all_unpaid_debt_count == 1
+        assert "Qarzga olingan" in render_status_text(sum_debt)
+        assert len(await list_unpaid_debt_nakladnoys(db_session)) == 1
+
+        # Close Day 1 cleanly (10,000,000 counted -> diff 0), then open Day 2
+        closed1 = await close_cash_session(db_session, sess1.id, actual_counted_cash=10_000_000)
+        assert closed1.session.difference == 0.0
+
+        sess2 = await get_or_create_open_session(db_session, report_date="2026-11-21")
+        assert sess2.id != sess1.id
+
+        # Pay yesterday's debt on Day 2 -> moves payout into Day 2, leaves Day 1 untouched!
+        paid_res = await mark_nakladnoy_as_paid(db_session, p1.id, user_id=555)
+        assert paid_res is not None
+        paid_pay, moved = paid_res
+        assert moved is True
+        assert paid_pay.is_debt is False
+        assert paid_pay.session_id == sess2.id
+        assert "TO'LANDI" in render_nakladnoy_group_caption(paid_pay, tag="✅ [QARZ TO'LANDI]")
+
+        day2_sum = await compute_session_summary(db_session, sess2.id)
+        assert day2_sum.expected_cash == 8_700_000
+        assert day2_sum.all_unpaid_debt_count == 0
+        assert len(await list_unpaid_debt_nakladnoys(db_session)) == 0
+
+        day1_check = await db_session.get(type(sess1), sess1.id)
+        assert day1_check.expected_cash == 10_000_000
+        assert day1_check.difference == 0.0
+
+    asyncio.run(_run_with_db(tmp_path, scenario))

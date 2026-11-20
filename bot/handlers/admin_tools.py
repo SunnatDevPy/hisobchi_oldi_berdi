@@ -34,7 +34,16 @@ from services.gemini_ai import format_uzs
 logger = logging.getLogger("hisobot_bot.admin")
 router = Router(name="admin_tools")
 
-ACTION_ICONS = {"edit": "✏️", "delete": "🗑", "confirm": "✅", "debt": "📒", "payment": "💵"}
+ACTION_ICONS = {
+    "edit": "✏️",
+    "delete": "🗑",
+    "confirm": "✅",
+    "confirm_debt": "📌",
+    "mark_debt": "📌",
+    "mark_paid": "💵",
+    "debt": "📒",
+    "payment": "💵",
+}
 
 
 def _safe_filename_part(text: str) -> str:

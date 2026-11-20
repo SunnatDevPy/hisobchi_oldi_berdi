@@ -47,6 +47,7 @@ async def maybe_send_daily_auto_report(bot: Bot) -> bool:
         summary = await compute_session_summary(db)
         if (
             not summary.confirmed_nakladnoys
+            and not summary.debt_nakladnoys
             and not summary.cash_transactions
             and summary.opening_balance == 0
         ):
@@ -64,7 +65,9 @@ async def maybe_send_daily_auto_report(bot: Bot) -> bool:
                 admin_id,
                 text,
                 parse_mode="HTML",
-                reply_markup=status_actions_kb(summary.session.id),
+                reply_markup=status_actions_kb(
+                    summary.session.id, unpaid_debt_count=summary.all_unpaid_debt_count
+                ),
             )
             sent_any = True
         except Exception:

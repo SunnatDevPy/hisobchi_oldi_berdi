@@ -265,17 +265,27 @@ def build_session_excel(summary: SessionSummary) -> bytes:
         else 0.0
     )
 
+    debt_items = list(getattr(summary, "debt_nakladnoys", []) or [])
+    stat_rows = [
+        ("Umumiy kassa qarzi qoldig'i", round(summary.total_kassa_debt_outstanding)),
+        ("Nakladnoylar soni", cnt),
+        ("Guruhga yuborilgan / Faqat baza", f"{in_grp} ta / {cnt - in_grp} ta"),
+        ("O'rtacha to'lov", avg_amt),
+        ("Sarflanish ulushi (%)", spend_pct),
+    ]
+    if debt_items:
+        stat_rows.append(
+            (
+                "Qarzga nakladnoylar (to'lanmagan)",
+                round(getattr(summary, "total_debt_nakladnoy", sum(n.amount for n in debt_items))),
+            )
+        )
+
     next_r = _kv_block(
         ws_sum,
         next_r + 1,
         "Kassa qarzi va Statistika",
-        [
-            ("Umumiy kassa qarzi qoldig'i", round(summary.total_kassa_debt_outstanding)),
-            ("Nakladnoylar soni", cnt),
-            ("Guruhga yuborilgan / Faqat baza", f"{in_grp} ta / {cnt - in_grp} ta"),
-            ("O'rtacha to'lov", avg_amt),
-            ("Sarflanish ulushi (%)", spend_pct),
-        ],
+        stat_rows,
         highlight_label="Umumiy kassa qarzi qoldig'i",
     )
     ws_sum.column_dimensions["A"].width = 34
@@ -341,6 +351,30 @@ def build_session_excel(summary: SessionSummary) -> bytes:
     _autowidth(ws2, skip_rows=2)
     ws2.column_dimensions["A"].width = 7
     _finish(ws2, "A4", 5, 3, 3 + len(txs))
+
+    # Optional Sheet 4: Unpaid credit nakladnoys (Qarzga)
+    if debt_items:
+        ws_d = wb.create_sheet("Qarzga (To'lanmagan)")
+        _title(ws_d, f"QARZGA OLINGAN NAKLADNOYLAR — {summary.session.report_date}", 7)
+        _header(ws_d, 3, ["#", "Postavshik", "Summa", "Asl summa", "Guruhga yuborilgan", "Rasm", "Vaqt"])
+        for i, item in enumerate(debt_items, start=1):
+            r = 3 + i
+            zebra = i % 2 == 0
+            orig_val, _ = _extract_orig_and_note(item)
+            in_grp = "Ha" if getattr(item, "group_message_id", None) else "Yo'q"
+            _body_row(
+                ws_d,
+                r,
+                [i, item.supplier_name, round(item.amount), orig_val, in_grp, "", _ts(item.created_at)],
+                money_cols=(3, 4),
+                zebra=zebra,
+            )
+            _write_photo_cell(ws_d, r, 6, item, zebra)
+        last_d = 3 + len(debt_items)
+        _total_row(ws_d, last_d + 1, "JAMI QARZ", 2, {3: f"=SUM(C4:C{last_d})"}, 7)
+        _autowidth(ws_d, skip_rows=2)
+        ws_d.column_dimensions["A"].width = 7
+        _finish(ws_d, "A4", 7, 3, last_d, landscape=True)
 
     return _to_bytes(wb)
 

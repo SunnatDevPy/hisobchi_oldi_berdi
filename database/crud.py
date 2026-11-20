@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import difflib
 import re
@@ -72,6 +72,10 @@ class SessionSummary:
     total_kassa_debt_outstanding: float
     cash_transactions: List[CashTransaction]
     confirmed_nakladnoys: List[NakladnoyPayment]
+    debt_nakladnoys: List[NakladnoyPayment] = field(default_factory=list)
+    total_debt_nakladnoy: float = 0.0
+    all_unpaid_debt_count: int = 0
+    all_unpaid_debt_total: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +304,7 @@ async def compute_session_summary(
         ).all()
     )
 
-    nakladnoys = list(
+    all_confirmed = list(
         (
             await db.scalars(
                 select(NakladnoyPayment)
@@ -312,6 +316,8 @@ async def compute_session_summary(
             )
         ).all()
     )
+    nakladnoys = [n for n in all_confirmed if not n.is_debt]
+    debt_nakladnoys = [n for n in all_confirmed if n.is_debt]
 
     opening = float(sess.opening_balance or 0.0)
     main_in = sum(t.amount for t in txs if t.source_type == "main")
@@ -319,6 +325,7 @@ async def compute_session_summary(
     kassa_repay_today = sum(t.amount for t in txs if t.source_type == "kassa_repay")
     total_available_inflow = opening + main_in + kassa_debt_today - kassa_repay_today
     total_nakladnoy_spent = sum(n.amount for n in nakladnoys)
+    total_debt_nakladnoy = sum(n.amount for n in debt_nakladnoys)
     expected_cash = total_available_inflow - total_nakladnoy_spent
 
     if abs(sess.expected_cash - expected_cash) > 0.001:
@@ -329,6 +336,7 @@ async def compute_session_summary(
         await db.refresh(sess)
 
     outstanding_debt = await get_outstanding_kassa_debt(db)
+    all_unpaid = await list_unpaid_debt_nakladnoys(db)
 
     return SessionSummary(
         session=sess,
@@ -342,6 +350,10 @@ async def compute_session_summary(
         total_kassa_debt_outstanding=outstanding_debt,
         cash_transactions=txs,
         confirmed_nakladnoys=nakladnoys,
+        debt_nakladnoys=debt_nakladnoys,
+        total_debt_nakladnoy=total_debt_nakladnoy,
+        all_unpaid_debt_count=len(all_unpaid),
+        all_unpaid_debt_total=sum(float(n.amount) for n, _ in all_unpaid),
     )
 
 
@@ -495,12 +507,15 @@ async def confirm_nakladnoy(
     group_chat_id: Optional[int] = None,
     group_message_id: Optional[int] = None,
     user_id: Optional[int] = None,
+    is_debt: bool = False,
 ) -> Optional[NakladnoyPayment]:
-    """Confirm a pending nakladnoy payment and attach group message metadata."""
+    """Confirm a pending nakladnoy payment (paid or on credit) and attach group metadata."""
     payment = await db.get(NakladnoyPayment, payment_id)
     if payment is None or payment.status == "deleted":
         return None
     payment.status = "confirmed"
+    payment.is_debt = bool(is_debt)
+    payment.paid_at = None if is_debt else now_local()
     if group_chat_id is not None:
         payment.group_chat_id = group_chat_id
     if group_message_id is not None:
@@ -508,10 +523,91 @@ async def confirm_nakladnoy(
     await db.commit()
     await db.refresh(payment)
     await log_action(
-        db, "confirm", "nakladnoy", payment.id, f"{payment.supplier_name} / {payment.amount:.0f}", user_id=user_id
+        db,
+        "confirm_debt" if is_debt else "confirm",
+        "nakladnoy",
+        payment.id,
+        f"{payment.supplier_name} / {payment.amount:.0f}" + (" [QARZ]" if is_debt else ""),
+        user_id=user_id,
     )
     await compute_session_summary(db, payment.session_id)
     return payment
+
+
+async def list_unpaid_debt_nakladnoys(
+    db: AsyncSession,
+) -> List[Tuple[NakladnoyPayment, str]]:
+    """Return all confirmed unpaid credit nakladnoys (newest first) across all sessions."""
+    stmt = (
+        select(NakladnoyPayment, DailyCashSession.report_date)
+        .join(DailyCashSession, DailyCashSession.id == NakladnoyPayment.session_id)
+        .where(
+            NakladnoyPayment.status == "confirmed",
+            NakladnoyPayment.is_debt.is_(True),
+        )
+        .order_by(desc(NakladnoyPayment.id))
+    )
+    return list((await db.execute(stmt)).all())
+
+
+async def mark_nakladnoy_as_debt(
+    db: AsyncSession, payment_id: int, user_id: Optional[int] = None
+) -> Optional[NakladnoyPayment]:
+    """Convert a confirmed paid nakladnoy into unpaid debt and restore cash-on-hand."""
+    payment = await db.get(NakladnoyPayment, payment_id)
+    if payment is None or payment.status == "deleted":
+        return None
+    payment.status = "confirmed"
+    payment.is_debt = True
+    payment.paid_at = None
+    await db.commit()
+    await db.refresh(payment)
+    await log_action(
+        db,
+        "mark_debt",
+        "nakladnoy",
+        payment.id,
+        f"{payment.supplier_name} / {payment.amount:.0f}",
+        user_id=user_id,
+    )
+    await compute_session_summary(db, payment.session_id)
+    return payment
+
+
+async def mark_nakladnoy_as_paid(
+    db: AsyncSession, payment_id: int, user_id: Optional[int] = None
+) -> Optional[Tuple[NakladnoyPayment, bool]]:
+    """Mark an unpaid debt nakladnoy as paid; moves closed-day debts into today's open session."""
+    payment = await db.get(NakladnoyPayment, payment_id)
+    if payment is None or payment.status == "deleted":
+        return None
+    orig_sess = await db.get(DailyCashSession, payment.session_id)
+    moved_to_today = False
+    if orig_sess is not None and orig_sess.status == "closed":
+        active_sess = await get_or_create_open_session(db)
+        if active_sess.id != payment.session_id:
+            payment.session_id = active_sess.id
+            tag_note = f"Qarz ({orig_sess.report_date}) to'landi"
+            cur_note = (payment.note or "").strip()
+            if tag_note not in cur_note:
+                payment.note = f"{cur_note} | {tag_note}".strip(" |")
+            moved_to_today = True
+
+    payment.status = "confirmed"
+    payment.is_debt = False
+    payment.paid_at = now_local()
+    await db.commit()
+    await db.refresh(payment)
+    await log_action(
+        db,
+        "mark_paid",
+        "nakladnoy",
+        payment.id,
+        f"{payment.supplier_name} / {payment.amount:.0f}" + (" (bugunga o'tkazildi)" if moved_to_today else ""),
+        user_id=user_id,
+    )
+    await compute_session_summary(db, payment.session_id)
+    return payment, moved_to_today
 
 
 async def set_nakladnoy_group_message(
@@ -944,6 +1040,7 @@ async def get_supplier_sverka(
         .join(DailyCashSession, DailyCashSession.id == NakladnoyPayment.session_id)
         .where(
             NakladnoyPayment.status == "confirmed",
+            NakladnoyPayment.is_debt.is_(False),
             DailyCashSession.report_date.like(f"{month}-%"),
         )
         .order_by(DailyCashSession.report_date, NakladnoyPayment.id)
@@ -1040,6 +1137,7 @@ async def get_range_report_data(
                 .join(DailyCashSession, DailyCashSession.id == NakladnoyPayment.session_id)
                 .where(
                     NakladnoyPayment.status == "confirmed",
+                    NakladnoyPayment.is_debt.is_(False),
                     DailyCashSession.report_date >= date_from,
                     DailyCashSession.report_date <= date_to,
                 )
