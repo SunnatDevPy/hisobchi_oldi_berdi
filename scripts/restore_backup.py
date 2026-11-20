@@ -1,29 +1,38 @@
-"""Restore a backup made by services/backup.py into an EMPTY database.
+"""Restore a plain (.json.gz) or encrypted (.json.gz.enc) backup into an EMPTY database.
 
-Usage:  python scripts/restore_backup.py hisobchi_backup_XXXX.json.gz
-Run inside the bot container/venv so DATABASE_URL from .env is used.
+Usage:
+    python scripts/restore_backup.py hisobchi_backup_XXXX.json.gz
+    python scripts/restore_backup.py hisobchi_backup_XXXX.json.gz.enc --password SECRET
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
+import getpass
 import gzip
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sqlalchemy import DateTime, insert, select, func  # noqa: E402
+from sqlalchemy import DateTime, func, insert, select, text  # noqa: E402
 
 from database.models import Base  # noqa: E402
 from database.session import async_session_maker, init_db  # noqa: E402
+from services.backup import ENC_MAGIC, decrypt_backup_bytes  # noqa: E402
 
 
-async def main(path: str) -> None:
-    with gzip.open(path, "rt", encoding="utf-8") as fh:
-        data = json.load(fh)["tables"]
+async def main(path: str, password: str | None = None) -> None:
+    raw_bytes = Path(path).read_bytes()
+    if raw_bytes.startswith(ENC_MAGIC):
+        pwd = password or os.environ.get("BACKUP_PASSWORD") or getpass.getpass("Backup paroli: ")
+        raw_bytes = decrypt_backup_bytes(raw_bytes, pwd)
+    data = json.loads(gzip.decompress(raw_bytes).decode("utf-8"))["tables"]
+
     await init_db()
     async with async_session_maker() as db:
         for table in Base.metadata.sorted_tables:
@@ -44,8 +53,6 @@ async def main(path: str) -> None:
             print(f"OK {table.name}: {len(rows)} qator")
         await db.commit()
         if db.bind.dialect.name == "postgresql":
-            from sqlalchemy import text
-
             for table in Base.metadata.sorted_tables:
                 if "id" in table.columns and table.columns["id"].primary_key:
                     await db.execute(
@@ -59,4 +66,8 @@ async def main(path: str) -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main(sys.argv[1]))
+    parser = argparse.ArgumentParser(description="Restore Hisobot Bot backup.")
+    parser.add_argument("backup_file", help="Path to .json.gz or .json.gz.enc file")
+    parser.add_argument("--password", default=None, help="Encryption password if encrypted")
+    args = parser.parse_args()
+    asyncio.run(main(args.backup_file, args.password))

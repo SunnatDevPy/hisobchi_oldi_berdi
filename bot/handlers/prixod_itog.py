@@ -9,9 +9,8 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from bot.handlers.settings_groups import is_authorized
+from bot.auth import can_write_role, deny_if_unauthorized, is_authorized
 from bot.keyboards import (
-    BTN_PRIXOD,
     cancel_reply_keyboard,
     main_menu_keyboard,
     prixod_report_kb,
@@ -74,10 +73,13 @@ async def _recompute_and_save_report(report_id: int) -> PrixodReport | None:
         return await get_prixod_report(db, report_id)
 
 
-@router.message(F.text == BTN_PRIXOD, F.chat.type == "private")
-async def start_prixod_flow(message: Message, state: FSMContext) -> None:
+async def start_prixod_flow(
+    message: Message, state: FSMContext, actor_id: int | None = None
+) -> None:
     """Prompt user to upload YesPOS CSV/XLSX or paste manual text."""
-    if not is_authorized(message.from_user.id if message.from_user else None):
+    uid = actor_id if actor_id is not None else (message.from_user.id if message.from_user else None)
+    if not can_write_role(uid):
+        await message.answer("🔒 Prixod yaratish faqat admin/kassir uchun.")
         return
     await state.set_state(PrixodStates.waiting_prixod_input)
     await message.answer(
@@ -115,7 +117,7 @@ def _rows_to_payload(rows) -> list[dict]:
 )
 async def handle_yespos_document(message: Message, state: FSMContext) -> None:
     """Accept YesPOS CSV/XLSX file anytime in private chat or in PrixodStates."""
-    if not is_authorized(message.from_user.id if message.from_user else None):
+    if await deny_if_unauthorized(message, ("admin", "kassir")):
         return
 
     doc = message.document
@@ -158,7 +160,7 @@ async def handle_yespos_document(message: Message, state: FSMContext) -> None:
 @router.message(PrixodStates.waiting_prixod_input, F.chat.type == "private", F.text)
 async def handle_manual_prixod_text(message: Message, state: FSMContext) -> None:
     """Parse manually typed or pasted ITOG text."""
-    if not is_authorized(message.from_user.id if message.from_user else None):
+    if await deny_if_unauthorized(message, ("admin", "kassir")):
         return
     raw_text = (message.text or "").strip()
     if not raw_text:
@@ -249,6 +251,8 @@ async def cb_prixod_row_detail(cb: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("prx:setcat:"))
 async def cb_prixod_set_row_cat(cb: CallbackQuery) -> None:
+    if await deny_if_unauthorized(cb, ("admin", "kassir")):
+        return
     parts = cb.data.split(":")
     rep_id, row_id, new_cat, page = int(parts[2]), int(parts[3]), parts[4], int(parts[5])
     async with async_session_maker() as db:
@@ -275,6 +279,8 @@ async def cb_prixod_set_row_cat(cb: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("prx:setold:"))
 async def cb_prixod_set_old_date_prompt(cb: CallbackQuery, state: FSMContext) -> None:
+    if await deny_if_unauthorized(cb, ("admin", "kassir")):
+        return
     parts = cb.data.split(":")
     rep_id, row_id, page = int(parts[2]), int(parts[3]), int(parts[4])
     await state.set_state(PrixodStates.waiting_row_old_date)
@@ -289,7 +295,7 @@ async def cb_prixod_set_old_date_prompt(cb: CallbackQuery, state: FSMContext) ->
 
 @router.message(PrixodStates.waiting_row_old_date, F.chat.type == "private")
 async def process_row_old_date(message: Message, state: FSMContext) -> None:
-    if not is_authorized(message.from_user.id if message.from_user else None):
+    if await deny_if_unauthorized(message, ("admin", "kassir")):
         return
     lbl = (message.text or "").strip()
     if not lbl:
@@ -318,6 +324,8 @@ async def process_row_old_date(message: Message, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("prx:date:"))
 async def cb_prixod_change_date_prompt(cb: CallbackQuery, state: FSMContext) -> None:
+    if await deny_if_unauthorized(cb, ("admin", "kassir")):
+        return
     rep_id = int(cb.data.split(":")[-1])
     await state.set_state(PrixodStates.waiting_report_date)
     await state.update_data(rep_id=rep_id)
@@ -331,7 +339,7 @@ async def cb_prixod_change_date_prompt(cb: CallbackQuery, state: FSMContext) -> 
 
 @router.message(PrixodStates.waiting_report_date, F.chat.type == "private")
 async def process_prixod_change_date(message: Message, state: FSMContext) -> None:
-    if not is_authorized(message.from_user.id if message.from_user else None):
+    if await deny_if_unauthorized(message, ("admin", "kassir")):
         return
     new_date = (message.text or "").strip()
     if not new_date:
@@ -358,6 +366,8 @@ async def process_prixod_change_date(message: Message, state: FSMContext) -> Non
 
 @router.callback_query(F.data.startswith("prx:publish:"))
 async def cb_prixod_publish(cb: CallbackQuery) -> None:
+    if await deny_if_unauthorized(cb, ("admin", "kassir")):
+        return
     rep_id = int(cb.data.split(":")[-1])
     async with async_session_maker() as db:
         report = await get_prixod_report(db, rep_id)

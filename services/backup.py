@@ -1,22 +1,24 @@
-"""Daily database backup (JSON + gzip) sent to the owner's private chat.
-
-Works with both SQLite and PostgreSQL (no pg_dump needed). Restore with
-``python scripts/restore_backup.py <file.json.gz>`` (see README).
-"""
+"""Daily database backup (JSON + gzip + optional PBKDF2-Fernet encryption) sent to admins."""
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import gzip
+import hashlib
 import io
 import json
 import logging
+import os
 from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from sqlalchemy import select
 
 from config import get_settings
@@ -28,6 +30,8 @@ logger = logging.getLogger("hisobot_bot.backup")
 BACKUP_HOUR = 23
 BACKUP_MINUTE = 30
 MAX_TELEGRAM_FILE = 49 * 1024 * 1024
+ENC_MAGIC = b"HENC1"
+SALT_LEN = 16
 
 
 def _json_default(value: Any) -> str:
@@ -36,11 +40,39 @@ def _json_default(value: Any) -> str:
     return str(value)
 
 
+def _derive_fernet_key(password: str, salt: bytes) -> bytes:
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=390_000,
+    )
+    return base64.urlsafe_b64encode(kdf.derive(password.encode("utf-8")))
+
+
+def encrypt_backup_bytes(raw_gz: bytes, password: str) -> bytes:
+    """Encrypt gzip backup payload using PBKDF2-HMAC-SHA256 + Fernet (AES-128-CBC + HMAC)."""
+    salt = os.urandom(SALT_LEN)
+    token = Fernet(_derive_fernet_key(password, salt)).encrypt(raw_gz)
+    return ENC_MAGIC + salt + token
+
+
+def decrypt_backup_bytes(blob: bytes, password: str) -> bytes:
+    """Decrypt backup bytes created by ``encrypt_backup_bytes``."""
+    if not blob.startswith(ENC_MAGIC):
+        return blob
+    salt = blob[len(ENC_MAGIC) : len(ENC_MAGIC) + SALT_LEN]
+    token = blob[len(ENC_MAGIC) + SALT_LEN :]
+    return Fernet(_derive_fernet_key(password, salt)).decrypt(token)
+
+
 async def build_backup_bytes() -> bytes:
-    """Dump every table to a gzip-compressed JSON document."""
+    """Dump all persistent tables (excluding transient FSM states) to gzip-compressed JSON."""
     dump: dict[str, list[dict[str, Any]]] = {}
     async with async_session_maker() as db:
         for table in Base.metadata.sorted_tables:
+            if table.name == "fsm_states":
+                continue
             result = await db.execute(select(table))
             dump[table.name] = [dict(row._mapping) for row in result]
     payload = json.dumps(
@@ -55,24 +87,36 @@ async def build_backup_bytes() -> bytes:
 
 
 async def send_backup(bot: Bot, chat_ids: list[int] | None = None) -> bool:
-    """Send a fresh backup file to admins' private chats. Returns True if sent to anyone."""
-    targets = chat_ids or get_settings().admin_id_list
+    """Send a fresh (optionally encrypted) backup file to admins' private chats."""
+    settings = get_settings()
+    targets = chat_ids or settings.admin_id_list
     if not targets:
         logger.warning("Backup skipped: ADMIN_IDS is empty.")
         return False
-    data = await build_backup_bytes()
+    raw_gz = await build_backup_bytes()
+    pwd = (settings.BACKUP_PASSWORD or "").strip()
+    if pwd:
+        data = encrypt_backup_bytes(raw_gz, pwd)
+        ext = "json.gz.enc"
+        caption_prefix = "🔐 Shifrlangan baza zaxirasi"
+    else:
+        data = raw_gz
+        ext = "json.gz"
+        caption_prefix = "💾 Baza zaxirasi (parolsiz)"
+
     if len(data) > MAX_TELEGRAM_FILE:
         for cid in targets:
             await bot.send_message(cid, "⚠️ Backup fayli Telegram limitidan katta, yuborilmadi.")
         return False
-    stamp = datetime.now(ZoneInfo(get_settings().TIMEZONE)).strftime("%Y-%m-%d_%H%M")
+
+    stamp = datetime.now(ZoneInfo(settings.TIMEZONE)).strftime("%Y-%m-%d_%H%M")
     sent = False
     for cid in targets:
         try:
             await bot.send_document(
                 cid,
-                BufferedInputFile(data, filename=f"hisobchi_backup_{stamp}.json.gz"),
-                caption=f"💾 Baza zaxirasi ({stamp}). Shaxsiy saqlang, hech kimga yubormang.",
+                BufferedInputFile(data, filename=f"hisobchi_backup_{stamp}.{ext}"),
+                caption=f"{caption_prefix} ({stamp}). Shaxsiy saqlang, hech kimga yubormang.",
             )
             sent = True
         except Exception:

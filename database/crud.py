@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+import difflib
+import re
+from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from config import get_settings
 from database.models import (
+    AIUsageLog,
     AppSetting,
     AuditLog,
     CashTransaction,
@@ -22,6 +26,8 @@ from database.models import (
     PrixodReport,
     PrixodRow,
     SupplierConfig,
+    SupplierDebt,
+    UserRole,
 )
 
 
@@ -365,7 +371,11 @@ async def add_cash_transaction(
 
 
 async def update_cash_transaction(
-    db: AsyncSession, tx_id: int, new_amount: Optional[float] = None, new_note: Optional[str] = None
+    db: AsyncSession,
+    tx_id: int,
+    new_amount: Optional[float] = None,
+    new_note: Optional[str] = None,
+    user_id: Optional[int] = None,
 ) -> Optional[CashTransaction]:
     """Edit an existing cash transaction and recalculate session balance."""
     tx = await db.get(CashTransaction, tx_id)
@@ -378,12 +388,14 @@ async def update_cash_transaction(
         tx.note = new_note.strip()
     await db.commit()
     await db.refresh(tx)
-    await log_action(db, "edit", "cash", tx.id, f"{old} -> summa={tx.amount:.0f}, izoh={tx.note}")
+    await log_action(db, "edit", "cash", tx.id, f"{old} -> summa={tx.amount:.0f}, izoh={tx.note}", user_id=user_id)
     await compute_session_summary(db, tx.session_id)
     return tx
 
 
-async def delete_cash_transaction(db: AsyncSession, tx_id: int) -> Optional[CashTransaction]:
+async def delete_cash_transaction(
+    db: AsyncSession, tx_id: int, user_id: Optional[int] = None
+) -> Optional[CashTransaction]:
     """Soft-delete a cash transaction and recalculate session balance."""
     tx = await db.get(CashTransaction, tx_id)
     if tx is None or tx.is_deleted:
@@ -391,7 +403,7 @@ async def delete_cash_transaction(db: AsyncSession, tx_id: int) -> Optional[Cash
     tx.is_deleted = True
     await db.commit()
     await db.refresh(tx)
-    await log_action(db, "delete", "cash", tx.id, f"summa={tx.amount:.0f}, izoh={tx.note}")
+    await log_action(db, "delete", "cash", tx.id, f"summa={tx.amount:.0f}, izoh={tx.note}", user_id=user_id)
     await compute_session_summary(db, tx.session_id)
     return tx
 
@@ -408,6 +420,8 @@ async def create_pending_nakladnoy(
     photo_file_id: Optional[str] = None,
     note: Optional[str] = None,
     session_id: Optional[int] = None,
+    photo_unique_id: Optional[str] = None,
+    original_amount: Optional[float] = None,
 ) -> NakladnoyPayment:
     """Create a pending nakladnoy awaiting user confirmation."""
     if session_id is None:
@@ -417,7 +431,9 @@ async def create_pending_nakladnoy(
         session_id=session_id,
         supplier_name=supplier_name.strip(),
         amount=float(amount),
+        original_amount=float(original_amount) if original_amount is not None else None,
         photo_file_id=photo_file_id,
+        photo_unique_id=photo_unique_id,
         note=note,
         status="pending",
     )
@@ -430,6 +446,28 @@ async def create_pending_nakladnoy(
 async def get_nakladnoy(db: AsyncSession, payment_id: int) -> Optional[NakladnoyPayment]:
     """Fetch a single NakladnoyPayment by id."""
     return await db.get(NakladnoyPayment, payment_id)
+
+
+async def find_nakladnoy_by_photo_unique_id(
+    db: AsyncSession, photo_unique_id: str
+) -> Optional[NakladnoyPayment]:
+    """Find latest non-deleted nakladnoy sharing a Telegram photo_unique_id (confirmed preferred)."""
+    if not photo_unique_id:
+        return None
+    stmt = (
+        select(NakladnoyPayment)
+        .where(
+            NakladnoyPayment.photo_unique_id == photo_unique_id,
+            NakladnoyPayment.status != "deleted",
+        )
+        .order_by(desc(NakladnoyPayment.id))
+        .limit(10)
+    )
+    rows = list((await db.scalars(stmt)).all())
+    for row in rows:
+        if row.status == "confirmed":
+            return row
+    return rows[0] if rows else None
 
 
 async def find_duplicate_confirmed_nakladnoy(
@@ -456,19 +494,22 @@ async def confirm_nakladnoy(
     payment_id: int,
     group_chat_id: Optional[int] = None,
     group_message_id: Optional[int] = None,
+    user_id: Optional[int] = None,
 ) -> Optional[NakladnoyPayment]:
     """Confirm a pending nakladnoy payment and attach group message metadata."""
     payment = await db.get(NakladnoyPayment, payment_id)
     if payment is None or payment.status == "deleted":
         return None
     payment.status = "confirmed"
-    await log_action(db, "confirm", "nakladnoy", payment.id, f"{payment.supplier_name} / {payment.amount:.0f}")
     if group_chat_id is not None:
         payment.group_chat_id = group_chat_id
     if group_message_id is not None:
         payment.group_message_id = group_message_id
     await db.commit()
     await db.refresh(payment)
+    await log_action(
+        db, "confirm", "nakladnoy", payment.id, f"{payment.supplier_name} / {payment.amount:.0f}", user_id=user_id
+    )
     await compute_session_summary(db, payment.session_id)
     return payment
 
@@ -493,6 +534,8 @@ async def update_nakladnoy(
     supplier_name: Optional[str] = None,
     amount: Optional[float] = None,
     note: Optional[str] = None,
+    user_id: Optional[int] = None,
+    original_amount: Optional[float] = None,
 ) -> Optional[NakladnoyPayment]:
     """Update a pending or confirmed nakladnoy payment and recalculate session balance."""
     payment = await db.get(NakladnoyPayment, payment_id)
@@ -503,17 +546,23 @@ async def update_nakladnoy(
         payment.supplier_name = supplier_name.strip()
     if amount is not None:
         payment.amount = float(amount)
+    if original_amount is not None:
+        payment.original_amount = float(original_amount)
     if note is not None:
         payment.note = note
     await db.commit()
     await db.refresh(payment)
-    await log_action(db, "edit", "nakladnoy", payment.id, f"{old} -> {payment.supplier_name} / {payment.amount:.0f}")
+    await log_action(
+        db, "edit", "nakladnoy", payment.id, f"{old} -> {payment.supplier_name} / {payment.amount:.0f}", user_id=user_id
+    )
     if payment.status == "confirmed":
         await compute_session_summary(db, payment.session_id)
     return payment
 
 
-async def delete_nakladnoy(db: AsyncSession, payment_id: int) -> Optional[NakladnoyPayment]:
+async def delete_nakladnoy(
+    db: AsyncSession, payment_id: int, user_id: Optional[int] = None
+) -> Optional[NakladnoyPayment]:
     """Soft-delete a pending or confirmed nakladnoy payment and recalculate session balance."""
     payment = await db.get(NakladnoyPayment, payment_id)
     if payment is None or payment.status == "deleted":
@@ -522,7 +571,9 @@ async def delete_nakladnoy(db: AsyncSession, payment_id: int) -> Optional[Naklad
     payment.status = "deleted"
     await db.commit()
     await db.refresh(payment)
-    await log_action(db, "delete", "nakladnoy", payment.id, f"{payment.supplier_name} / {payment.amount:.0f}")
+    await log_action(
+        db, "delete", "nakladnoy", payment.id, f"{payment.supplier_name} / {payment.amount:.0f}", user_id=user_id
+    )
     if was_confirmed:
         await compute_session_summary(db, payment.session_id)
     return payment
@@ -742,11 +793,24 @@ def round_nakladnoy_amount(amount: float, mode: str = "floor_1000") -> float:
 
 
 async def log_action(
-    db: AsyncSession, action: str, entity: str, entity_id: int, details: str = ""
+    db: AsyncSession,
+    action: str,
+    entity: str,
+    entity_id: int,
+    details: str = "",
+    user_id: Optional[int] = None,
 ) -> None:
     """Persist an audit record (own commit; failures never break the main flow)."""
     try:
-        db.add(AuditLog(action=action, entity=entity, entity_id=int(entity_id), details=details[:2000]))
+        db.add(
+            AuditLog(
+                action=action,
+                entity=entity,
+                entity_id=int(entity_id),
+                user_id=user_id,
+                details=details[:2000],
+            )
+        )
         await db.commit()
     except Exception:
         await db.rollback()
@@ -757,18 +821,124 @@ async def list_audit_logs(db: AsyncSession, limit: int = 20) -> List[AuditLog]:
     stmt = select(AuditLog).order_by(desc(AuditLog.id)).limit(limit)
     return list((await db.scalars(stmt)).all())
 
+
 # ---------------------------------------------------------------------------
-# Supplier reconciliation (sverka)
+# Supplier normalization, suggestions & reconciliation (sverka)
 # ---------------------------------------------------------------------------
+
+
+def _norm_key(name: str) -> str:
+    return " ".join(name.strip().lower().split())
+
+
+async def _supplier_alias_lookup(db: AsyncSession) -> Dict[str, str]:
+    """Map normalized lowercase display names and aliases -> canonical SupplierConfig display_name."""
+    cfgs = await list_suppliers(db, active_only=True)
+    mapping: Dict[str, str] = {}
+    for cfg in cfgs:
+        disp = cfg.display_name.strip()
+        if disp:
+            mapping[_norm_key(disp)] = disp
+        for alias in cfg.aliases.split(","):
+            ak = _norm_key(alias)
+            if ak:
+                mapping[ak] = disp
+    return mapping
+
+
+async def resolve_supplier_name(
+    db: AsyncSession, raw_name: str
+) -> Tuple[str, Optional[str]]:
+    """Normalize supplier name via SupplierConfig aliases & history, returning (canonical, fuzzy_suggestion)."""
+    cleaned = " ".join(raw_name.strip().split())
+    if not cleaned:
+        return "", None
+    low = cleaned.lower()
+
+    alias_map = await _supplier_alias_lookup(db)
+    if low in alias_map:
+        return alias_map[low], None
+
+    hist_rows = (
+        await db.scalars(
+            select(NakladnoyPayment.supplier_name).where(
+                NakladnoyPayment.status == "confirmed"
+            )
+        )
+    ).all()
+    casing_counts: Dict[str, Counter[str]] = {}
+    for s in hist_rows:
+        s_clean = " ".join(s.strip().split())
+        if s_clean:
+            casing_counts.setdefault(s_clean.lower(), Counter())[s_clean] += 1
+    hist_canonical = {k: cnt.most_common(1)[0][0] for k, cnt in casing_counts.items()}
+
+    if low in hist_canonical:
+        return hist_canonical[low], None
+
+    all_lookup: Dict[str, str] = {}
+    all_lookup.update(hist_canonical)
+    all_lookup.update(alias_map)
+
+    matches = difflib.get_close_matches(low, list(all_lookup.keys()), n=1, cutoff=0.78)
+    if matches:
+        suggested = all_lookup[matches[0]]
+        if suggested.lower() != low:
+            return cleaned, suggested
+    return cleaned, None
+
+
+async def get_recent_suppliers(db: AsyncSession, limit: int = 6) -> List[str]:
+    """Return distinct recently paid suppliers ordered most recent first."""
+    stmt = (
+        select(NakladnoyPayment.supplier_name)
+        .where(NakladnoyPayment.status == "confirmed")
+        .order_by(desc(NakladnoyPayment.id))
+        .limit(limit * 8)
+    )
+    seen: set[str] = set()
+    result: List[str] = []
+    for raw in (await db.scalars(stmt)).all():
+        name = " ".join(raw.strip().split())
+        if name and name.lower() not in seen:
+            seen.add(name.lower())
+            result.append(name)
+            if len(result) >= limit:
+                break
+    return result
+
+
+async def get_recent_amounts_for_supplier(
+    db: AsyncSession, supplier_name: str, limit: int = 3
+) -> List[float]:
+    """Return last ``limit`` distinct confirmed amounts paid to ``supplier_name``."""
+    target = _norm_key(supplier_name)
+    if not target:
+        return []
+    stmt = (
+        select(NakladnoyPayment.supplier_name, NakladnoyPayment.amount)
+        .where(NakladnoyPayment.status == "confirmed")
+        .order_by(desc(NakladnoyPayment.id))
+        .limit(120)
+    )
+    seen: set[int] = set()
+    amounts: List[float] = []
+    for sup, amt in (await db.execute(stmt)).all():
+        if _norm_key(sup) != target:
+            continue
+        rounded = round(float(amt))
+        if rounded > 0 and rounded not in seen:
+            seen.add(rounded)
+            amounts.append(float(rounded))
+            if len(amounts) >= limit:
+                break
+    return amounts
 
 
 async def get_supplier_sverka(
     db: AsyncSession, month: str, supplier: Optional[str] = None
 ) -> List[dict]:
-    """Confirmed nakladnoys for ``month`` (YYYY-MM), optionally for one supplier (case-insensitive).
-
-    Returns rows: {supplier, amount, date, time, note}, sorted by date/time.
-    """
+    """Confirmed nakladnoys for ``month`` (YYYY-MM), optionally filtered by supplier."""
     stmt = (
         select(NakladnoyPayment, DailyCashSession.report_date)
         .join(DailyCashSession, DailyCashSession.id == NakladnoyPayment.session_id)
@@ -779,19 +949,357 @@ async def get_supplier_sverka(
         .order_by(DailyCashSession.report_date, NakladnoyPayment.id)
     )
     rows = (await db.execute(stmt)).all()
-    target = supplier.strip().lower() if supplier else None
+    alias_map = await _supplier_alias_lookup(db)
+    target = _norm_key(supplier) if supplier else None
+    target_canon = alias_map.get(target, target) if target else None
+
     result: List[dict] = []
     for pay, report_date in rows:
-        name = pay.supplier_name.strip()
-        if target and name.lower() != target:
+        raw_name = " ".join(pay.supplier_name.strip().split())
+        canon_name = alias_map.get(raw_name.lower(), raw_name)
+        if target and _norm_key(canon_name) != _norm_key(target_canon or target) and _norm_key(raw_name) != target:
             continue
         result.append(
             {
-                "supplier": name,
+                "supplier": canon_name,
                 "amount": float(pay.amount),
+                "original_amount": float(pay.original_amount) if pay.original_amount is not None else None,
+                "in_group": bool(pay.group_message_id),
+                "photo_file_id": pay.photo_file_id,
+                "group_chat_id": pay.group_chat_id,
+                "group_message_id": pay.group_message_id,
                 "date": report_date,
                 "time": format_local_dt(pay.created_at, "%H:%M") if pay.created_at else "",
                 "note": pay.note or "",
             }
         )
     return result
+
+
+# ---------------------------------------------------------------------------
+# History Search, Range Queries & Period Statistics
+# ---------------------------------------------------------------------------
+
+
+async def search_nakladnoys(
+    db: AsyncSession, query: str, limit: int = 25
+) -> List[Tuple[NakladnoyPayment, str]]:
+    """Search confirmed nakladnoys by date (YYYY-MM-DD / YYYY-MM / DD.MM.YYYY) or supplier/note substring."""
+    q = query.strip()
+    if not q:
+        return []
+
+    date_iso_prefix: Optional[str] = None
+    m_dmy = re.fullmatch(r"(\d{2})\.(\d{2})\.(\d{4})", q)
+    if m_dmy:
+        date_iso_prefix = f"{m_dmy.group(3)}-{m_dmy.group(2)}-{m_dmy.group(1)}"
+    elif re.fullmatch(r"\d{4}-\d{2}(?:-\d{2})?", q):
+        date_iso_prefix = q
+
+    stmt = (
+        select(NakladnoyPayment, DailyCashSession.report_date)
+        .join(DailyCashSession, DailyCashSession.id == NakladnoyPayment.session_id)
+        .where(NakladnoyPayment.status == "confirmed")
+        .order_by(desc(NakladnoyPayment.id))
+    )
+    if date_iso_prefix:
+        stmt = stmt.where(DailyCashSession.report_date.like(f"{date_iso_prefix}%")).limit(limit)
+        return list((await db.execute(stmt)).all())
+
+    low = q.lower()
+    all_rows = (await db.execute(stmt.limit(500))).all()
+    matched: List[Tuple[NakladnoyPayment, str]] = []
+    for pay, r_date in all_rows:
+        if low in (pay.supplier_name or "").lower() or low in (pay.note or "").lower():
+            matched.append((pay, r_date))
+            if len(matched) >= limit:
+                break
+    return matched
+
+
+async def get_range_report_data(
+    db: AsyncSession, date_from: str, date_to: str
+) -> dict:
+    """Collect sessions, confirmed nakladnoys, cash transactions, and kassa debt across [date_from, date_to]."""
+    sessions = list(
+        (
+            await db.scalars(
+                select(DailyCashSession)
+                .where(
+                    DailyCashSession.report_date >= date_from,
+                    DailyCashSession.report_date <= date_to,
+                )
+                .order_by(DailyCashSession.report_date, DailyCashSession.id)
+            )
+        ).all()
+    )
+    nak_rows = list(
+        (
+            await db.execute(
+                select(NakladnoyPayment, DailyCashSession.report_date)
+                .join(DailyCashSession, DailyCashSession.id == NakladnoyPayment.session_id)
+                .where(
+                    NakladnoyPayment.status == "confirmed",
+                    DailyCashSession.report_date >= date_from,
+                    DailyCashSession.report_date <= date_to,
+                )
+                .order_by(DailyCashSession.report_date, NakladnoyPayment.id)
+            )
+        ).all()
+    )
+    cash_rows = list(
+        (
+            await db.execute(
+                select(CashTransaction, DailyCashSession.report_date)
+                .join(DailyCashSession, DailyCashSession.id == CashTransaction.session_id)
+                .where(
+                    CashTransaction.is_deleted.is_(False),
+                    DailyCashSession.report_date >= date_from,
+                    DailyCashSession.report_date <= date_to,
+                )
+                .order_by(DailyCashSession.report_date, CashTransaction.id)
+            )
+        ).all()
+    )
+    kassa_stats = await get_kassa_debt_stats(db, limit=10)
+    return {
+        "sessions": sessions,
+        "nakladnoys": nak_rows,
+        "cash_txs": cash_rows,
+        "kassa_stats": kassa_stats,
+    }
+
+
+async def get_period_statistics(db: AsyncSession, date_from: str, date_to: str) -> dict:
+    """Compute aggregated spending & top suppliers statistics for [date_from, date_to]."""
+    data = await get_range_report_data(db, date_from, date_to)
+    nak_rows: List[Tuple[NakladnoyPayment, str]] = data["nakladnoys"]
+    cash_rows: List[Tuple[CashTransaction, str]] = data["cash_txs"]
+    alias_map = await _supplier_alias_lookup(db)
+
+    total_spent = sum(float(n.amount) for n, _ in nak_rows)
+    count = len(nak_rows)
+    by_day: Dict[str, float] = {}
+    by_sup: Dict[str, list] = {}
+
+    for pay, r_date in nak_rows:
+        by_day[r_date] = by_day.get(r_date, 0.0) + float(pay.amount)
+        raw_name = " ".join(pay.supplier_name.strip().split())
+        canon = alias_map.get(raw_name.lower(), raw_name)
+        entry = by_sup.setdefault(canon.lower(), [canon, 0, 0.0])
+        entry[1] += 1
+        entry[2] += float(pay.amount)
+
+    active_days = len(by_day)
+    avg_daily = (total_spent / active_days) if active_days else 0.0
+    avg_payment = (total_spent / count) if count else 0.0
+    busiest_day = max(by_day.items(), key=lambda kv: kv[1]) if by_day else None
+
+    top_suppliers = []
+    for name, cnt, tot in sorted(by_sup.values(), key=lambda x: -x[2])[:10]:
+        pct = (tot / total_spent * 100.0) if total_spent > 0 else 0.0
+        top_suppliers.append((name, cnt, tot, pct))
+
+    return {
+        "date_from": date_from,
+        "date_to": date_to,
+        "total_spent": total_spent,
+        "payment_count": count,
+        "active_days": active_days,
+        "avg_daily_spend": avg_daily,
+        "avg_payment": avg_payment,
+        "total_cash_in": sum(float(t.amount) for t, _ in cash_rows if t.source_type == "main"),
+        "kassa_borrowed": sum(float(t.amount) for t, _ in cash_rows if t.source_type == "kassa_debt"),
+        "kassa_repaid": sum(float(t.amount) for t, _ in cash_rows if t.source_type == "kassa_repay"),
+        "top_suppliers": top_suppliers,
+        "busiest_day": busiest_day,
+    }
+
+
+# ---------------------------------------------------------------------------
+# AI Usage Tracking
+# ---------------------------------------------------------------------------
+
+
+async def record_ai_usage(
+    db: AsyncSession,
+    kind: str,
+    model_name: str = "",
+    prompt_tokens: int = 0,
+    output_tokens: int = 0,
+    total_tokens: int = 0,
+    usage_date: Optional[str] = None,
+) -> None:
+    """Persist one Gemini call or cache hit for daily/monthly cost monitoring."""
+    db.add(
+        AIUsageLog(
+            usage_date=usage_date or today_iso(),
+            kind=kind,
+            model_name=model_name[:64],
+            prompt_tokens=int(prompt_tokens),
+            output_tokens=int(output_tokens),
+            total_tokens=int(total_tokens),
+        )
+    )
+    await db.commit()
+
+
+async def get_ai_usage_stats(db: AsyncSession, date_iso: Optional[str] = None) -> dict:
+    """Return today's and current month's Gemini call counts and token usage."""
+    target = date_iso or today_iso()
+    month_prefix = target[:7]
+
+    month_rows = list(
+        (
+            await db.scalars(
+                select(AIUsageLog).where(AIUsageLog.usage_date.like(f"{month_prefix}-%"))
+            )
+        ).all()
+    )
+    day_rows = [r for r in month_rows if r.usage_date == target]
+
+    return {
+        "date": target,
+        "calls": sum(1 for r in day_rows if r.kind in ("photo", "audio")),
+        "photo_calls": sum(1 for r in day_rows if r.kind == "photo"),
+        "audio_calls": sum(1 for r in day_rows if r.kind == "audio"),
+        "cache_hits": sum(1 for r in day_rows if r.kind == "cache_hit"),
+        "prompt_tokens": sum(r.prompt_tokens for r in day_rows),
+        "output_tokens": sum(r.output_tokens for r in day_rows),
+        "total_tokens": sum(r.total_tokens for r in day_rows),
+        "month_calls": sum(1 for r in month_rows if r.kind in ("photo", "audio")),
+        "month_cache_hits": sum(1 for r in month_rows if r.kind == "cache_hit"),
+        "month_tokens": sum(r.total_tokens for r in month_rows),
+    }
+
+
+# ---------------------------------------------------------------------------
+# User Roles (RBAC)
+# ---------------------------------------------------------------------------
+
+
+async def list_user_roles(db: AsyncSession) -> List[UserRole]:
+    """List dynamically configured user roles."""
+    return list((await db.scalars(select(UserRole).order_by(UserRole.created_at))).all())
+
+
+async def set_user_role(
+    db: AsyncSession, user_id: int, role: str, label: str = ""
+) -> UserRole:
+    """Create or update a Telegram user's role."""
+    obj = await db.get(UserRole, int(user_id))
+    if obj is None:
+        obj = UserRole(user_id=int(user_id), role=role, label=label.strip()[:128])
+        db.add(obj)
+    else:
+        obj.role = role
+        if label.strip():
+            obj.label = label.strip()[:128]
+    await db.commit()
+    await db.refresh(obj)
+    return obj
+
+
+async def delete_user_role(db: AsyncSession, user_id: int) -> bool:
+    """Remove a dynamically assigned user role."""
+    obj = await db.get(UserRole, int(user_id))
+    if obj is None:
+        return False
+    await db.delete(obj)
+    await db.commit()
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Supplier Debts (Nasiya)
+# ---------------------------------------------------------------------------
+
+
+async def add_supplier_debt(
+    db: AsyncSession,
+    supplier_name: str,
+    entry_type: str,
+    amount: float,
+    note: str = "",
+    user_id: Optional[int] = None,
+) -> SupplierDebt:
+    """Record goods taken on credit ('debt') or debt repayment ('payment')."""
+    canon, _ = await resolve_supplier_name(db, supplier_name)
+    entry = SupplierDebt(
+        supplier_name=canon or supplier_name.strip(),
+        entry_type=entry_type,
+        amount=float(amount),
+        note=note.strip()[:500],
+        is_deleted=False,
+    )
+    db.add(entry)
+    await db.commit()
+    await db.refresh(entry)
+    await log_action(
+        db,
+        entry_type,
+        "nasiya",
+        entry.id,
+        f"{entry.supplier_name} / {entry.amount:.0f} ({entry.note})",
+        user_id=user_id,
+    )
+    return entry
+
+
+async def delete_supplier_debt(
+    db: AsyncSession, entry_id: int, user_id: Optional[int] = None
+) -> Optional[SupplierDebt]:
+    """Soft-delete a supplier debt/payment entry."""
+    entry = await db.get(SupplierDebt, entry_id)
+    if entry is None or entry.is_deleted:
+        return None
+    entry.is_deleted = True
+    await db.commit()
+    await db.refresh(entry)
+    await log_action(
+        db,
+        "delete",
+        "nasiya",
+        entry.id,
+        f"{entry.supplier_name} / {entry.amount:.0f}",
+        user_id=user_id,
+    )
+    return entry
+
+
+async def get_supplier_debt_balances(db: AsyncSession) -> List[dict]:
+    """Compute net nasiya balance (debt - payment) per supplier ordered by highest balance."""
+    rows = (
+        await db.scalars(
+            select(SupplierDebt).where(SupplierDebt.is_deleted.is_(False)).order_by(SupplierDebt.id)
+        )
+    ).all()
+    buckets: Dict[str, dict] = {}
+    for row in rows:
+        key = _norm_key(row.supplier_name)
+        item = buckets.setdefault(
+            key, {"supplier": row.supplier_name.strip(), "debt": 0.0, "paid": 0.0, "balance": 0.0}
+        )
+        if row.entry_type == "debt":
+            item["debt"] += float(row.amount)
+        else:
+            item["paid"] += float(row.amount)
+        item["balance"] = item["debt"] - item["paid"]
+    return sorted(buckets.values(), key=lambda b: -b["balance"])
+
+
+async def list_supplier_debt_entries(
+    db: AsyncSession, supplier_name: Optional[str] = None, limit: int = 20
+) -> List[SupplierDebt]:
+    """List recent non-deleted supplier debt/payment entries."""
+    stmt = (
+        select(SupplierDebt)
+        .where(SupplierDebt.is_deleted.is_(False))
+        .order_by(desc(SupplierDebt.id))
+        .limit(limit * 4 if supplier_name else limit)
+    )
+    rows = list((await db.scalars(stmt)).all())
+    if not supplier_name:
+        return rows[:limit]
+    target = _norm_key(supplier_name)
+    return [r for r in rows if _norm_key(r.supplier_name) == target][:limit]

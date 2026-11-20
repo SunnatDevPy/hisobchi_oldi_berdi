@@ -1,16 +1,24 @@
-"""Gemini 2.5 Flash multimodal AI client (Nakladnoy OCR + Voice/Text understanding) & Uzbek amount parser."""
+"""Gemini Flash multimodal AI client (Nakladnoy OCR + Audio only) & Uzbek amount parser."""
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import io
 import json
+import logging
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import httpx
+from PIL import Image, ImageOps
 
 from config import get_settings
 
+
+logger = logging.getLogger("hisobot_bot.ai")
+
+MAX_VOICE_SECONDS = 60
 
 UZBEK_UNITS = {
     "nol": 0,
@@ -28,6 +36,62 @@ UZBEK_UNITS = {
     "o'n": 10,
     "on": 10,
 }
+
+
+class GeminiRateLimitError(RuntimeError):
+    """Raised when Gemini returns HTTP 429 after a single retry."""
+
+
+class VoiceTooLongError(ValueError):
+    """Raised when an audio/voice message exceeds MAX_VOICE_SECONDS."""
+
+
+OCR_SCHEMA: Dict[str, Any] = {
+    "type": "OBJECT",
+    "properties": {
+        "supplier_name": {"type": "STRING", "nullable": True},
+        "amount": {"type": "NUMBER", "nullable": True},
+        "is_clear": {"type": "BOOLEAN"},
+        "notes": {"type": "STRING"},
+    },
+    "required": ["supplier_name", "amount", "is_clear", "notes"],
+}
+
+AUDIO_SCHEMA: Dict[str, Any] = {
+    "type": "OBJECT",
+    "properties": {
+        "transcript": {"type": "STRING"},
+        "intent": {
+            "type": "STRING",
+            "enum": [
+                "cash_in",
+                "kassa_debt",
+                "kassa_repay",
+                "pay_supplier",
+                "count_cash",
+                "status",
+                "unknown",
+            ],
+        },
+        "amount": {"type": "NUMBER", "nullable": True},
+        "supplier_name": {"type": "STRING", "nullable": True},
+    },
+    "required": ["transcript", "intent", "amount", "supplier_name"],
+}
+
+OCR_PROMPT = (
+    "O'zbekiston do'koni nakladnoy/cheki. Oluvchi (masalan IFTIQOR 80) EMAS, yetkazib beruvchi "
+    "postavshik nomini (supplier_name), yakuniy umumiy summani so'mda butun son qilib (amount), "
+    "ikkalasi aniq bo'lsa is_clear=true va qisqa mahsulot izohi (notes) qaytaring."
+)
+
+AUDIO_PROMPT = (
+    "O'zbek/rus tilidagi do'kon kassa ovozli xabarini tahlil qiling. "
+    "transcript: xabar matni; intent: cash_in (pul oldim), kassa_debt (kassadan oldim), "
+    "kassa_repay (kassaga qaytardim), pay_supplier (postavshikka pul berdim), "
+    "count_cash (qo'limda sanadim), status (hisob/qoldiq), unknown; "
+    "amount: summa so'mda (raqamda); supplier_name: postavshik nomi."
+)
 
 
 def format_uzs(amount: float) -> str:
@@ -51,8 +115,9 @@ def parse_uzbek_amount(text: str) -> Optional[float]:
     cleaned = text.lower().strip()
     cleaned = cleaned.replace("so'm", "").replace("som", "").replace("sum", "").replace("сўм", "")
 
-    # Check if there is an arithmetic addition expression like "12 895 000 + 2 109 750"
-    if "+" in cleaned and not re.search(r"[a-zа-яё]", cleaned.replace("mln", "").replace("ming", "").replace("million", "")):
+    if "+" in cleaned and not re.search(
+        r"[a-zа-яё]", cleaned.replace("mln", "").replace("ming", "").replace("million", "")
+    ):
         parts = cleaned.split("+")
         total = 0.0
         found_any = False
@@ -63,7 +128,6 @@ def parse_uzbek_amount(text: str) -> Optional[float]:
                 found_any = True
         return total if found_any else None
 
-    # Handle multiplier words: million / mln / mlrd / ming / k
     multiplier_patterns = [
         (r"(\d+(?:[.,]\d+)?)\s*(?:mlrd|milliard|миллиард)\b", 1_000_000_000),
         (r"(\d+(?:[.,]\d+)?)\s*(?:mln|million|миллион|млн)\b", 1_000_000),
@@ -83,20 +147,13 @@ def parse_uzbek_amount(text: str) -> Optional[float]:
         remainder = re.sub(pattern, " ", remainder)
 
     if matched_multi:
-        # Also pick up trailing standalone numbers if user said "1 million 500 ming" -> already matched both,
-        # or "1 million 500" -> treat trailing small digits if needed
         return total_multi
 
-    # Extract standard grouped number like "21 000 000" or "161899.98"
-    # Normalize spaces/underscores inside digit groups
     digit_match = re.search(r"(\d[\d\s\u00a0_]*(?:[.,]\d+)?)", cleaned)
     if digit_match:
         raw_num = digit_match.group(1)
-        # Remove spaces/underscores
         compact = re.sub(r"[\s\u00a0_]+", "", raw_num)
-        # Distinguish decimal comma/dot vs thousand separator comma/dot
         if "," in compact and "." not in compact:
-            # If 3 digits after comma and multiple commas or >= 1000 pattern, e.g. 12,895,000
             parts = compact.split(",")
             if len(parts) > 2 or (len(parts) == 2 and len(parts[1]) == 3 and len(parts[0]) <= 3):
                 compact = "".join(parts)
@@ -110,6 +167,28 @@ def parse_uzbek_amount(text: str) -> Optional[float]:
             return None
 
     return None
+
+
+def compress_image_for_ocr(
+    image_bytes: bytes, max_side: int = 1280, quality: int = 82
+) -> Tuple[bytes, str]:
+    """Resize large images down to ``max_side`` px JPEG to cut Gemini vision tokens."""
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            img = ImageOps.exif_transpose(img)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            w, h = img.size
+            if max(w, h) > max_side:
+                img.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+            out = io.BytesIO()
+            img.save(out, format="JPEG", quality=quality, optimize=True)
+            compressed = out.getvalue()
+            if len(compressed) > 0:
+                return compressed, "image/jpeg"
+    except Exception:
+        pass
+    return image_bytes, "image/jpeg"
 
 
 def _extract_json_object(raw_text: str) -> Dict[str, Any]:
@@ -142,74 +221,120 @@ def _get_http_client() -> httpx.AsyncClient:
     global _HTTP_CLIENT
     if _HTTP_CLIENT is None or _HTTP_CLIENT.is_closed:
         _HTTP_CLIENT = httpx.AsyncClient(
-            timeout=12.0,
+            timeout=15.0,
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
         )
     return _HTTP_CLIENT
 
 
-async def _call_gemini(parts: list[dict[str, Any]]) -> Dict[str, Any]:
-    """Send multimodal content to Gemini generateContent endpoint with model fallback on 404/503."""
+async def _log_ai_usage_safe(
+    kind: str, model_name: str, usage: Dict[str, Any]
+) -> None:
+    """Persist AI call metadata without ever failing the caller if DB isn't ready."""
+    try:
+        from database.crud import record_ai_usage
+        from database.session import async_session_maker
+
+        async with async_session_maker() as db:
+            await record_ai_usage(
+                db,
+                kind=kind,
+                model_name=model_name,
+                prompt_tokens=int(usage.get("promptTokenCount") or 0),
+                output_tokens=int(usage.get("candidatesTokenCount") or 0),
+                total_tokens=int(usage.get("totalTokenCount") or 0),
+            )
+    except Exception:
+        pass
+
+
+async def _post_gemini_request(
+    client: httpx.AsyncClient,
+    model_name: str,
+    api_key: str,
+    parts: list[dict[str, Any]],
+    response_schema: Optional[Dict[str, Any]] = None,
+) -> httpx.Response:
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{model_name}:generateContent"
+    )
+    gen_cfg: Dict[str, Any] = {
+        "temperature": 0.1,
+        "maxOutputTokens": 200,
+        "responseMimeType": "application/json",
+        "thinkingConfig": {"thinkingBudget": 0},
+    }
+    if response_schema is not None:
+        gen_cfg["responseSchema"] = response_schema
+
+    resp = await client.post(
+        url, params={"key": api_key}, json={"contents": [{"parts": parts}], "generationConfig": gen_cfg}
+    )
+    if resp.status_code == 400 and "thinkingConfig" in gen_cfg:
+        gen_cfg.pop("thinkingConfig", None)
+        resp = await client.post(
+            url, params={"key": api_key}, json={"contents": [{"parts": parts}], "generationConfig": gen_cfg}
+        )
+    if resp.status_code == 400 and "responseSchema" in gen_cfg:
+        gen_cfg.pop("responseSchema", None)
+        resp = await client.post(
+            url, params={"key": api_key}, json={"contents": [{"parts": parts}], "generationConfig": gen_cfg}
+        )
+    return resp
+
+
+async def _call_gemini(
+    parts: list[dict[str, Any]],
+    response_schema: Optional[Dict[str, Any]] = None,
+) -> Tuple[Dict[str, Any], Dict[str, Any], str]:
+    """Send multimodal content to Gemini with single-retry on 429 and 404-only fallback."""
     settings = get_settings()
     if not settings.GEMINI_API_KEY:
-        return {"error": "GEMINI_API_KEY sozlanmagan"}
+        raise RuntimeError("GEMINI_API_KEY missing")
 
-    payload = {
-        "contents": [{"parts": parts}],
-        "generationConfig": {
-            "temperature": 0.1,
-            "responseMimeType": "application/json",
-        },
-    }
+    models: list[str] = []
+    for m in (settings.GEMINI_MODEL, "gemini-flash-lite-latest"):
+        if m and m not in models:
+            models.append(m)
 
-    candidates_order: list[str] = []
-    for model_name in (
-        settings.GEMINI_MODEL,
-        "gemini-flash-lite-latest",
-        "gemini-3.8-flash",
-        "gemini-flash-latest",
-    ):
-        if model_name and model_name not in candidates_order:
-            candidates_order.append(model_name)
-
-    last_exc: Optional[Exception] = None
-    body: Dict[str, Any] = {}
     client = _get_http_client()
-    for model_name in candidates_order:
-        url = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{model_name}:generateContent"
+    body: Dict[str, Any] = {}
+    used_model = models[0]
+    last_exc: Optional[Exception] = None
+
+    for model_name in models:
+        used_model = model_name
+        resp = await _post_gemini_request(
+            client, model_name, settings.GEMINI_API_KEY, parts, response_schema=response_schema
         )
-        try:
-            resp = await client.post(
-                url,
-                params={"key": settings.GEMINI_API_KEY},
-                json=payload,
+        if resp.status_code == 404:
+            last_exc = httpx.HTTPStatusError(
+                f"Model {model_name} not found", request=resp.request, response=resp
             )
-            if resp.status_code in (404, 429, 503):
-                last_exc = httpx.HTTPStatusError(
-                    f"Model {model_name} returned {resp.status_code}",
-                    request=resp.request,
-                    response=resp,
-                )
-                continue
-            resp.raise_for_status()
-            body = resp.json()
-            last_exc = None
-            break
-        except httpx.HTTPError as exc:
-            last_exc = exc
             continue
+        if resp.status_code == 429:
+            await asyncio.sleep(2.0)
+            resp = await _post_gemini_request(
+                client, model_name, settings.GEMINI_API_KEY, parts, response_schema=response_schema
+            )
+            if resp.status_code == 429:
+                raise GeminiRateLimitError("Gemini rate limit (429)")
+        resp.raise_for_status()
+        body = resp.json()
+        last_exc = None
+        break
 
     if last_exc is not None:
         raise last_exc
 
     candidates = body.get("candidates") or []
+    usage = body.get("usageMetadata") or {}
     if not candidates:
-        return {}
+        return {}, usage, used_model
     content_parts = candidates[0].get("content", {}).get("parts", [])
     raw_text = "".join(p.get("text", "") for p in content_parts)
-    return _extract_json_object(raw_text)
+    return _extract_json_object(raw_text), usage, used_model
 
 
 async def extract_nakladnoy_from_image(
@@ -217,49 +342,55 @@ async def extract_nakladnoy_from_image(
     mime_type: str = "image/jpeg",
     caption: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """
-    Analyze a supplier nakladnoy/receipt image using Gemini 2.5 Flash.
-
-    Returns dict:
-        {
-            "supplier_name": str | None,
-            "amount": float | None,
-            "is_clear": bool,
-            "notes": str
-        }
-    """
-    prompt = (
-        "Siz O'zbekistondagi oziq-ovqat do'konining buxgalteriya yordamchisisiz. "
-        "Sizga ta'minotchi (postavshik) nakladnoyi yoki chek rasmi yuborildi.\n"
-        "Vazifa: Rasmdan quyidagi maydonlarni aniq ajratib JSON qaytaring:\n"
-        '1. "supplier_name": Ta\'minotchi/firma/yetkazib beruvchi nomi (masalan: "QASSOB", "OMBOR", "Non Oka", "Coca-Cola", "NAFIS"). '
-        "Agar do'kon nomi (masalan IFTIQOR 80) oluvchi sifatida yozilgan bo'lsa, uni EMAS, mahsulot beruvchi postavshik nomini oling. Topilmasa null.\n"
-        '2. "amount": Nakladnoyning yakuniy umumiy summasi (faqat raqam, so\'mda, masalan 1657000). '
-        "Agar tiyin/vergul bo'lmasa butun son qiling. Agar o'qib bo'lmasa null.\n"
-        '3. "is_clear": agar ham supplier_name ham amount aniq o\'qilgan bo\'lsa true, aks holda false.\n'
-        '4. "notes": qisqa izoh (masalan nima mahsulotlar ekanligi yoki nimasi ko\'rinmagani).\n'
-    )
+    """Analyze a supplier nakladnoy image via Gemini Vision after client-side resize."""
+    settings = get_settings()
+    cap_supplier = None
+    cap_amount = parse_uzbek_amount(caption) if caption else None
     if caption:
-        prompt += f"\nFoydalanuvchi rasm ostiga yozgan izoh: {caption}\n"
+        cap_clean = re.sub(r"\d[\d\s.,kKmlnmingmillionso'msomсўм]*", " ", caption).strip()
+        if re.search(r"[A-Za-zА-Яа-яЁё]{2,}", cap_clean):
+            cap_supplier = cap_clean
 
-    prompt += (
-        '\nFaqat JSON qaytaring: {"supplier_name": ..., "amount": ..., "is_clear": true/false, "notes": "..."}'
-    )
+    if not settings.GEMINI_API_KEY:
+        return {
+            "supplier_name": cap_supplier,
+            "amount": cap_amount,
+            "is_clear": False,
+            "notes": "",
+            "error_code": "no_key",
+        }
 
-    encoded = base64.b64encode(image_bytes).decode("ascii")
+    resized_bytes, out_mime = compress_image_for_ocr(image_bytes, max_side=1280, quality=82)
+    prompt = OCR_PROMPT
+    if caption:
+        prompt += f" Izoh: {caption}"
+
+    encoded = base64.b64encode(resized_bytes).decode("ascii")
     parts: list[dict[str, Any]] = [
         {"text": prompt},
-        {"inlineData": {"mimeType": mime_type, "data": encoded}},
+        {"inlineData": {"mimeType": out_mime, "data": encoded}},
     ]
 
     try:
-        data = await _call_gemini(parts)
-    except Exception as exc:
+        data, usage, used_model = await _call_gemini(parts, response_schema=OCR_SCHEMA)
+        await _log_ai_usage_safe("photo", used_model, usage)
+    except GeminiRateLimitError as exc:
+        logger.warning("Gemini rate limit on OCR: %s", exc)
         return {
-            "supplier_name": caption.strip() if caption else None,
-            "amount": parse_uzbek_amount(caption) if caption else None,
+            "supplier_name": cap_supplier,
+            "amount": cap_amount,
             "is_clear": False,
-            "notes": f"Gemini ulanish xatosi: {exc}",
+            "notes": "",
+            "error_code": "rate_limit",
+        }
+    except Exception as exc:
+        logger.warning("Gemini OCR error: %s", exc)
+        return {
+            "supplier_name": cap_supplier,
+            "amount": cap_amount,
+            "is_clear": False,
+            "notes": "",
+            "error_code": "api_error",
         }
 
     supplier = data.get("supplier_name")
@@ -275,14 +406,11 @@ async def extract_nakladnoy_from_image(
     elif isinstance(raw_amount, str):
         amount = parse_uzbek_amount(raw_amount)
 
-    # Fallback: check caption if Gemini missed something user explicitly wrote
     if caption:
         if amount is None:
-            amount = parse_uzbek_amount(caption)
+            amount = cap_amount
         if supplier is None:
-            caption_clean = re.sub(r"\d[\d\s.,]*", "", caption).strip()
-            if caption_clean:
-                supplier = caption_clean
+            supplier = cap_supplier
 
     is_clear = bool(data.get("is_clear")) and supplier is not None and amount is not None and amount > 0
     return {
@@ -290,16 +418,17 @@ async def extract_nakladnoy_from_image(
         "amount": amount,
         "is_clear": is_clear,
         "notes": str(data.get("notes") or ""),
+        "error_code": None,
     }
 
 
-def _heuristic_parse_text(text: str) -> Optional[Dict[str, Any]]:
-    """Fast deterministic parser for straightforward Uzbek/Russian text commands."""
-    raw = text.strip()
+def parse_text_deterministic(text: str) -> Dict[str, Any]:
+    """Deterministic parser for all Uzbek/Russian text commands — never calls Gemini."""
+    raw = (text or "").strip()
     low = raw.lower()
     amount = parse_uzbek_amount(raw)
 
-    if any(k in low for k in ("status", "статус", "hisob", "qoldiq")):
+    if any(k in low for k in ("status", "статус", "hisob", "qoldiq", "ҳисоб", "қолдиқ")):
         if amount is None:
             return {"intent": "status", "amount": None, "supplier_name": None, "transcript": raw}
 
@@ -316,23 +445,21 @@ def _heuristic_parse_text(text: str) -> Optional[Dict[str, Any]]:
     if any(k in low for k in ("pul oldim", "oldim", "kirim", "приход", "олдим")) and amount:
         return {"intent": "cash_in", "amount": amount, "supplier_name": None, "transcript": raw}
 
-    # Pure number (when not specifying supplier) -> unknown intent with parsed amount so caller context decides
-    stripped_num = re.sub(r"[\d\s.,+_mlnmingmillionkso'msomсўм-]+", "", low).strip()
-    if amount is not None and not stripped_num:
-        return {"intent": "number_only", "amount": amount, "supplier_name": None, "transcript": raw}
+    name_candidate = re.sub(
+        r"(?i)\b(?:berdim|to'ladim|toladim|berildi|o'tkazdim|otkazdim|tashladim|"
+        r"бердим|оплатил|nakladnoy|накладной|"
+        r"so'm|som|sum|сўм|mln|million|ming|mlrd|milliard|млн|миллион|тыс|тысяч|миллиард)\b",
+        " ",
+        raw,
+    )
+    name_candidate = re.sub(r"(?i)\b\d+(?:[.,]\d+)?\s*k\b", " ", name_candidate)
+    name_candidate = re.sub(r"[\d\s.,+_:-]+", " ", name_candidate).strip()
+    name_candidate = re.sub(r"\s+ga$", "", name_candidate, flags=re.IGNORECASE).strip()
 
-    # Explicit supplier payment pattern like "Marimalako ga 820 000 berdim" or "Non Oka 1 657 000 to'ladim"
-    pay_verbs = ("berdim", "to'ladim", "toladim", "berildi", "o'tkazdim", "otkazdim", "tashladim", "бердим", "оплатил")
-    if amount is not None and any(v in low for v in pay_verbs):
-        name_candidate = re.sub(
-            r"(?i)\b(?:berdim|to'ladim|toladim|berildi|o'tkazdim|otkazdim|tashladim|бердим|оплатил|so'm|som|sum|сўм|mln|million|ming|млн|миллион)\b",
-            " ",
-            raw,
-        )
-        name_candidate = re.sub(r"[\d\s.,+_]+", " ", name_candidate).strip(" :-")
-        # Remove standalone "ga" or trailing "-ga" if present as separate word
-        name_candidate = re.sub(r"\s+ga$", "", name_candidate, flags=re.IGNORECASE).strip()
-        if name_candidate:
+    if amount is not None and amount > 0:
+        if not name_candidate:
+            return {"intent": "number_only", "amount": amount, "supplier_name": None, "transcript": raw}
+        if re.search(r"[A-Za-zА-Яа-яЁё]{2,}", name_candidate):
             return {
                 "intent": "pay_supplier",
                 "amount": amount,
@@ -340,7 +467,12 @@ def _heuristic_parse_text(text: str) -> Optional[Dict[str, Any]]:
                 "transcript": raw,
             }
 
-    return None
+    return {"intent": "unknown", "amount": amount, "supplier_name": None, "transcript": raw}
+
+
+def _heuristic_parse_text(text: str) -> Dict[str, Any]:
+    """Backward-compatible alias for parse_text_deterministic."""
+    return parse_text_deterministic(text)
 
 
 async def parse_voice_or_text(
@@ -348,56 +480,46 @@ async def parse_voice_or_text(
     text: Optional[str] = None,
     mime_type: str = "audio/ogg",
 ) -> Dict[str, Any]:
-    """
-    Understand an Uzbek/Russian voice message or free-form text via Gemini 2.5 Flash.
+    """Parse text deterministically (zero AI tokens) or transcribe voice via Gemini Audio."""
+    if not audio_bytes:
+        return parse_text_deterministic(text or "")
 
-    Returns dict:
-        {
-            "intent": "cash_in" | "kassa_debt" | "kassa_repay" | "pay_supplier" | "count_cash" | "status" | "number_only" | "unknown",
-            "amount": float | None,
-            "supplier_name": str | None,
-            "transcript": str
-        }
-    """
-    if text and not audio_bytes:
-        heuristic = _heuristic_parse_text(text)
-        if heuristic is not None:
-            return heuristic
-
-    prompt = (
-        "Siz O'zbekistondagi do'konning moliyaviy yordamchi botisiz. "
-        "Foydalanuvchi o'zbek yoki rus tilida ovozli xabar yoki matn yubordi.\n"
-        "Vazifa: Xabarni tushunib, quyidagi JSON formatda qaytaring:\n"
-        '- "transcript": Xabarning matni (agar audio bo\'lsa o\'zbek/rus tilida yozilgan matni).\n'
-        '- "intent": Quyidagilardan BITTA qiymat:\n'
-        '  * "cash_in": Agar "pul oldim 21 million", "30 mln oldim", "asosiy pul qo\'sh" desa.\n'
-        '  * "kassa_debt": Agar "kassadan 3 million oldim", "kassadan qarz oldim" desa.\n'
-        '  * "kassa_repay": Agar "kassaga 3 million qaytardim", "kassa qarzini berdim" desa.\n'
-        '  * "pay_supplier": Agar biror ta\'minotchiga (postavshikka) pul berilgani aytilsa (masalan "Non Oka 1 million 657 ming", "Qassobga 5 million berdim").\n'
-        '  * "count_cash": Agar "qo\'limda 1 million 500 ming qoldi", "sanadim shuncha chiqdi" desa.\n'
-        '  * "status": Agar "status", "hisob-kitobni ko\'rsat", "qancha pul qoldi" desa.\n'
-        '  * "unknown": Agar boshqa narsa bo\'lsa.\n'
-        '- "amount": Aytilgan pul summasi (raqamda, so\'mda; masalan "21 million" -> 21000000, "bir yarim million" -> 1500000). Topilmasa null.\n'
-        '- "supplier_name": Agar "pay_supplier" bo\'lsa ta\'minotchi nomi (masalan "Non Oka", "Qassob"), bo\'lmasa null.\n'
-        'Faqat JSON qaytaring: {"transcript": "...", "intent": "...", "amount": ..., "supplier_name": ...}'
-    )
-
-    parts: list[dict[str, Any]] = [{"text": prompt}]
-    if text:
-        parts.append({"text": f"Foydalanuvchi matni: {text}"})
-    if audio_bytes:
-        encoded = base64.b64encode(audio_bytes).decode("ascii")
-        parts.append({"inlineData": {"mimeType": mime_type, "data": encoded}})
-
-    try:
-        data = await _call_gemini(parts)
-    except Exception as exc:
-        fallback_amount = parse_uzbek_amount(text or "") if text else None
+    settings = get_settings()
+    if not settings.GEMINI_API_KEY:
         return {
             "intent": "unknown",
-            "amount": fallback_amount,
+            "amount": None,
             "supplier_name": None,
-            "transcript": text or f"Audio xatolik: {exc}",
+            "transcript": "",
+            "error_code": "no_key",
+        }
+
+    encoded = base64.b64encode(audio_bytes).decode("ascii")
+    parts: list[dict[str, Any]] = [
+        {"text": AUDIO_PROMPT},
+        {"inlineData": {"mimeType": mime_type, "data": encoded}},
+    ]
+
+    try:
+        data, usage, used_model = await _call_gemini(parts, response_schema=AUDIO_SCHEMA)
+        await _log_ai_usage_safe("audio", used_model, usage)
+    except GeminiRateLimitError as exc:
+        logger.warning("Gemini rate limit on audio: %s", exc)
+        return {
+            "intent": "unknown",
+            "amount": None,
+            "supplier_name": None,
+            "transcript": "",
+            "error_code": "rate_limit",
+        }
+    except Exception as exc:
+        logger.warning("Gemini audio error: %s", exc)
+        return {
+            "intent": "unknown",
+            "amount": None,
+            "supplier_name": None,
+            "transcript": "",
+            "error_code": "api_error",
         }
 
     raw_amount = data.get("amount")
@@ -413,11 +535,12 @@ async def parse_voice_or_text(
     else:
         supplier = None
 
-    transcript = str(data.get("transcript") or text or "")
+    transcript = str(data.get("transcript") or "")
     intent = str(data.get("intent") or "unknown")
     return {
         "intent": intent,
         "amount": amount,
         "supplier_name": supplier,
         "transcript": transcript,
+        "error_code": None,
     }

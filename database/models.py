@@ -9,14 +9,19 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
-    Float,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     Text,
     func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+
+# Store UZS money accurately with Numeric(15, 2) while returning Python floats
+# so existing arithmetic remains seamless without Decimal/float mismatches.
+MONEY = Numeric(15, 2, asdecimal=False)
 
 
 class Base(DeclarativeBase):
@@ -58,10 +63,10 @@ class DailyCashSession(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     report_date: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="open", index=True)
-    opening_balance: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    actual_counted_cash: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    expected_cash: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    difference: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    opening_balance: Mapped[float] = mapped_column(MONEY, nullable=False, default=0.0)
+    actual_counted_cash: Mapped[Optional[float]] = mapped_column(MONEY, nullable=True)
+    expected_cash: Mapped[float] = mapped_column(MONEY, nullable=False, default=0.0)
+    difference: Mapped[Optional[float]] = mapped_column(MONEY, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -84,7 +89,7 @@ class CashTransaction(Base):
     session_id: Mapped[int] = mapped_column(
         ForeignKey("daily_cash_sessions.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    amount: Mapped[float] = mapped_column(MONEY, nullable=False)
     source_type: Mapped[str] = mapped_column(String(32), nullable=False, default="main")
     note: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -105,8 +110,10 @@ class NakladnoyPayment(Base):
         ForeignKey("daily_cash_sessions.id", ondelete="CASCADE"), nullable=False, index=True
     )
     supplier_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
-    amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    amount: Mapped[float] = mapped_column(MONEY, nullable=False, default=0.0)
+    original_amount: Mapped[Optional[float]] = mapped_column(MONEY, nullable=True)
     photo_file_id: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    photo_unique_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
     group_chat_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
@@ -128,8 +135,8 @@ class PrixodReport(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     report_date: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
-    total_cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    total_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    total_cost: Mapped[float] = mapped_column(MONEY, nullable=False, default=0.0)
+    total_price: Mapped[float] = mapped_column(MONEY, nullable=False, default=0.0)
     formatted_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
     group_chat_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
@@ -156,8 +163,8 @@ class PrixodRow(Base):
     supplier_raw: Mapped[str] = mapped_column(String(255), nullable=False)
     supplier_display: Mapped[str] = mapped_column(String(255), nullable=False)
     note_raw: Mapped[str] = mapped_column(String(255), nullable=False, default="")
-    cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    cost: Mapped[float] = mapped_column(MONEY, nullable=False, default=0.0)
+    price: Mapped[float] = mapped_column(MONEY, nullable=False, default=0.0)
     category: Mapped[str] = mapped_column(String(32), nullable=False, default="nakladnoy")
     old_date_label: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     created_at_str: Mapped[str] = mapped_column(String(64), nullable=False, default="")
@@ -166,7 +173,7 @@ class PrixodRow(Base):
 
 
 class AppSetting(Base):
-    """Key-value bot behavior settings (auto_confirm, round_mode, etc.)."""
+    """Key-value bot behavior settings (auto_confirm, round_mode, auto_report, etc.)."""
 
     __tablename__ = "app_settings"
 
@@ -183,7 +190,67 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     entity: Mapped[str] = mapped_column(String(32), nullable=False)
     entity_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    user_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     details: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class FSMState(Base):
+    """Persistent Aiogram FSM state and context data surviving bot restarts."""
+
+    __tablename__ = "fsm_states"
+
+    storage_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    state: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    data_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AIUsageLog(Base):
+    """Daily tracking of Gemini AI calls, cache hits, and token consumption."""
+
+    __tablename__ = "ai_usage_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    usage_date: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # photo | audio | cache_hit
+    model_name: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class UserRole(Base):
+    """Telegram user access roles (admin, kassir, viewer)."""
+
+    __tablename__ = "user_roles"
+
+    user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    role: Mapped[str] = mapped_column(String(16), nullable=False, default="viewer")
+    label: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class SupplierDebt(Base):
+    """Supplier credit/nasiya ledger tracking goods taken on credit and repayments."""
+
+    __tablename__ = "supplier_debts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    supplier_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    entry_type: Mapped[str] = mapped_column(String(16), nullable=False)  # debt | payment
+    amount: Mapped[float] = mapped_column(MONEY, nullable=False)
+    note: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

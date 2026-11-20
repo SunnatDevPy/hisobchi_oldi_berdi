@@ -358,3 +358,378 @@ def test_nakladnoy_amount_rounding_and_app_settings(tmp_path: Path):
         assert "(" in st_text  # timestamp at end of payment row
 
     asyncio.run(_run_with_db(tmp_path, scenario))
+
+
+def test_database_fsm_storage_persistence(tmp_path: Path):
+    from aiogram.fsm.storage.base import StorageKey
+    from bot.storage import DatabaseFSMStorage
+    from bot.states import WalletStates
+
+    db_file = tmp_path / "fsm_test.db"
+    eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+
+    async def scenario() -> None:
+        await init_db(engine_override=eng, session_maker_override=maker)
+        key = StorageKey(bot_id=1, chat_id=100, user_id=100)
+        s1 = DatabaseFSMStorage(maker)
+        await s1.set_state(key, WalletStates.waiting_cash_in_amount)
+        await s1.set_data(key, {"supplier": "Nafis", "step": 2})
+
+        # Simulate process restart with a brand new storage instance
+        s2 = DatabaseFSMStorage(maker)
+        assert await s2.get_state(key) == WalletStates.waiting_cash_in_amount.state
+        assert await s2.get_data(key) == {"supplier": "Nafis", "step": 2}
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(eng.dispose())
+
+
+def test_role_auth_fail_closed_and_roles(tmp_path: Path, monkeypatch):
+    from bot.auth import (
+        ROLE_ADMIN,
+        ROLE_KASSIR,
+        ROLE_VIEWER,
+        can_write_role,
+        clear_role_cache,
+        get_user_role,
+        is_admin_role,
+        is_authorized,
+        refresh_role_cache,
+    )
+    from config import get_settings
+    from database.crud import delete_user_role, set_user_role
+
+    monkeypatch.setenv("ADMIN_IDS", "")
+    get_settings.cache_clear()
+    clear_role_cache()
+
+    async def scenario(db_session: AsyncSession) -> None:
+        # Fail-closed when ADMIN_IDS is empty and DB roles empty
+        assert is_authorized(999999) is False
+        assert get_user_role(999999) is None
+
+        await set_user_role(db_session, 1001, ROLE_KASSIR, "Ali")
+        await set_user_role(db_session, 1002, ROLE_VIEWER, "Vali")
+        await refresh_role_cache(db_session)
+
+        assert is_authorized(1001) is True
+        assert can_write_role(1001) is True
+        assert is_admin_role(1001) is False
+
+        assert is_authorized(1002) is True
+        assert can_write_role(1002) is False
+        assert is_admin_role(1002) is False
+
+        assert await delete_user_role(db_session, 1002) is True
+        await refresh_role_cache(db_session)
+        assert is_authorized(1002) is False
+
+    try:
+        asyncio.run(_run_with_db(tmp_path, scenario))
+    finally:
+        clear_role_cache()
+        get_settings.cache_clear()
+
+
+def test_text_never_calls_gemini_and_parses_without_verb(monkeypatch):
+    import services.gemini_ai as ai_mod
+
+    async def _boom(*args, **kwargs):
+        raise AssertionError("Gemini AI must never be called for text messages")
+
+    monkeypatch.setattr(ai_mod, "_call_gemini", _boom)
+
+    async def scenario() -> None:
+        r1 = await parse_voice_or_text(text="pure milky 354 000")
+        assert r1["intent"] == "pay_supplier"
+        assert r1["supplier_name"] == "pure milky"
+        assert r1["amount"] == 354_000
+
+        r2 = await parse_voice_or_text(text="Nafis 1.5 mln")
+        assert r2["intent"] == "pay_supplier"
+        assert r2["supplier_name"] == "Nafis"
+        assert r2["amount"] == 1_500_000
+
+        r3 = await parse_voice_or_text(text="450k")
+        assert r3["intent"] == "number_only"
+        assert r3["amount"] == 450_000
+
+        r4 = await parse_voice_or_text(text="Salom qalesiz")
+        assert r4["intent"] == "unknown"
+
+    asyncio.run(scenario())
+
+
+def test_image_resize_dedup_and_ai_usage_counter(tmp_path: Path):
+    import io
+    from PIL import Image
+    from database.crud import find_nakladnoy_by_photo_unique_id, get_ai_usage_stats, record_ai_usage
+    from services.gemini_ai import compress_image_for_ocr
+
+    img = Image.new("RGB", (2600, 1800), color=(240, 240, 240))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=95)
+    resized, mime = compress_image_for_ocr(buf.getvalue(), max_side=1280)
+    assert mime == "image/jpeg"
+    with Image.open(io.BytesIO(resized)) as out_im:
+        assert max(out_im.size) == 1280
+
+    async def scenario(db_session: AsyncSession) -> None:
+        sess = await get_or_create_open_session(db_session, report_date="2026-11-20")
+        p = await create_pending_nakladnoy(
+            db_session,
+            "Nafis",
+            330_000,
+            photo_file_id="f1",
+            photo_unique_id="uniq_img_123",
+            original_amount=330_620,
+            session_id=sess.id,
+        )
+        await confirm_nakladnoy(db_session, p.id)
+        found = await find_nakladnoy_by_photo_unique_id(db_session, "uniq_img_123")
+        assert found is not None and found.id == p.id
+
+        await record_ai_usage(db_session, "photo", "gemini-flash-lite-latest", 300, 40, 340, usage_date="2026-11-20")
+        await record_ai_usage(db_session, "cache_hit", "cache", 0, 0, 0, usage_date="2026-11-20")
+        stats = await get_ai_usage_stats(db_session, date_iso="2026-11-20")
+        assert stats["calls"] == 1
+        assert stats["cache_hits"] == 1
+        assert stats["total_tokens"] == 340
+
+    asyncio.run(_run_with_db(tmp_path, scenario))
+
+
+def test_navigation_router_overrides_active_fsm_state(tmp_path: Path, monkeypatch):
+    from datetime import datetime, timezone
+    from unittest.mock import AsyncMock
+    from aiogram import Bot, Dispatcher
+    from aiogram.fsm.storage.base import StorageKey
+    from aiogram.types import Chat, Message, Update, User
+    from bot.auth import clear_role_cache
+    from bot.handlers import get_main_router
+    from bot.keyboards import BTN_STATUS
+    from bot.states import WalletStates
+    from bot.storage import DatabaseFSMStorage
+    from config import get_settings
+
+    monkeypatch.setenv("ADMIN_IDS", "555111")
+    get_settings.cache_clear()
+    clear_role_cache()
+
+    db_file = tmp_path / "nav_test.db"
+    eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+
+    async def scenario() -> None:
+        import bot.handlers.wallet_nakladnoy as wn
+        import bot.handlers.navigation as nav
+        from database.session import init_db as _init
+
+        await _init(engine_override=eng, session_maker_override=maker)
+        monkeypatch.setattr(wn, "async_session_maker", maker)
+
+        storage = DatabaseFSMStorage(maker)
+        dp = Dispatcher(storage=storage)
+        dp.include_router(get_main_router())
+
+        key = StorageKey(bot_id=123, chat_id=555111, user_id=555111)
+        await storage.set_state(key, WalletStates.waiting_cash_in_amount)
+
+        called = {"status": False, "cancel": False}
+        orig_status = wn.handle_status_button
+
+        async def spy_status(msg, state, actor_id=None):
+            called["status"] = True
+            await state.clear()
+
+        monkeypatch.setattr(nav, "handle_status_button", spy_status)
+
+        bot = AsyncMock(spec=Bot)
+        bot.id = 123
+        user = User(id=555111, is_bot=False, first_name="Admin")
+        chat = Chat(id=555111, type="private")
+        msg = Message(message_id=10, date=datetime.now(timezone.utc), chat=chat, from_user=user, text=BTN_STATUS)
+        await dp.feed_update(bot, Update(update_id=1, message=msg))
+
+        assert called["status"] is True
+        assert await storage.get_state(key) is None
+
+        # Verify "❌ Bekor qilish" also clears active state without getting swallowed
+        await storage.set_state(key, WalletStates.waiting_cash_in_amount)
+        monkeypatch.setattr(Message, "answer", AsyncMock())
+        cancel_msg = Message(
+            message_id=11, date=datetime.now(timezone.utc), chat=chat, from_user=user, text="❌ Bekor qilish"
+        )
+        await dp.feed_update(bot, Update(update_id=2, message=cancel_msg))
+        assert await storage.get_state(key) is None
+        monkeypatch.setattr(nav, "handle_status_button", orig_status)
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(eng.dispose())
+        get_settings.cache_clear()
+
+
+def test_supplier_normalization_fuzzy_and_recent_suggestions(tmp_path: Path):
+    from database.crud import (
+        get_recent_amounts_for_supplier,
+        get_recent_suppliers,
+        get_supplier_sverka,
+        resolve_supplier_name,
+    )
+
+    async def scenario(db_session: AsyncSession) -> None:
+        # Alias mapping from seed defaults
+        canon, sug = await resolve_supplier_name(db_session, "SAID AND PARTNERS")
+        assert canon == "Alisa Pereches" and sug is None
+
+        sess = await get_or_create_open_session(db_session, report_date="2026-11-20")
+        p1 = await create_pending_nakladnoy(db_session, "Nafis", 330_000, session_id=sess.id)
+        p2 = await create_pending_nakladnoy(db_session, "Nafis", 450_000, session_id=sess.id)
+        await confirm_nakladnoy(db_session, p1.id)
+        await confirm_nakladnoy(db_session, p2.id)
+
+        # Case normalization
+        c2, s2 = await resolve_supplier_name(db_session, "nafis")
+        assert c2 == "Nafis" and s2 is None
+
+        # Fuzzy suggestion for close typo
+        c3, s3 = await resolve_supplier_name(db_session, "Nafiss")
+        assert c3 == "Nafiss" and s3 == "Nafis"
+
+        recents = await get_recent_suppliers(db_session, 6)
+        assert "Nafis" in recents
+        amts = await get_recent_amounts_for_supplier(db_session, "nafis", 3)
+        assert amts == [450_000.0, 330_000.0]
+
+        sv = await get_supplier_sverka(db_session, "2026-11")
+        assert len(sv) == 2
+
+    asyncio.run(_run_with_db(tmp_path, scenario))
+
+
+def test_supplier_debt_nasiya_and_statistics_and_search(tmp_path: Path):
+    from database.crud import (
+        add_supplier_debt,
+        delete_supplier_debt,
+        get_period_statistics,
+        get_supplier_debt_balances,
+        search_nakladnoys,
+    )
+
+    async def scenario(db_session: AsyncSession) -> None:
+        sess = await get_or_create_open_session(db_session, report_date="2026-11-20")
+        p1 = await create_pending_nakladnoy(db_session, "Non Oka", 1_000_000, session_id=sess.id)
+        await confirm_nakladnoy(db_session, p1.id)
+
+        found_name = await search_nakladnoys(db_session, "non")
+        assert len(found_name) == 1
+        found_date = await search_nakladnoys(db_session, "20.11.2026")
+        assert len(found_date) == 1
+
+        st = await get_period_statistics(db_session, "2026-11-01", "2026-11-30")
+        assert st["total_spent"] == 1_000_000
+        assert st["active_days"] == 1
+
+        d1 = await add_supplier_debt(db_session, "OMBOR", "debt", 5_000_000, "Yog'")
+        await add_supplier_debt(db_session, "ombor", "payment", 2_000_000, "Karta")
+        d3 = await add_supplier_debt(db_session, "Nafis", "debt", 500_000)
+        await delete_supplier_debt(db_session, d3.id)
+
+        bals = await get_supplier_debt_balances(db_session)
+        assert len(bals) == 1
+        assert bals[0]["balance"] == 3_000_000
+        assert d1.id > 0
+
+    asyncio.run(_run_with_db(tmp_path, scenario))
+
+
+def test_excel_xulosa_range_and_sverka_pivot_chart(tmp_path: Path):
+    import io
+    from openpyxl import load_workbook
+    from database.crud import get_range_report_data, get_supplier_sverka
+    from services.excel_export import build_range_excel, build_sverka_excel
+
+    async def scenario(db_session: AsyncSession) -> None:
+        sess = await get_or_create_open_session(db_session, report_date="2026-11-20")
+        await add_cash_transaction(db_session, 2_000_000, source_type="main", session_id=sess.id)
+        p = await create_pending_nakladnoy(
+            db_session, "Nafis", 192_000, original_amount=192_640, photo_file_id="pf1", session_id=sess.id
+        )
+        await confirm_nakladnoy(db_session, p.id, group_chat_id=-100123456, group_message_id=77)
+        summary = await compute_session_summary(db_session, sess.id)
+
+        wb1 = load_workbook(io.BytesIO(build_session_excel(summary)))
+        assert wb1.sheetnames == ["Xulosa", "Nakladnoylar", "Kirim va Qarzlar"]
+        assert wb1["Nakladnoylar"].cell(4, 4).value == 192640
+        assert wb1["Nakladnoylar"].cell(4, 5).value == "Ha"
+        assert wb1["Nakladnoylar"].cell(4, 6).hyperlink.target == "https://t.me/c/123456/77"
+
+        rdata = await get_range_report_data(db_session, "2026-11-01", "2026-11-30")
+        wb2 = load_workbook(io.BytesIO(build_range_excel("2026-11-01", "2026-11-30", rdata)))
+        assert wb2.sheetnames == ["Xulosa", "Nakladnoylar", "Kirim va Qarzlar", "Postavshiklar"]
+
+        sv_rows = await get_supplier_sverka(db_session, "2026-11")
+        wb3 = load_workbook(io.BytesIO(build_sverka_excel("2026-11", sv_rows)))
+        assert wb3.sheetnames == ["Postavshiklar", "Kunlar x Postavshiklar", "Barcha to'lovlar"]
+        assert len(wb3["Postavshiklar"]._charts) == 1
+
+    asyncio.run(_run_with_db(tmp_path, scenario))
+
+
+def test_backup_encryption_roundtrip():
+    from services.backup import decrypt_backup_bytes, encrypt_backup_bytes
+
+    plain = b"hisobot-backup-payload-123"
+    enc = encrypt_backup_bytes(plain, "strong-parol-99")
+    assert enc != plain
+    assert decrypt_backup_bytes(enc, "strong-parol-99") == plain
+
+    try:
+        decrypt_backup_bytes(enc, "wrong-parol")
+        raise AssertionError("Wrong password should raise InvalidToken")
+    except Exception:
+        pass
+
+
+def test_idempotent_schema_upgrade_from_legacy_db(tmp_path: Path):
+    import sqlite3
+    from sqlalchemy import inspect
+
+    db_file = tmp_path / "legacy.db"
+    con = sqlite3.connect(db_file)
+    con.executescript(
+        """
+        CREATE TABLE daily_cash_sessions (id INTEGER PRIMARY KEY, report_date VARCHAR(16), status VARCHAR(16), opening_balance FLOAT, actual_counted_cash FLOAT, expected_cash FLOAT, difference FLOAT, created_at DATETIME, closed_at DATETIME);
+        CREATE TABLE nakladnoy_payments (id INTEGER PRIMARY KEY, session_id INTEGER, supplier_name VARCHAR(255), amount FLOAT, photo_file_id VARCHAR(512), note TEXT, status VARCHAR(16), group_chat_id BIGINT, group_message_id INTEGER, created_at DATETIME, updated_at DATETIME);
+        CREATE TABLE audit_logs (id INTEGER PRIMARY KEY, action VARCHAR(32), entity VARCHAR(32), entity_id INTEGER, details TEXT, created_at DATETIME);
+        INSERT INTO daily_cash_sessions VALUES (1, '2026-11-01', 'open', 0, NULL, 0, NULL, NULL, NULL);
+        INSERT INTO nakladnoy_payments VALUES (1, 1, 'OMBOR', 500000, NULL, '', 'confirmed', NULL, NULL, NULL, NULL);
+        """
+    )
+    con.close()
+
+    eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+
+    async def scenario() -> None:
+        await init_db(engine_override=eng, session_maker_override=maker)
+        async with eng.connect() as conn:
+            def _check(sync_conn):
+                insp = inspect(sync_conn)
+                nak_cols = {c["name"] for c in insp.get_columns("nakladnoy_payments")}
+                audit_cols = {c["name"] for c in insp.get_columns("audit_logs")}
+                tables = set(insp.get_table_names())
+                return nak_cols, audit_cols, tables
+
+            nak_cols, audit_cols, tables = await conn.run_sync(_check)
+            assert "photo_unique_id" in nak_cols
+            assert "original_amount" in nak_cols
+            assert "user_id" in audit_cols
+            assert {"fsm_states", "ai_usage_logs", "user_roles", "supplier_debts"}.issubset(tables)
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(eng.dispose())

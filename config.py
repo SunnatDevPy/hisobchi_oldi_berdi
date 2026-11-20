@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     YESPOS_1C_API_KEY: str = ""
 
     TIMEZONE: str = "Asia/Tashkent"
+    BACKUP_PASSWORD: str = ""
 
     @field_validator("DATABASE_URL")
     @classmethod

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Optional, Sequence
 
 from aiogram.types import (
     InlineKeyboardButton,
@@ -11,6 +11,7 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
+from bot.auth import ROLE_ADMIN, ROLE_KASSIR, ROLE_LABELS
 from database.models import (
     CashTransaction,
     DailyCashSession,
@@ -18,13 +19,21 @@ from database.models import (
     PrixodReport,
     PrixodRow,
     SupplierConfig,
+    SupplierDebt,
+    UserRole,
 )
 from services.gemini_ai import format_uzs
 
 
-BTN_ADD_NAKLADNOY = "📸 Nakladnoy qo'shish"
+# Primary 2x2 bottom menu buttons (T2)
+BTN_ADD_NAKLADNOY = "📸 Nakladnoy"
 BTN_CASH_IN = "➕ Pul oldim"
-BTN_STATUS = "📊 Status (Hisob)"
+BTN_STATUS = "📊 Status"
+BTN_MORE = "⚙️ Boshqa"
+
+# Legacy bottom button texts still accepted cleanly by navigation.py
+LEGACY_BTN_ADD_NAKLADNOY = "📸 Nakladnoy qo'shish"
+LEGACY_BTN_STATUS = "📊 Status (Hisob)"
 BTN_EDIT_CONFIRMED = "✏️ Tahrirlash"
 BTN_CLOSE_DAY = "🏁 Kunni yakunlash"
 BTN_PRIXOD = "👑 Prixod (ITOG)"
@@ -33,13 +42,11 @@ BTN_SETTINGS = "⚙️ Sozlamalar & History"
 
 
 def main_menu_keyboard() -> ReplyKeyboardMarkup:
-    """Main persistent bottom menu."""
+    """Compact 2x2 persistent bottom menu."""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_ADD_NAKLADNOY), KeyboardButton(text=BTN_CASH_IN)],
-            [KeyboardButton(text=BTN_STATUS), KeyboardButton(text=BTN_EDIT_CONFIRMED)],
-            [KeyboardButton(text=BTN_CLOSE_DAY), KeyboardButton(text=BTN_PRIXOD)],
-            [KeyboardButton(text=BTN_KASSA_DEBT), KeyboardButton(text=BTN_SETTINGS)],
+            [KeyboardButton(text=BTN_STATUS), KeyboardButton(text=BTN_MORE)],
         ],
         resize_keyboard=True,
     )
@@ -53,10 +60,79 @@ def cancel_reply_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
-def nakladnoy_confirm_kb(payment_id: int) -> InlineKeyboardMarkup:
-    """Confirmation inline keyboard for a pending nakladnoy payment."""
+def delete_confirm_kb(confirm_cb: str, cancel_cb: str) -> InlineKeyboardMarkup:
+    """Generic 2-step delete confirmation prompt (T4)."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Ha, o'chirilsin", callback_data=confirm_cb),
+                InlineKeyboardButton(text="❌ Yo'q, qolsin", callback_data=cancel_cb),
+            ]
+        ]
+    )
+
+
+def more_menu_kb(role: str = ROLE_ADMIN) -> InlineKeyboardMarkup:
+    """Extended operations & settings hub opened from ⚙️ Boshqa (T2)."""
+    rows: list[list[InlineKeyboardButton]] = []
+    if role == ROLE_ADMIN:
+        rows.append(
+            [
+                InlineKeyboardButton(text="✏️ Tahrirlash", callback_data="more:edit"),
+                InlineKeyboardButton(text="🏁 Kunni yakunlash", callback_data="more:close_day"),
+            ]
+        )
+    if role in (ROLE_ADMIN, ROLE_KASSIR):
+        rows.append(
+            [
+                InlineKeyboardButton(text="🏦 Kassa qarzi", callback_data="more:kassa_debt"),
+                InlineKeyboardButton(text="📒 Nasiya (Qarz)", callback_data="more:nasiya"),
+            ]
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(text="👑 Prixod (ITOG)", callback_data="more:prixod"),
+                InlineKeyboardButton(text="📥 Excel hisobotlar", callback_data="export:menu"),
+            ]
+        )
+    else:
+        rows.append(
+            [
+                InlineKeyboardButton(text="📒 Nasiya (Qarz)", callback_data="more:nasiya"),
+                InlineKeyboardButton(text="📥 Excel hisobotlar", callback_data="export:menu"),
+            ]
+        )
+
+    rows.append(
+        [
+            InlineKeyboardButton(text="📈 Statistika & Sverka", callback_data="more:stats"),
+            InlineKeyboardButton(text="📜 History / Qidiruv", callback_data="set:history"),
+        ]
+    )
+    if role == ROLE_ADMIN:
+        rows.append(
+            [InlineKeyboardButton(text="⚙️ Sozlamalar (Admin)", callback_data="more:settings")]
+        )
+    rows.append([InlineKeyboardButton(text="🔙 Yopish", callback_data="menu:dismiss")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def nakladnoy_confirm_kb(
+    payment_id: int, suggested_supplier: Optional[str] = None
+) -> InlineKeyboardMarkup:
+    """Confirmation inline keyboard for a pending nakladnoy payment."""
+    rows: list[list[InlineKeyboardButton]] = []
+    if suggested_supplier:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"✨ «{suggested_supplier[:24]}» ga birlashtirish",
+                    callback_data=f"nak:use_sup:{payment_id}",
+                )
+            ]
+        )
+    rows.extend(
+        [
             [
                 InlineKeyboardButton(
                     text="✅ Tasdiqlash (Guruhga yuborish)",
@@ -87,24 +163,25 @@ def nakladnoy_confirm_kb(payment_id: int) -> InlineKeyboardMarkup:
             ],
         ]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def auto_confirmed_nakladnoy_kb(
-    payment_id: int, sent_to_group: bool = True
+    payment_id: int, sent_to_group: bool = True, suggested_supplier: Optional[str] = None
 ) -> InlineKeyboardMarkup:
     """Quick edit/undo controls shown after instant auto-confirmation."""
-    second_row = [
-        InlineKeyboardButton(
-            text="🙈 Guruhdan olish (Faqat baza)" if sent_to_group else "📤 Guruhga yuborish",
-            callback_data=f"nak:unpost_group:{payment_id}" if sent_to_group else f"nak:repost_group:{payment_id}",
-        ),
-        InlineKeyboardButton(
-            text="🗑 O'chirish",
-            callback_data=f"nak:delete_conf:{payment_id}",
-        ),
-    ]
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    rows: list[list[InlineKeyboardButton]] = []
+    if suggested_supplier:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"✨ «{suggested_supplier[:24]}» ga birlashtirish",
+                    callback_data=f"nak:use_sup:{payment_id}",
+                )
+            ]
+        )
+    rows.extend(
+        [
             [
                 InlineKeyboardButton(
                     text="💰 Summa",
@@ -115,7 +192,18 @@ def auto_confirmed_nakladnoy_kb(
                     callback_data=f"nak:edit_sup:{payment_id}",
                 ),
             ],
-            second_row,
+            [
+                InlineKeyboardButton(
+                    text="🙈 Guruhdan olish (Faqat baza)" if sent_to_group else "📤 Guruhga yuborish",
+                    callback_data=f"nak:unpost_group:{payment_id}"
+                    if sent_to_group
+                    else f"nak:repost_group:{payment_id}",
+                ),
+                InlineKeyboardButton(
+                    text="🗑 O'chirish",
+                    callback_data=f"nak:delete_conf:{payment_id}",
+                ),
+            ],
             [
                 InlineKeyboardButton(
                     text="✅ Tayyor",
@@ -124,6 +212,62 @@ def auto_confirmed_nakladnoy_kb(
             ],
         ]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def nakladnoy_quick_amount_kb(payment_id: int, is_confirmed: bool = True) -> InlineKeyboardMarkup:
+    """Quick step adjustments (-10k/-1k/+1k/+10k/round) + manual input fallback (T5)."""
+    back_cb = f"nak_view:{payment_id}" if is_confirmed else f"nak:back_card:{payment_id}"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="−10 000", callback_data=f"nak:adj:{payment_id}:-10000"),
+                InlineKeyboardButton(text="−1 000", callback_data=f"nak:adj:{payment_id}:-1000"),
+                InlineKeyboardButton(text="+1 000", callback_data=f"nak:adj:{payment_id}:1000"),
+                InlineKeyboardButton(text="+10 000", callback_data=f"nak:adj:{payment_id}:10000"),
+            ],
+            [
+                InlineKeyboardButton(text="🔄 Yaxlitlash", callback_data=f"nak:adj_round:{payment_id}"),
+                InlineKeyboardButton(
+                    text="⌨️ Qo'lda kiritish",
+                    callback_data=f"nak:edit_amt_manual:{payment_id}",
+                ),
+            ],
+            [InlineKeyboardButton(text="⬅️ Orqaga", callback_data=back_cb)],
+        ]
+    )
+
+
+def quick_suppliers_kb(suppliers: Sequence[str]) -> InlineKeyboardMarkup:
+    """Recent supplier quick-pick buttons when adding a nakladnoy (T6)."""
+    rows: list[list[InlineKeyboardButton]] = []
+    pair: list[InlineKeyboardButton] = []
+    for idx, name in enumerate(suppliers):
+        pair.append(InlineKeyboardButton(text=f"🏢 {name[:20]}", callback_data=f"qsup:{idx}"))
+        if len(pair) == 2:
+            rows.append(pair)
+            pair = []
+    if pair:
+        rows.append(pair)
+    rows.append([InlineKeyboardButton(text="❌ Bekor qilish", callback_data="qsup:cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def quick_amounts_kb(amounts: Sequence[float]) -> InlineKeyboardMarkup:
+    """Last 3 historical amounts for a quick-picked supplier (Y2)."""
+    rows: list[list[InlineKeyboardButton]] = []
+    if amounts:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"💰 {format_uzs(amt)}",
+                    callback_data=f"qamt:{idx}",
+                )
+                for idx, amt in enumerate(amounts)
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="❌ Bekor qilish", callback_data="qsup:cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def status_actions_kb(session_id: int) -> InlineKeyboardMarkup:
@@ -142,10 +286,52 @@ def status_actions_kb(session_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    text="📜 Pul oldi-berdi & Nakladnoy History",
+                    text="📆 Boshqa davr Excel",
+                    callback_data="export:menu",
+                ),
+                InlineKeyboardButton(
+                    text="📜 History & Qidiruv",
                     callback_data="set:history",
-                )
+                ),
             ],
+        ]
+    )
+
+
+def export_range_kb() -> InlineKeyboardMarkup:
+    """Period selection menu for multi-day Excel exports (E1)."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📅 Bugun (ochiq smena)", callback_data="export:range:today"),
+                InlineKeyboardButton(text="📆 Oxirgi 7 kun", callback_data="export:range:week"),
+            ],
+            [
+                InlineKeyboardButton(text="🗓 Joriy oy", callback_data="export:range:month"),
+                InlineKeyboardButton(text="🗓 O'tgan oy", callback_data="export:range:prev_month"),
+            ],
+            [
+                InlineKeyboardButton(text="✍️ Sana oralig'i tanlash", callback_data="export:range:custom"),
+                InlineKeyboardButton(text="📜 Yopilganlar tarixi", callback_data="export:history"),
+            ],
+            [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="more:open")],
+        ]
+    )
+
+
+def stats_menu_kb() -> InlineKeyboardMarkup:
+    """Statistics & monthly sverka picker (Y5)."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📊 Oxirgi 7 kun", callback_data="stats:7"),
+                InlineKeyboardButton(text="📊 Joriy oy", callback_data="stats:month"),
+            ],
+            [
+                InlineKeyboardButton(text="📋 Sverka (Joriy oy)", callback_data="sverka:month:current"),
+                InlineKeyboardButton(text="📋 Sverka (O'tgan oy)", callback_data="sverka:month:prev"),
+            ],
+            [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="more:open")],
         ]
     )
 
@@ -294,38 +480,32 @@ def close_day_confirm_kb(session_id: int, counted: float) -> InlineKeyboardMarku
 
 
 def settings_menu_kb() -> InlineKeyboardMarkup:
-    """Settings & History inline menu."""
+    """Admin Settings & Tools inline menu (T8)."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(
-                    text="🔗 Guruhlarni sozlash",
-                    callback_data="set:groups",
-                ),
-                InlineKeyboardButton(
-                    text="🏢 Ta'minotchilar (Qarz/Karta)",
-                    callback_data="set:suppliers",
-                ),
+                InlineKeyboardButton(text="🔗 Guruhlarni sozlash", callback_data="set:groups"),
+                InlineKeyboardButton(text="🏢 Ta'minotchilar", callback_data="set:suppliers"),
             ],
             [
-                InlineKeyboardButton(
-                    text="📜 Arxiv / History (Kassa)",
-                    callback_data="set:history",
-                ),
-                InlineKeyboardButton(
-                    text="👑 Prixod (ITOG) tarixi",
-                    callback_data="set:prixod_history",
-                ),
+                InlineKeyboardButton(text="📜 History & Qidiruv", callback_data="set:history"),
+                InlineKeyboardButton(text="👑 Prixod (ITOG) tarixi", callback_data="set:prixod_history"),
             ],
             [
-                InlineKeyboardButton(
-                    text="⚡ Tez rejim & Yaxlitlash",
-                    callback_data="set:ai_prefs",
-                ),
-                InlineKeyboardButton(
-                    text="📥 Tarixni Excel yuklash",
-                    callback_data="export:history",
-                ),
+                InlineKeyboardButton(text="⚡ Tez rejim & Yaxlitlash", callback_data="set:ai_prefs"),
+                InlineKeyboardButton(text="⏰ Avto kunlik hisobot", callback_data="set:auto_report"),
+            ],
+            [
+                InlineKeyboardButton(text="👥 Foydalanuvchi rollari", callback_data="set:roles"),
+                InlineKeyboardButton(text="🤖 AI sarfi (Token)", callback_data="set:ai_stats"),
+            ],
+            [
+                InlineKeyboardButton(text="🧾 Audit jurnali", callback_data="set:audit"),
+                InlineKeyboardButton(text="💾 Backup olish", callback_data="set:backup"),
+            ],
+            [
+                InlineKeyboardButton(text="📥 Excel hisobotlar", callback_data="export:menu"),
+                InlineKeyboardButton(text="⬅️ Bosh menyu", callback_data="more:open"),
             ],
         ]
     )
@@ -333,7 +513,11 @@ def settings_menu_kb() -> InlineKeyboardMarkup:
 
 def ai_prefs_kb(auto_confirm: bool, round_mode: str) -> InlineKeyboardMarkup:
     """Toggle auto-confirm speed mode and nakladnoy amount rounding mode."""
-    auto_lbl = "⚡ Tez rejim (Avto-guruhga): ✅ YOQILGAN" if auto_confirm else "⚡ Tez rejim (Avto-guruhga): ❌ O'CHIQ"
+    auto_lbl = (
+        "⚡ Tez rejim (Avto-guruhga): ✅ YOQILGAN"
+        if auto_confirm
+        else "⚡ Tez rejim (Avto-guruhga): ❌ O'CHIQ"
+    )
     r_floor = "✅ 1 000 ga pastga (192 620 → 192 000)" if round_mode == "floor_1000" else "1 000 ga pastga (192 620 → 192 000)"
     r_near = "✅ Yaqin 1 000 ga (192 620 → 193 000)" if round_mode == "nearest_1000" else "Yaqin 1 000 ga (192 620 → 193 000)"
     r_none = "✅ Yaxlitlamaslik (192 620 → 192 620)" if round_mode == "none" else "Yaxlitlamaslik (192 620 → 192 620)"
@@ -346,6 +530,117 @@ def ai_prefs_kb(auto_confirm: bool, round_mode: str) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="set:back")],
         ]
     )
+
+
+def auto_report_kb(enabled: bool, time_str: str) -> InlineKeyboardMarkup:
+    """Configure daily auto-status notification schedule (Y3)."""
+    toggle_lbl = "✅ Yoqilgan (O'chirish)" if enabled else "❌ O'chiq (Yoqish)"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"⏰ Avto-hisobot: {toggle_lbl}", callback_data="ar:toggle")],
+            [
+                InlineKeyboardButton(
+                    text=f"{'✅ ' if time_str == '21:00' else ''}21:00", callback_data="ar:time:21:00"
+                ),
+                InlineKeyboardButton(
+                    text=f"{'✅ ' if time_str == '22:00' else ''}22:00", callback_data="ar:time:22:00"
+                ),
+                InlineKeyboardButton(
+                    text=f"{'✅ ' if time_str == '23:00' else ''}23:00", callback_data="ar:time:23:00"
+                ),
+            ],
+            [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="set:back")],
+        ]
+    )
+
+
+def roles_list_kb(roles: Sequence[UserRole], super_admins: Sequence[int]) -> InlineKeyboardMarkup:
+    """Manage user roles (Y6)."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for ur in roles:
+        if ur.user_id in super_admins:
+            continue
+        icon = "👑" if ur.role == "admin" else ("💼" if ur.role == "kassir" else "👁")
+        lbl = ur.label or str(ur.user_id)
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{icon} {lbl} ({ur.user_id}) — 🗑",
+                    callback_data=f"role:del:{ur.user_id}",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="➕ Foydalanuvchi qo'shish", callback_data="role:add")])
+    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="set:back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def role_pick_kb(user_id: int) -> InlineKeyboardMarkup:
+    """Pick role for a newly added Telegram user_id."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=ROLE_LABELS[r], callback_data=f"role:pick:{user_id}:{r}")]
+            for r in (ROLE_ADMIN, ROLE_KASSIR, "viewer")
+        ]
+        + [[InlineKeyboardButton(text="❌ Bekor qilish", callback_data="set:roles")]]
+    )
+
+
+def nasiya_main_kb(balances: Sequence[dict], can_write: bool = True) -> InlineKeyboardMarkup:
+    """Main supplier credit (nasiya) ledger keyboard (Y7)."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for idx, item in enumerate(balances[:15]):
+        bal = item["balance"]
+        icon = "🔴" if bal > 0 else "✅"
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{icon} {item['supplier'][:20]}: {format_uzs(bal)}",
+                    callback_data=f"nasiya:sup:{idx}",
+                )
+            ]
+        )
+    if can_write:
+        rows.append([InlineKeyboardButton(text="➕ Yangi nasiya (qarz) yozish", callback_data="nasiya:add_debt")])
+    rows.append(
+        [
+            InlineKeyboardButton(text="📜 Oxirgi yozuvlar", callback_data="nasiya:hist"),
+            InlineKeyboardButton(text="⬅️ Orqaga", callback_data="more:open"),
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def nasiya_supplier_kb(idx: int, can_write: bool = True) -> InlineKeyboardMarkup:
+    """Actions for a specific supplier's nasiya balance."""
+    rows: list[list[InlineKeyboardButton]] = []
+    if can_write:
+        rows.append(
+            [
+                InlineKeyboardButton(text="➕ Qarz qo'shish", callback_data=f"nasiya:sup_debt:{idx}"),
+                InlineKeyboardButton(text="💵 To'lov yozish", callback_data=f"nasiya:sup_pay:{idx}"),
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="⬅️ Nasiya ro'yxati", callback_data="nasiya:home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def nasiya_history_kb(entries: Sequence[SupplierDebt], is_admin: bool = False) -> InlineKeyboardMarkup:
+    """Recent nasiya entries with optional delete for admins."""
+    rows: list[list[InlineKeyboardButton]] = []
+    if is_admin:
+        for e in entries[:10]:
+            sign = "+" if e.entry_type == "debt" else "-"
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"🗑 {e.supplier_name[:16]} {sign}{format_uzs(e.amount)}",
+                        callback_data=f"nasiya:del:{e.id}",
+                    )
+                ]
+            )
+    rows.append([InlineKeyboardButton(text="⬅️ Nasiya ro'yxati", callback_data="nasiya:home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 GROUP_ADMIN_RIGHTS = "change_info+delete_messages+invite_users+pin_messages+manage_chat"
@@ -468,18 +763,15 @@ def supplier_detail_kb(supplier_id: int) -> InlineKeyboardMarkup:
 
 
 def history_sessions_kb(sessions: Sequence[DailyCashSession]) -> InlineKeyboardMarkup:
-    """List open & closed daily sessions plus quick Nakladnoy / Cash history views."""
+    """List open & closed daily sessions plus quick Nakladnoy / Cash / Search views."""
     rows = [
         [
-            InlineKeyboardButton(
-                text="📸 Barcha Nakladnoylar tarixi",
-                callback_data="hist:all_nak:0",
-            ),
-            InlineKeyboardButton(
-                text="💵 Barcha Oldi-berdi tarixi",
-                callback_data="hist:all_cash:0",
-            ),
-        ]
+            InlineKeyboardButton(text="📸 Barcha Nakladnoylar", callback_data="hist:all_nak:0"),
+            InlineKeyboardButton(text="💵 Oldi-berdi tarixi", callback_data="hist:all_cash:0"),
+        ],
+        [
+            InlineKeyboardButton(text="🔍 Qidirish (Postavshik / Sana)", callback_data="hist:search"),
+        ],
     ]
     for s in sessions:
         if s.status == "open":
@@ -488,19 +780,14 @@ def history_sessions_kb(sessions: Sequence[DailyCashSession]) -> InlineKeyboardM
             diff = s.difference or 0
             icon = "✅" if abs(diff) < 1 else ("⚠️" if diff < 0 else "➕")
             label = f"{icon} {s.report_date} | Qoldiq: {format_uzs(s.actual_counted_cash or 0)}"
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=label,
-                    callback_data=f"hist:view:{s.id}",
-                )
-            ]
-        )
-    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="set:back")])
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"hist:view:{s.id}")])
+    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="more:open")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def history_detail_kb(session_id: int, is_closed: bool = True) -> InlineKeyboardMarkup:
+def history_detail_kb(
+    session_id: int, is_closed: bool = True, is_admin: bool = True
+) -> InlineKeyboardMarkup:
     """Actions on a daily session in history."""
     top_row = [
         InlineKeyboardButton(
@@ -508,7 +795,7 @@ def history_detail_kb(session_id: int, is_closed: bool = True) -> InlineKeyboard
             callback_data=f"export:session:{session_id}",
         )
     ]
-    if is_closed:
+    if is_closed and is_admin:
         top_row.append(
             InlineKeyboardButton(
                 text="🔓 Qayta ochib to'g'irlash",
@@ -523,14 +810,31 @@ def history_detail_kb(session_id: int, is_closed: bool = True) -> InlineKeyboard
     )
 
 
-def history_feed_kb(kind: str, page: int, has_next: bool) -> InlineKeyboardMarkup:
-    """Pagination keyboard for all-nakladnoys or all-cash-transactions history feed."""
+def history_feed_kb(
+    kind: str,
+    page: int,
+    has_next: bool,
+    photo_items: Sequence[tuple[int, str]] = (),
+) -> InlineKeyboardMarkup:
+    """Pagination keyboard for all-nakladnoys / all-cash-transactions / search results."""
+    rows: list[list[InlineKeyboardButton]] = []
+    if photo_items:
+        p_row: list[InlineKeyboardButton] = []
+        for pid, label in photo_items[:6]:
+            p_row.append(InlineKeyboardButton(text=f"📸 {label[:14]}", callback_data=f"nak:photo:{pid}"))
+            if len(p_row) == 2:
+                rows.append(p_row)
+                p_row = []
+        if p_row:
+            rows.append(p_row)
+
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"hist:{kind}:{page - 1}"))
     if has_next:
         nav.append(InlineKeyboardButton(text="Keyingi ➡️", callback_data=f"hist:{kind}:{page + 1}"))
-    rows = [nav] if nav else []
+    if nav:
+        rows.append(nav)
     rows.append([InlineKeyboardButton(text="⬅️ History ga qaytish", callback_data="set:history")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

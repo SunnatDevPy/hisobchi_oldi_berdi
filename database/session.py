@@ -1,10 +1,11 @@
-"""Async SQLAlchemy engine, sessionmaker, and database initialization."""
+"""Async SQLAlchemy engine, sessionmaker, idempotent schema upgrade, and initialization."""
 
 from __future__ import annotations
 
 from typing import Tuple
 
-from sqlalchemy import select
+from sqlalchemy import Numeric, inspect, select, text
+from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -55,6 +56,62 @@ DEFAULT_SUPPLIERS = [
     },
 ]
 
+_PG_MONEY_COLUMNS = (
+    ("daily_cash_sessions", ("opening_balance", "actual_counted_cash", "expected_cash", "difference")),
+    ("cash_transactions", ("amount",)),
+    ("nakladnoy_payments", ("amount", "original_amount")),
+    ("prixod_reports", ("total_cost", "total_price")),
+    ("prixod_rows", ("cost", "price")),
+    ("supplier_debts", ("amount",)),
+)
+
+
+def upgrade_existing_schema(sync_conn: Connection) -> None:
+    """Safely upgrade existing SQLite/PostgreSQL tables without dropping data."""
+    inspector = inspect(sync_conn)
+    tables = set(inspector.get_table_names())
+
+    if "nakladnoy_payments" in tables:
+        cols = {c["name"] for c in inspector.get_columns("nakladnoy_payments")}
+        if "original_amount" not in cols:
+            sync_conn.execute(
+                text("ALTER TABLE nakladnoy_payments ADD COLUMN original_amount NUMERIC(15, 2)")
+            )
+        if "photo_unique_id" not in cols:
+            sync_conn.execute(
+                text("ALTER TABLE nakladnoy_payments ADD COLUMN photo_unique_id VARCHAR(128)")
+            )
+        indexes = {ix["name"] for ix in inspector.get_indexes("nakladnoy_payments")}
+        if "ix_nakladnoy_payments_photo_unique_id" not in indexes:
+            sync_conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_nakladnoy_payments_photo_unique_id "
+                    "ON nakladnoy_payments (photo_unique_id)"
+                )
+            )
+
+    if "audit_logs" in tables:
+        cols = {c["name"] for c in inspector.get_columns("audit_logs")}
+        if "user_id" not in cols:
+            sync_conn.execute(text("ALTER TABLE audit_logs ADD COLUMN user_id BIGINT"))
+
+    if sync_conn.dialect.name == "postgresql":
+        for tbl, money_cols in _PG_MONEY_COLUMNS:
+            if tbl not in tables:
+                continue
+            col_map = {c["name"]: c for c in inspector.get_columns(tbl)}
+            for col_name in money_cols:
+                col_info = col_map.get(col_name)
+                if col_info is None:
+                    continue
+                if not isinstance(col_info["type"], Numeric):
+                    sync_conn.execute(
+                        text(
+                            f"ALTER TABLE {tbl} ALTER COLUMN {col_name} "
+                            f"TYPE NUMERIC(15, 2) USING ROUND({col_name}::numeric, 2)"
+                        )
+                    )
+
 
 def create_engine_and_session(
     database_url: str | None = None,
@@ -83,10 +140,11 @@ async def init_db(
     engine_override: AsyncEngine | None = None,
     session_maker_override: async_sessionmaker[AsyncSession] | None = None,
 ) -> None:
-    """Create all tables and seed initial configuration data."""
+    """Create all tables, apply idempotent column upgrades, and seed defaults."""
     target_engine = engine_override or engine
     target_maker = session_maker_override or async_session_maker
     async with target_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(upgrade_existing_schema)
     async with target_maker() as session:
         await seed_default_suppliers(session)
