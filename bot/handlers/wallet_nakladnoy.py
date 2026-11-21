@@ -24,6 +24,7 @@ from bot.keyboards import (
     debt_nakladnoys_list_kb,
     delete_confirm_kb,
     edit_items_list_kb,
+    edit_supplier_pick_kb,
     kassa_debt_actions_kb,
     main_menu_keyboard,
     nakladnoy_confirm_kb,
@@ -45,13 +46,13 @@ from database.crud import (
     find_duplicate_confirmed_nakladnoy,
     find_nakladnoy_by_photo_unique_id,
     format_local_dt,
+    get_all_known_suppliers,
     get_app_setting,
     get_group_config,
     get_kassa_debt_stats,
     get_nakladnoy,
     get_or_create_open_session,
     get_recent_amounts_for_supplier,
-    get_recent_suppliers,
     list_unpaid_debt_nakladnoys,
     mark_nakladnoy_as_debt,
     mark_nakladnoy_as_paid,
@@ -581,6 +582,12 @@ async def process_kassa_repay_input(message: Message, state: FSMContext) -> None
 # ---------------------------------------------------------------------------
 
 
+@router.callback_query(F.data == "noop")
+async def cb_noop(cb: CallbackQuery) -> None:
+    """Acknowledge informational pagination counter buttons."""
+    await cb.answer()
+
+
 async def handle_add_nakladnoy_btn(
     message: Message, state: FSMContext, actor_id: Optional[int] = None
 ) -> None:
@@ -590,20 +597,20 @@ async def handle_add_nakladnoy_btn(
         return
 
     async with async_session_maker() as db:
-        recents = await get_recent_suppliers(db, limit=6)
+        suppliers = await get_all_known_suppliers(db)
 
     await state.set_state(WalletStates.waiting_nakladnoy_input)
-    await state.update_data(quick_suppliers=recents)
+    await state.update_data(quick_suppliers=suppliers)
     prompt = (
         "📸 <b>Nakladnoy rasmini tashlang</b>\n"
         "<i>(Postavshik nomi rasmda bo'lmasa yoki xato bo'lsa, rasm tagiga nomini yozib tashlang — bot o'sha nomni oladi.)</i>\n\n"
         "Yoki matn/ovozda yozing: <i>«Non Oka 1 657 000»</i>\n"
-        + ("👇 Yoki oxirgi postavshiklardan birini tanlang:" if recents else "")
+        + (f"👇 Yoki postavshiklardan birini tanlang (jami <b>{len(suppliers)}</b> ta):" if suppliers else "")
     )
     await message.answer(
         prompt,
         parse_mode="HTML",
-        reply_markup=quick_suppliers_kb(recents) if recents else cancel_reply_keyboard(),
+        reply_markup=quick_suppliers_kb(suppliers, page=0) if suppliers else cancel_reply_keyboard(),
     )
 
 
@@ -612,6 +619,30 @@ async def cb_quick_supplier_cancel(cb: CallbackQuery, state: FSMContext) -> None
     await state.clear()
     await _safe_edit_text(cb.message, "❌ Amal bekor qilindi.")
     await cb.answer("Bekor qilindi")
+
+
+@router.callback_query(F.data.startswith("qsup:page:"))
+async def cb_quick_supplier_page(cb: CallbackQuery, state: FSMContext) -> None:
+    if await deny_if_unauthorized(cb, ("admin", "kassir")):
+        return
+    page_str = cb.data.split(":")[-1]
+    if not page_str.lstrip("-").isdigit():
+        await cb.answer()
+        return
+    page = int(page_str)
+    suppliers = (await state.get_data()).get("quick_suppliers")
+    if not suppliers:
+        async with async_session_maker() as db:
+            suppliers = await get_all_known_suppliers(db)
+        await state.update_data(quick_suppliers=suppliers)
+    try:
+        await cb.message.edit_reply_markup(
+            reply_markup=quick_suppliers_kb(suppliers, page=page)
+        )
+    except Exception as exc:
+        if "message is not modified" not in str(exc).lower():
+            logger.debug("qsup page markup fallback: %s", exc)
+    await cb.answer()
 
 
 @router.callback_query(F.data.startswith("qsup:"))
@@ -624,6 +655,10 @@ async def cb_quick_supplier_pick(cb: CallbackQuery, state: FSMContext) -> None:
     idx = int(idx_str)
     data = await state.get_data()
     recents = data.get("quick_suppliers") or []
+    if not recents:
+        async with async_session_maker() as db:
+            recents = await get_all_known_suppliers(db)
+        await state.update_data(quick_suppliers=recents)
     if idx >= len(recents):
         await cb.answer("Ro'yxat eskirgan, qaytadan oching", show_alert=True)
         return
@@ -1876,28 +1911,152 @@ async def process_edit_nakladnoy_amount(message: Message, state: FSMContext) -> 
             await message.answer("👇 Tasdiqlang:", reply_markup=main_menu_keyboard())
 
 
-@router.callback_query(F.data.startswith("nak:edit_sup:"))
-async def cb_nakladnoy_edit_sup_prompt(cb: CallbackQuery, state: FSMContext) -> None:
-    payment_id = int(cb.data.split(":")[-1])
+def _edit_supplier_prompt_text(payment: NakladnoyPayment, total_suppliers: int) -> str:
+    """Prompt shown when choosing or typing a new supplier for a nakladnoy."""
+    pick_hint = (
+        f"\n👇 Ro'yxatdan tanlang (jami <b>{total_suppliers}</b> ta) yoki yangi nomni yozib (yoki ovozda aytib) yuboring:"
+        if total_suppliers > 0
+        else "\n👇 Yangi nomni yozib (yoki ovozda aytib) yuboring:"
+    )
+    return (
+        f"🏢 <b>Postavshikni o'zgartirish (#{payment.id})</b>\n"
+        f"📌 Hozirgi nom: <b>{html.escape(payment.supplier_name or 'Noma\'lum')}</b>\n"
+        f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>"
+        f"{pick_hint}"
+    )
+
+
+async def _arm_supplier_input_state(
+    state: FSMContext, payment_id: int, suppliers: list[str], cb: CallbackQuery
+) -> None:
+    """Keep waiting_edit_nakladnoy_supplier active so direct text/voice input works alongside buttons."""
+    await state.set_state(WalletStates.waiting_edit_nakladnoy_supplier)
+    await state.update_data(
+        payment_id=payment_id,
+        edit_suppliers=suppliers,
+        edit_msg_id=cb.message.message_id if cb.message else None,
+        used_cancel_kb=False,
+    )
+
+
+async def _render_supplier_picker(
+    cb: CallbackQuery, state: FSMContext, payment_id: int, page: int = 0, use_cached: bool = False
+) -> None:
+    """Shared renderer for opening and paginating the inline supplier picker."""
+    cached = (await state.get_data()).get("edit_suppliers") if use_cached else None
     async with async_session_maker() as db:
         payment = await get_nakladnoy(db, payment_id)
-    if not payment or payment.status == "deleted":
-        await cb.answer("Topilmadi", show_alert=True)
-        return
-    allowed = ("admin",) if payment.status == "confirmed" else ("admin", "kassir")
-    if await deny_if_unauthorized(cb, allowed):
-        return
-    await state.set_state(WalletStates.waiting_edit_nakladnoy_supplier)
-    await state.update_data(payment_id=payment_id)
-    await cb.message.answer(
-        "🏢 Postavshikning yangi nomini yozing (masalan: <code>Non Oka</code>):",
-        parse_mode="HTML",
-        reply_markup=cancel_reply_keyboard(),
+        if not payment or payment.status == "deleted":
+            await cb.answer("Topilmadi", show_alert=True)
+            return
+        allowed = ("admin",) if payment.status == "confirmed" else ("admin", "kassir")
+        if await deny_if_unauthorized(cb, allowed):
+            return
+        suppliers = list(cached) if cached else await get_all_known_suppliers(db)
+
+    await _arm_supplier_input_state(state, payment_id, suppliers, cb)
+    await _safe_edit_text(
+        cb.message,
+        _edit_supplier_prompt_text(payment, len(suppliers)),
+        reply_markup=edit_supplier_pick_kb(
+            payment.id,
+            suppliers,
+            is_confirmed=(payment.status == "confirmed"),
+            page=page,
+        ),
     )
     await cb.answer()
 
 
-@router.message(WalletStates.waiting_edit_nakladnoy_supplier, F.chat.type == "private")
+async def _build_supplier_updated_response(
+    bot,
+    payment: NakladnoyPayment,
+    uid: Optional[int],
+    dup: Optional[NakladnoyPayment] = None,
+) -> tuple[str, InlineKeyboardMarkup]:
+    """Sync group message (if confirmed) and build response text + keyboard after supplier edit."""
+    if payment.status == "confirmed":
+        in_group = bool(payment.group_chat_id and payment.group_message_id)
+        _, sync_msg = await _sync_nakladnoy_group_message(
+            bot, payment, tag="✏️ [NOM TAHRIRLANDI]"
+        )
+        text = (
+            f"✅ Postavshik yangilandi: <b>{html.escape(payment.supplier_name)} — {format_uzs(payment.amount)} so'm</b>\n"
+            f"{sync_msg}"
+        )
+        kb = confirmed_nakladnoy_edit_kb(
+            payment.id,
+            in_group=in_group,
+            is_debt=payment.is_debt,
+            is_admin=is_admin_role(uid),
+            payment_method=getattr(payment, "payment_method", "cash"),
+        )
+        return text, kb
+    return _pending_card_text(payment, duplicate_warning=dup), nakladnoy_confirm_kb(payment.id)
+
+
+@router.callback_query(F.data.startswith("nak:edit_sup:"))
+async def cb_nakladnoy_edit_sup_prompt(cb: CallbackQuery, state: FSMContext) -> None:
+    payment_id = int(cb.data.split(":")[-1])
+    await _render_supplier_picker(cb, state, payment_id, page=0, use_cached=False)
+
+
+@router.callback_query(F.data.startswith("nak:sup_page:"))
+async def cb_nakladnoy_edit_sup_page(cb: CallbackQuery, state: FSMContext) -> None:
+    parts = cb.data.split(":")
+    if len(parts) < 4 or not parts[2].isdigit() or not parts[3].lstrip("-").isdigit():
+        await cb.answer()
+        return
+    await _render_supplier_picker(cb, state, int(parts[2]), page=int(parts[3]), use_cached=True)
+
+
+@router.callback_query(F.data.startswith("nak:pick_sup:"))
+async def cb_nakladnoy_pick_supplier(cb: CallbackQuery, state: FSMContext) -> None:
+    parts = cb.data.split(":")
+    if len(parts) < 4 or not parts[2].isdigit() or not parts[3].isdigit():
+        await cb.answer()
+        return
+    payment_id = int(parts[2])
+    idx = int(parts[3])
+    uid = cb.from_user.id if cb.from_user else None
+
+    cached = (await state.get_data()).get("edit_suppliers")
+    async with async_session_maker() as db:
+        existing = await get_nakladnoy(db, payment_id)
+        if not existing or existing.status == "deleted":
+            await cb.answer("Topilmadi", show_alert=True)
+            return
+        allowed = ("admin",) if existing.status == "confirmed" else ("admin", "kassir")
+        if await deny_if_unauthorized(cb, allowed):
+            return
+        suppliers = list(cached) if cached else await get_all_known_suppliers(db)
+        if idx < 0 or idx >= len(suppliers):
+            await cb.answer("Ro'yxat eskirgan, qaytadan oching", show_alert=True)
+            return
+        canon, _ = await resolve_supplier_name(db, suppliers[idx])
+        payment = await update_nakladnoy(db, payment_id, supplier_name=canon, user_id=uid)
+        dup = (
+            await find_duplicate_confirmed_nakladnoy(
+                db, payment.session_id, payment.supplier_name, payment.amount, exclude_id=payment.id
+            )
+            if payment and payment.status != "confirmed"
+            else None
+        )
+
+    await state.clear()
+    if not payment:
+        await cb.answer("Topilmadi", show_alert=True)
+        return
+    text, kb = await _build_supplier_updated_response(cb.bot, payment, uid, dup=dup)
+    await _safe_edit_text(cb.message, text, reply_markup=kb)
+    await cb.answer(f"✅ {payment.supplier_name}")
+
+
+@router.message(
+    WalletStates.waiting_edit_nakladnoy_supplier,
+    F.chat.type == "private",
+    F.text | F.voice | F.audio,
+)
 async def process_edit_nakladnoy_supplier(message: Message, state: FSMContext) -> None:
     if await deny_if_unauthorized(message, ("admin", "kassir")):
         return
@@ -1920,6 +2079,8 @@ async def process_edit_nakladnoy_supplier(message: Message, state: FSMContext) -
 
     data = await state.get_data()
     payment_id = data["payment_id"]
+    edit_msg_id = data.get("edit_msg_id")
+    used_cancel_kb = bool(data.get("used_cancel_kb", True))
     uid = message.from_user.id if message.from_user else None
     async with async_session_maker() as db:
         existing = await get_nakladnoy(db, payment_id)
@@ -1929,33 +2090,34 @@ async def process_edit_nakladnoy_supplier(message: Message, state: FSMContext) -
             return
         canon, _ = await resolve_supplier_name(db, new_name)
         payment = await update_nakladnoy(db, payment_id, supplier_name=canon, user_id=uid)
+        dup = (
+            await find_duplicate_confirmed_nakladnoy(
+                db, payment.session_id, payment.supplier_name, payment.amount, exclude_id=payment.id
+            )
+            if payment and payment.status != "confirmed"
+            else None
+        )
     await state.clear()
+
+    if edit_msg_id:
+        try:
+            await message.bot.edit_message_reply_markup(
+                chat_id=message.chat.id,
+                message_id=edit_msg_id,
+                reply_markup=None,
+            )
+        except Exception:
+            pass
 
     if not payment:
         await message.answer("⚠️ Topilmadi.", reply_markup=main_menu_keyboard())
         return
 
-    if payment.status == "confirmed":
-        in_group = bool(payment.group_chat_id and payment.group_message_id)
-        _, sync_msg = await _sync_nakladnoy_group_message(
-            message.bot, payment, tag="✏️ [NOM TAHRIRLANDI]"
-        )
-        await message.answer(
-            f"✅ Postavshik yangilandi: <b>{html.escape(payment.supplier_name)} — {format_uzs(payment.amount)} so'm</b>\n"
-            f"{sync_msg}",
-            parse_mode="HTML",
-            reply_markup=confirmed_nakladnoy_edit_kb(
-                payment.id,
-                in_group=in_group,
-                is_debt=payment.is_debt,
-                is_admin=is_admin_role(uid),
-                payment_method=getattr(payment, "payment_method", "cash"),
-            ),
-        )
-        await message.answer("👇 Asosiy menyu:", reply_markup=main_menu_keyboard())
-    else:
-        await _send_pending_nakladnoy_card(message, payment)
-        await message.answer("👇 Tasdiqlang:", reply_markup=main_menu_keyboard())
+    text, kb = await _build_supplier_updated_response(message.bot, payment, uid, dup=dup)
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
+    if used_cancel_kb:
+        hint = "👇 Asosiy menyu:" if payment.status == "confirmed" else "👇 Tasdiqlang:"
+        await message.answer(hint, reply_markup=main_menu_keyboard())
 
 
 @router.callback_query(F.data.startswith("nak:delete_conf:"))

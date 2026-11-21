@@ -1101,6 +1101,50 @@ async def get_recent_suppliers(db: AsyncSession, limit: int = 6) -> List[str]:
     return result
 
 
+async def get_all_known_suppliers(
+    db: AsyncSession, limit: Optional[int] = None
+) -> List[str]:
+    """Return all distinct canonical suppliers (confirmed history, configs, debts), most recent first."""
+    alias_map = await _supplier_alias_lookup(db)
+    seen: set[str] = set()
+    result: List[str] = []
+
+    def _add(raw_name: str) -> None:
+        cleaned = " ".join((raw_name or "").strip().split())
+        if not cleaned:
+            return
+        canon = alias_map.get(_norm_key(cleaned), cleaned)
+        key = _norm_key(canon)
+        if key and key not in seen:
+            seen.add(key)
+            result.append(canon)
+
+    paid_rows = (
+        await db.scalars(
+            select(NakladnoyPayment.supplier_name)
+            .where(NakladnoyPayment.status == "confirmed")
+            .order_by(desc(NakladnoyPayment.id))
+        )
+    ).all()
+    for sup in paid_rows:
+        _add(sup)
+
+    for cfg in await list_suppliers(db, active_only=True):
+        _add(cfg.display_name)
+
+    debt_rows = (
+        await db.scalars(
+            select(SupplierDebt.supplier_name)
+            .where(SupplierDebt.is_deleted.is_(False))
+            .order_by(desc(SupplierDebt.id))
+        )
+    ).all()
+    for sup in debt_rows:
+        _add(sup)
+
+    return result[:limit] if limit is not None else result
+
+
 async def get_recent_amounts_for_supplier(
     db: AsyncSession, supplier_name: str, limit: int = 3
 ) -> List[float]:

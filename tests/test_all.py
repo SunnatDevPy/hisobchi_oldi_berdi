@@ -1133,3 +1133,181 @@ def test_quick_amount_direct_input_and_benign_error_filter(tmp_path: Path, monke
         asyncio.run(scenario())
     finally:
         get_settings.cache_clear()
+
+
+def test_all_known_suppliers_pagination_and_inline_supplier_edit(tmp_path: Path, monkeypatch):
+    from types import SimpleNamespace
+    from bot.handlers import wallet_nakladnoy as wallet_mod
+    from bot.keyboards import SUPPLIERS_PAGE_SIZE, edit_supplier_pick_kb, quick_suppliers_kb
+    from bot.states import WalletStates
+    from config import get_settings
+    from database.crud import (
+        add_or_update_supplier,
+        add_supplier_debt,
+        delete_supplier_debt,
+        get_all_known_suppliers,
+    )
+
+    monkeypatch.setenv("BOT_TOKEN", "test-token")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("ADMIN_IDS", "111")
+    get_settings.cache_clear()
+
+    class DummyBot:
+        def __init__(self) -> None:
+            self.cleared_markups: list[tuple[int, int]] = []
+
+        async def edit_message_reply_markup(self, chat_id: int, message_id: int, reply_markup=None) -> None:
+            self.cleared_markups.append((chat_id, message_id))
+
+    class FakeState:
+        def __init__(self) -> None:
+            self.cur_state = None
+            self.data: dict = {}
+
+        async def get_state(self):
+            return self.cur_state
+
+        async def set_state(self, st) -> None:
+            self.cur_state = st.state if hasattr(st, "state") else st
+
+        async def update_data(self, **kwargs) -> None:
+            self.data.update(kwargs)
+
+        async def get_data(self) -> dict:
+            return dict(self.data)
+
+        async def clear(self) -> None:
+            self.cur_state = None
+            self.data.clear()
+
+    async def scenario() -> None:
+        db_file = tmp_path / "all_suppliers.db"
+        eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+        monkeypatch.setattr(wallet_mod, "async_session_maker", maker)
+        try:
+            await init_db(engine_override=eng, session_maker_override=maker)
+            async with maker() as db:
+                seeded_cfgs = await list_suppliers(db)
+                expected_total = len(seeded_cfgs) + 22
+                sess = await get_or_create_open_session(db, report_date="2026-11-25")
+                await add_or_update_supplier(db, "Config Only Brand", aliases="confalias")
+                for i in range(1, 21):
+                    p = await create_pending_nakladnoy(db, f"Supplier {i:02d}", 100_000, session_id=sess.id)
+                    await confirm_nakladnoy(db, p.id, user_id=111)
+                # Duplicate via alias resolves cleanly to canonical name
+                p_alias = await create_pending_nakladnoy(db, "confalias", 150_000, session_id=sess.id)
+                await confirm_nakladnoy(db, p_alias.id, user_id=111)
+
+                await add_supplier_debt(db, "Debt Only Vendor", "debt", 200_000, user_id=111)
+                del_debt = await add_supplier_debt(db, "Deleted Debt Vendor", "debt", 50_000, user_id=111)
+                await delete_supplier_debt(db, del_debt.id, user_id=111)
+
+                all_sups = await get_all_known_suppliers(db)
+                assert len(all_sups) == expected_total
+                assert all_sups[0] == "Config Only Brand"
+                assert all_sups[1] == "Supplier 20"
+                assert "Debt Only Vendor" in all_sups
+                assert "Deleted Debt Vendor" not in all_sups
+                assert "confalias" not in all_sups
+
+            # Pagination keyboard checks
+            assert SUPPLIERS_PAGE_SIZE == 16
+            q0 = quick_suppliers_kb(all_sups, page=0)
+            q0_cbs = [b.callback_data for row in q0.inline_keyboard for b in row]
+            assert "qsup:0" in q0_cbs and "qsup:15" in q0_cbs and "qsup:16" not in q0_cbs
+            assert "qsup:page:1" in q0_cbs and "noop" in q0_cbs and "qsup:cancel" in q0_cbs
+
+            q1 = quick_suppliers_kb(all_sups, page=1)
+            q1_cbs = [b.callback_data for row in q1.inline_keyboard for b in row]
+            assert "qsup:16" in q1_cbs and f"qsup:{expected_total - 1}" in q1_cbs and "qsup:page:0" in q1_cbs
+
+            e0 = edit_supplier_pick_kb(p_alias.id, all_sups, is_confirmed=True, page=0)
+            e0_cbs = [b.callback_data for row in e0.inline_keyboard for b in row]
+            assert f"nak:pick_sup:{p_alias.id}:0" in e0_cbs
+            assert f"nak:pick_sup:{p_alias.id}:15" in e0_cbs
+            assert f"nak:sup_page:{p_alias.id}:1" in e0_cbs
+            assert f"nak_view:{p_alias.id}" in e0_cbs
+
+            e1_pend = edit_supplier_pick_kb(p_alias.id, all_sups, is_confirmed=False, page=1)
+            e1_cbs = [b.callback_data for row in e1_pend.inline_keyboard for b in row]
+            assert f"nak:pick_sup:{p_alias.id}:16" in e1_cbs
+            assert f"nak:sup_page:{p_alias.id}:0" in e1_cbs
+            assert f"nak:back_card:{p_alias.id}" in e1_cbs
+
+            # End-to-end handlers: Add Nakladnoy pagination + Edit Supplier pick + Direct type
+            dummy_bot = DummyBot()
+            user = SimpleNamespace(id=111, full_name="Admin")
+            chat = SimpleNamespace(id=111, type="private")
+            markups_log = []
+            texts_log = []
+
+            class FakeMsg:
+                def __init__(self, msg_id: int = 80, text: str = "") -> None:
+                    self.message_id = msg_id
+                    self.chat = chat
+                    self.from_user = user
+                    self.text = text
+                    self.voice = None
+                    self.audio = None
+                    self.bot = dummy_bot
+
+                async def answer(self, text: str, reply_markup=None, **kwargs) -> None:
+                    texts_log.append(text)
+                    markups_log.append(reply_markup)
+
+                async def edit_text(self, text: str, reply_markup=None, **kwargs) -> None:
+                    texts_log.append(text)
+                    markups_log.append(reply_markup)
+
+                async def edit_reply_markup(self, reply_markup=None, **kwargs) -> None:
+                    markups_log.append(reply_markup)
+
+            class FakeCb:
+                def __init__(self, data: str, msg: FakeMsg) -> None:
+                    self.data = data
+                    self.from_user = user
+                    self.message = msg
+                    self.bot = dummy_bot
+
+                async def answer(self, *args, **kwargs) -> None:
+                    return None
+
+            state = FakeState()
+            msg = FakeMsg(msg_id=80)
+            await wallet_mod.handle_add_nakladnoy_btn(msg, state, actor_id=111)
+            assert len(state.data["quick_suppliers"]) == expected_total
+            assert any("qsup:page:1" in (b.callback_data or "") for r in markups_log[-1].inline_keyboard for b in r)
+
+            await wallet_mod.cb_quick_supplier_page(FakeCb("qsup:page:1", msg), state)
+            assert any("qsup:16" in (b.callback_data or "") for r in markups_log[-1].inline_keyboard for b in r)
+
+            # Open Edit Supplier picker -> flips to page 1 -> clicks item 17
+            await wallet_mod.cb_nakladnoy_edit_sup_prompt(FakeCb(f"nak:edit_sup:{p_alias.id}", msg), state)
+            assert state.cur_state == WalletStates.waiting_edit_nakladnoy_supplier.state
+            assert any(f"nak:sup_page:{p_alias.id}:1" in (b.callback_data or "") for r in markups_log[-1].inline_keyboard for b in r)
+
+            await wallet_mod.cb_nakladnoy_edit_sup_page(FakeCb(f"nak:sup_page:{p_alias.id}:1", msg), state)
+            assert any(f"nak:pick_sup:{p_alias.id}:17" in (b.callback_data or "") for r in markups_log[-1].inline_keyboard for b in r)
+
+            await wallet_mod.cb_nakladnoy_pick_supplier(FakeCb(f"nak:pick_sup:{p_alias.id}:17", msg), state)
+            assert state.cur_state is None
+            async with maker() as db:
+                updated1 = await db.get(type(p_alias), p_alias.id)
+                assert updated1.supplier_name == all_sups[17]
+
+            # Re-open Edit Supplier picker and type a new name directly below
+            await wallet_mod.cb_nakladnoy_edit_sup_prompt(FakeCb(f"nak:edit_sup:{p_alias.id}", msg), state)
+            await wallet_mod.process_edit_nakladnoy_supplier(FakeMsg(msg_id=81, text="Manual Custom Oka"), state)
+            assert state.cur_state is None
+            assert (111, 80) in dummy_bot.cleared_markups
+            async with maker() as db:
+                updated2 = await db.get(type(p_alias), p_alias.id)
+                assert updated2.supplier_name == "Manual Custom Oka"
+        finally:
+            await eng.dispose()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        get_settings.cache_clear()

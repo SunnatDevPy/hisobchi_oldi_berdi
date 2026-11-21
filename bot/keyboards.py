@@ -293,18 +293,85 @@ def nakladnoy_quick_amount_kb(payment_id: int, is_confirmed: bool = True) -> Inl
     )
 
 
-def quick_suppliers_kb(suppliers: Sequence[str]) -> InlineKeyboardMarkup:
-    """Recent supplier quick-pick buttons when adding a nakladnoy (T6)."""
+SUPPLIERS_PAGE_SIZE = 16
+
+
+def _paginated_supplier_rows(
+    suppliers: Sequence[str],
+    page: int,
+    item_cb_prefix: str,
+    page_cb_prefix: str,
+    page_size: int = SUPPLIERS_PAGE_SIZE,
+) -> list[list[InlineKeyboardButton]]:
+    """Render 2-column supplier picker grid with pagination controls when needed."""
     rows: list[list[InlineKeyboardButton]] = []
+    if not suppliers:
+        return rows
+    total_pages = max(1, (len(suppliers) + page_size - 1) // page_size)
+    page = max(0, min(page, total_pages - 1))
+    start = page * page_size
+    end = min(start + page_size, len(suppliers))
+
     pair: list[InlineKeyboardButton] = []
-    for idx, name in enumerate(suppliers):
-        pair.append(InlineKeyboardButton(text=f"🏢 {name[:20]}", callback_data=f"qsup:{idx}"))
+    for offset, name in enumerate(suppliers[start:end]):
+        idx = start + offset
+        pair.append(
+            InlineKeyboardButton(
+                text=f"🏢 {name[:20]}",
+                callback_data=f"{item_cb_prefix}:{idx}",
+            )
+        )
         if len(pair) == 2:
             rows.append(pair)
             pair = []
     if pair:
         rows.append(pair)
+
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if page > 0:
+            nav.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"{page_cb_prefix}:{page - 1}"))
+        nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
+        if page < total_pages - 1:
+            nav.append(InlineKeyboardButton(text="Keyingi ➡️", callback_data=f"{page_cb_prefix}:{page + 1}"))
+        rows.append(nav)
+    return rows
+
+
+def quick_suppliers_kb(
+    suppliers: Sequence[str],
+    page: int = 0,
+    page_size: int = SUPPLIERS_PAGE_SIZE,
+) -> InlineKeyboardMarkup:
+    """Paginated known-supplier quick-pick buttons when adding a nakladnoy."""
+    rows = _paginated_supplier_rows(
+        suppliers,
+        page=page,
+        item_cb_prefix="qsup",
+        page_cb_prefix="qsup:page",
+        page_size=page_size,
+    )
     rows.append([InlineKeyboardButton(text="❌ Bekor qilish", callback_data="qsup:cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def edit_supplier_pick_kb(
+    payment_id: int,
+    suppliers: Sequence[str],
+    is_confirmed: bool = True,
+    page: int = 0,
+    page_size: int = SUPPLIERS_PAGE_SIZE,
+) -> InlineKeyboardMarkup:
+    """Paginated supplier selector for editing a nakladnoy alongside direct text/voice input."""
+    back_cb = f"nak_view:{payment_id}" if is_confirmed else f"nak:back_card:{payment_id}"
+    rows = _paginated_supplier_rows(
+        suppliers,
+        page=page,
+        item_cb_prefix=f"nak:pick_sup:{payment_id}",
+        page_cb_prefix=f"nak:sup_page:{payment_id}",
+        page_size=page_size,
+    )
+    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data=back_cb)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
