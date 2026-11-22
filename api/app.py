@@ -628,16 +628,26 @@ def create_api_app() -> FastAPI:
 
         async with async_session_maker() as db:
             canonical, _ = await resolve_supplier_name(db, clean_supplier)
+            r_mode = await get_app_setting(db, "round_mode", "floor_1000")
+            rounded_amt = round_nakladnoy_amount(float(amount), r_mode)
+            if round(rounded_amt) != round(amount):
+                eff_amt = rounded_amt
+                eff_orig: Optional[float] = (
+                    float(original_amount) if original_amount else float(amount)
+                )
+            else:
+                eff_amt = float(amount)
+                eff_orig = (
+                    float(original_amount)
+                    if original_amount and round(original_amount) != round(amount)
+                    else None
+                )
             pending = await create_pending_nakladnoy(
                 db,
                 supplier_name=canonical,
-                amount=amount,
+                amount=eff_amt,
                 note=note.strip() or None,
-                original_amount=(
-                    original_amount
-                    if original_amount and round(original_amount) != round(amount)
-                    else None
-                ),
+                original_amount=eff_orig,
             )
             confirmed = await confirm_nakladnoy(
                 db,
@@ -744,34 +754,41 @@ def create_api_app() -> FastAPI:
     ) -> NakladnoyOut:
         async with async_session_maker() as db:
             cur_pay = await _assert_payment_editable(db, payment_id, allow_if_debt=False)
+            canonical_sup = None
+            if payload.supplier_name is not None:
+                canonical_sup, _ = await resolve_supplier_name(
+                    db, payload.supplier_name.strip()
+                )
+            base_amt = (
+                float(payload.amount)
+                if payload.amount is not None
+                else float(cur_pay.amount)
+            )
+            new_amt: Optional[float] = (
+                float(payload.amount) if payload.amount is not None else None
+            )
+            orig_amt: Optional[float] = None
             if payload.round_amount:
                 r_mode = await get_app_setting(db, "round_mode", "floor_1000")
-                if r_mode == "none":
+                if payload.amount is None and r_mode == "none":
                     r_mode = "floor_1000"
-                new_amt = round_nakladnoy_amount(float(cur_pay.amount), r_mode)
-                updated = await update_nakladnoy(
-                    db,
-                    payment_id=payment_id,
-                    amount=new_amt,
-                    user_id=user.user_id,
-                    original_amount=(
+                rounded_amt = round_nakladnoy_amount(base_amt, r_mode)
+                new_amt = rounded_amt
+                if round(rounded_amt) != round(base_amt):
+                    orig_amt = (
                         float(cur_pay.original_amount)
-                        if cur_pay.original_amount is not None
-                        else float(cur_pay.amount)
-                    ),
-                )
-            else:
-                canonical_sup = None
-                if payload.supplier_name is not None:
-                    canonical_sup, _ = await resolve_supplier_name(db, payload.supplier_name.strip())
-                updated = await update_nakladnoy(
-                    db,
-                    payment_id=payment_id,
-                    supplier_name=canonical_sup,
-                    amount=payload.amount,
-                    note=payload.note,
-                    user_id=user.user_id,
-                )
+                        if (payload.amount is None and cur_pay.original_amount is not None)
+                        else base_amt
+                    )
+            updated = await update_nakladnoy(
+                db,
+                payment_id=payment_id,
+                supplier_name=canonical_sup,
+                amount=new_amt,
+                note=payload.note,
+                user_id=user.user_id,
+                original_amount=orig_amt,
+            )
             if updated is None:
                 raise HTTPException(status_code=404, detail="Nakladnoy topilmadi")
             seq = await get_nakladnoy_session_seq(db, updated)

@@ -16,12 +16,10 @@ void main() {
   runApp(const HisobchiApp());
 }
 
-/// Computes safe bottom padding inside modal bottom sheets so buttons NEVER slip
-/// behind Android's 3-button or gesture navigation bar OR the soft keyboard.
+/// Computes safe bottom padding inside modal bottom sheets for soft keyboard clearance.
+/// Callers already wrap sheet content in `SafeArea(top: false)` for system nav bars.
 double sheetBottomPadding(BuildContext context) {
-  final insets = MediaQuery.viewInsetsOf(context).bottom;
-  final navBar = MediaQuery.viewPaddingOf(context).bottom;
-  return (insets > navBar ? insets : navBar) + 24;
+  return MediaQuery.viewInsetsOf(context).bottom + 14;
 }
 
 const Map<String, String> _kCyrToLat = {
@@ -3068,6 +3066,67 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
 // - "Guruhga yuborish" switch default ON right above "Tasdiqlash va saqlash"
 // ============================================================================
 
+Widget buildSupplierInputSuffix({
+  required BuildContext context,
+  required TextEditingController controller,
+  required List<String> suppliers,
+  required Future<void> Function(String picked) onPicked,
+  VoidCallback? onCleared,
+  bool enabled = true,
+}) {
+  return ValueListenableBuilder<TextEditingValue>(
+    valueListenable: controller,
+    builder: (_, val, __) => Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (val.text.isNotEmpty)
+          IconButton(
+            tooltip: 'Tozalash',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.clear_rounded, size: 18),
+            onPressed: enabled
+                ? () {
+                    controller.clear();
+                    onCleared?.call();
+                  }
+                : null,
+          ),
+        Padding(
+          padding: const EdgeInsets.only(right: 6),
+          child: TextButton.icon(
+            style: TextButton.styleFrom(
+              backgroundColor: AppTokens.brand.withValues(alpha: 0.12),
+              foregroundColor: AppTokens.brand,
+              minimumSize: const Size(0, 34),
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            onPressed: enabled
+                ? () async {
+                    final picked = await showSupplierPickerDialog(
+                      context,
+                      suppliers,
+                      current: controller.text,
+                    );
+                    if (picked != null && picked.trim().isNotEmpty) {
+                      await onPicked(picked.trim());
+                    }
+                  }
+                : null,
+            icon: const Icon(Icons.list_alt_rounded, size: 16),
+            label: const Text(
+              "Ro'yxat",
+              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
 class AddNakladnoySheet extends StatefulWidget {
   final HisobchiApiClient api;
   final GroupInfo groupInfo;
@@ -3615,470 +3674,521 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
     final (simFg, simBg, simBorder) =
         AppTokens.semanticSurface(context, AppTokens.cashGreen);
 
+    final showAiBox =
+        _photoFile != null || _aiLoading || _aiBadgeText != null;
+    final hasBottomInsets = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final isDark = isDarkCtx(context);
+
     return SafeArea(
       top: false,
       child: Padding(
-        padding: EdgeInsets.only(
-          left: 18,
-          right: 18,
-          bottom: sheetBottomPadding(context),
-        ),
-        child: SingleChildScrollView(
+        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * 0.92,
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      gradient: AppTokens.aiGradient,
-                      borderRadius: BorderRadius.circular(11),
+              // Sticky Top Header
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 0, 10, 6),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        gradient: AppTokens.aiGradient,
+                        borderRadius: BorderRadius.circular(11),
+                      ),
+                      child: const Icon(Icons.auto_awesome_rounded,
+                          color: Colors.white, size: 18),
                     ),
-                    child: const Icon(Icons.auto_awesome_rounded,
-                        color: Colors.white, size: 18),
-                  ),
-                  const SizedBox(width: 10),
-                  const Expanded(
-                    child: Text(
-                      'Yangi Nakladnoy',
-                      style:
-                          TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text(
+                        'Yangi Nakladnoy',
+                        style: TextStyle(
+                            fontSize: 19, fontWeight: FontWeight.w900),
+                      ),
                     ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    icon: const Icon(Icons.close_rounded),
-                  ),
-                ],
+                    IconButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 12),
 
-              // 1. TOP AI PHOTO SCANNER BOX
+              // Scrollable Form Content
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(18, 4, 18, 10),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (showAiBox) ...[
+                        Container(
+                          padding: const EdgeInsets.all(11),
+                          decoration: BoxDecoration(
+                            color: AppTokens.brandViolet.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color:
+                                  AppTokens.brandViolet.withValues(alpha: 0.28),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              if (_photoFile != null)
+                                Stack(
+                                  children: [
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: Image.memory(
+                                        _photoFile!.bytes,
+                                        height: 120,
+                                        width: double.infinity,
+                                        fit: BoxFit.cover,
+                                      ),
+                                    ),
+                                    if (_aiLoading)
+                                      Positioned.fill(
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                            color: Colors.black
+                                                .withValues(alpha: 0.60),
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                          ),
+                                          alignment: Alignment.center,
+                                          child: const Row(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            children: [
+                                              SizedBox(
+                                                width: 20,
+                                                height: 20,
+                                                child:
+                                                    CircularProgressIndicator(
+                                                  strokeWidth: 2.3,
+                                                  color: Colors.white,
+                                                ),
+                                              ),
+                                              SizedBox(width: 12),
+                                              Text(
+                                                "✨ AI nakladnoyni o'qimoqda...",
+                                                style: TextStyle(
+                                                  color: Colors.white,
+                                                  fontWeight: FontWeight.w800,
+                                                  fontSize: 13.5,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    Positioned(
+                                      top: 6,
+                                      right: 6,
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          IconButton.filledTonal(
+                                            tooltip: "AI qayta o'qish",
+                                            onPressed: _aiLoading
+                                                ? null
+                                                : () =>
+                                                    _runAiExtract(_photoFile!),
+                                            icon: const Icon(
+                                                Icons.auto_awesome_rounded,
+                                                size: 17),
+                                          ),
+                                          const SizedBox(width: 4),
+                                          IconButton.filled(
+                                            onPressed: () => setState(() {
+                                              _photoFile = null;
+                                              _aiBadgeText = null;
+                                              _mathCheck = null;
+                                              _appliedCalculatedAmount = false;
+                                              _writtenAmountBeforeFix = null;
+                                              _writtenOriginalAmountBeforeFix =
+                                                  null;
+                                            }),
+                                            icon: const Icon(
+                                                Icons.close_rounded,
+                                                size: 17),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              if (_aiBadgeText != null) ...[
+                                if (_photoFile != null)
+                                  const SizedBox(height: 8),
+                                Text(
+                                  _aiBadgeText!,
+                                  style: TextStyle(
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w800,
+                                    color: (_mathCheck?.isMismatch == true)
+                                        ? AppTokens.dangerRed
+                                        : (_mathCheck?.isComputed == true)
+                                            ? AppTokens.brandViolet
+                                            : _aiBadgeText!.startsWith('✨')
+                                                ? AppTokens.cashGreen
+                                                : AppTokens.debtAmber,
+                                  ),
+                                ),
+                              ],
+                              if (_buildMathCheckCard(context)
+                                  case final mathCard?)
+                                mathCard,
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+
+                      // Supplier field with embedded "Ro'yxat" corner button + horizontal chips
+                      TextField(
+                        controller: _supCtrl,
+                        onChanged: (_) => setState(() {}),
+                        decoration: InputDecoration(
+                          labelText: 'Postavshik nomi',
+                          hintText: 'Tanlang yoki yozing...',
+                          prefixIcon: const Icon(Icons.storefront_rounded),
+                          suffixIcon: buildSupplierInputSuffix(
+                            context: context,
+                            controller: _supCtrl,
+                            suppliers: _allSuppliers,
+                            onPicked: _selectSupplier,
+                            onCleared: () =>
+                                setState(() => _recentAmounts = []),
+                          ),
+                        ),
+                      ),
+                      if (similarCandidates.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.all(11),
+                          decoration: BoxDecoration(
+                            color: simBg,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: simBorder),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(Icons.translate_rounded,
+                                      size: 16, color: simFg),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      "O'xshash postavshik (Kirill / O'zbek mosligi):",
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w800,
+                                        color: simFg,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              if (topSimilar != null)
+                                FilledButton.icon(
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: AppTokens.cashGreen,
+                                    minimumSize: const Size(0, 44),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 14, vertical: 10),
+                                  ),
+                                  onPressed: (_submitting || _aiLoading)
+                                      ? null
+                                      : () {
+                                          final p = parseUzsInput(_amtCtrl.text);
+                                          if (p != null && p > 0) {
+                                            _selectAndSubmitSupplier(
+                                                topSimilar);
+                                          } else {
+                                            _selectSupplier(topSimilar);
+                                          }
+                                        },
+                                  icon: const Icon(Icons.check_circle_rounded,
+                                      size: 18),
+                                  label: FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    child: Text(
+                                      parseUzsInput(_amtCtrl.text) != null &&
+                                              parseUzsInput(_amtCtrl.text)! > 0
+                                          ? "✅ «$topSimilar» qilib tasdiqlash"
+                                          : "✨ «$topSimilar» ni tanlash",
+                                      maxLines: 1,
+                                    ),
+                                  ),
+                                ),
+                              const SizedBox(height: 6),
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: similarCandidates
+                                    .map(
+                                      (s) => ActionChip(
+                                        avatar: Icon(
+                                            Icons.auto_fix_high_rounded,
+                                            size: 15,
+                                            color: simFg),
+                                        label: Text(
+                                          s,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 12.5,
+                                          ),
+                                        ),
+                                        onPressed: () => _selectSupplier(s),
+                                      ),
+                                    )
+                                    .toList(),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      if (matchingSuppliers.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          height: 36,
+                          child: ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: matchingSuppliers.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(width: 6),
+                            itemBuilder: (ctx, i) {
+                              final name = matchingSuppliers[i];
+                              final isSel = name.toLowerCase() ==
+                                  _supCtrl.text.trim().toLowerCase();
+                              return ActionChip(
+                                backgroundColor: isSel
+                                    ? AppTokens.brand.withValues(alpha: 0.22)
+                                    : null,
+                                label: Text(
+                                  name,
+                                  style: TextStyle(
+                                    fontSize: 12.5,
+                                    fontWeight: isSel
+                                        ? FontWeight.w900
+                                        : FontWeight.w700,
+                                  ),
+                                ),
+                                onPressed: () => _selectSupplier(name),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 11),
+
+                      // Space-formatted Amount field (auto-rounded on server)
+                      TextField(
+                        controller: _amtCtrl,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: const [UzsAmountInputFormatter()],
+                        onChanged: (_) => setState(() {}),
+                        style: const TextStyle(
+                          fontSize: 21,
+                          fontWeight: FontWeight.w900,
+                          fontFeatures: AppTokens.tabularNums,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: "Summa (so'm)",
+                          hintText: '1 554 000',
+                          prefixIcon: Icon(Icons.payments_outlined),
+                        ),
+                      ),
+                      if (_recentAmounts.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: _recentAmounts
+                                .map(
+                                  (a) => Padding(
+                                    padding: const EdgeInsets.only(right: 6),
+                                    child: ActionChip(
+                                      avatar: const Icon(Icons.history_rounded,
+                                          size: 15),
+                                      label: Text(formatUzs(a)),
+                                      onPressed: () {
+                                        _amtCtrl.text = UzsAmountInputFormatter
+                                            .formatDigits(
+                                                a.round().toString());
+                                        setState(() {});
+                                      },
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+
+                      // Sleek 4-segment Payment mode selector
+                      const Text(
+                        "To'lov usuli",
+                        style: TextStyle(
+                            fontWeight: FontWeight.w800, fontSize: 13.5),
+                      ),
+                      const SizedBox(height: 8),
+                      PaymentModeSelector(
+                        selectedMode: _paymentMode,
+                        onChanged: (m) => setState(() => _paymentMode = m),
+                      ),
+                      const SizedBox(height: 10),
+
+                      // Note
+                      TextField(
+                        controller: _noteCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Izoh (ixtiyoriy)',
+                          prefixIcon: Icon(Icons.notes_rounded),
+                          isDense: true,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+
+                      // Guruhga yuborish toggle
+                      SwitchListTile.adaptive(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: const Text(
+                          '📤 Guruhga yuborish',
+                          style: TextStyle(
+                              fontWeight: FontWeight.w800, fontSize: 14.5),
+                        ),
+                        subtitle: Text(
+                          widget.groupInfo.bound
+                              ? 'Telegram guruh: ${widget.groupInfo.title}'
+                              : 'Guruh bog\'langan bo\'lsa avtomatik yuboriladi',
+                          style: TextStyle(
+                              fontSize: 12, color: textSecondaryOf(context)),
+                        ),
+                        value: _sendToGroup,
+                        onChanged: (v) => setState(() => _sendToGroup = v),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              // Sticky Bottom Action Dock: Camera AI + Gallery + Save
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: EdgeInsets.fromLTRB(
+                    16, 10, 16, hasBottomInsets ? 10 : 12),
                 decoration: BoxDecoration(
-                  color: AppTokens.brandViolet.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: AppTokens.brandViolet.withValues(alpha: 0.28),
+                  color: Theme.of(context).cardColor,
+                  border: Border(
+                    top: BorderSide(
+                      color: isDark
+                          ? AppTokens.cardBorderDark
+                          : AppTokens.cardBorderLight,
+                    ),
                   ),
                 ),
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    if (_error != null) ...[
+                      Text(
+                        '⚠️ $_error',
+                        style: const TextStyle(
+                          color: AppTokens.dangerRed,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12.5,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
                     Row(
                       children: [
-                        Expanded(
-                          child: FilledButton.icon(
+                        Tooltip(
+                          message: "Kameradan AI orqali o'qish",
+                          child: FilledButton.tonalIcon(
                             style: FilledButton.styleFrom(
-                              backgroundColor: AppTokens.brandViolet,
-                              minimumSize: const Size(0, 44),
+                              backgroundColor: AppTokens.brandViolet
+                                  .withValues(alpha: isDark ? 0.28 : 0.14),
+                              foregroundColor: isDark
+                                  ? const Color(0xFFD8B4FE)
+                                  : AppTokens.brandViolet,
+                              minimumSize: const Size(0, 48),
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 11),
+                                  horizontal: 11, vertical: 12),
                             ),
-                            onPressed: _aiLoading
+                            onPressed: (_submitting || _aiLoading)
                                 ? null
                                 : () => _pickPhoto(ImageSource.camera),
                             icon: const Icon(Icons.photo_camera_rounded,
-                                size: 18),
-                            label: const FittedBox(
-                              fit: BoxFit.scaleDown,
-                              child: Text('Kamera (AI)', maxLines: 1),
+                                size: 19),
+                            label: const Text('AI'),
+                          ),
+                        ),
+                        const SizedBox(width: 7),
+                        Tooltip(
+                          message: "Galereyadan AI orqali o'qish",
+                          child: OutlinedButton(
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size(46, 48),
+                              padding: EdgeInsets.zero,
                             ),
+                            onPressed: (_submitting || _aiLoading)
+                                ? null
+                                : () => _pickPhoto(ImageSource.gallery),
+                            child: const Icon(Icons.photo_library_rounded,
+                                size: 19),
                           ),
                         ),
                         const SizedBox(width: 8),
                         Expanded(
-                          child: OutlinedButton.icon(
-                            style: OutlinedButton.styleFrom(
-                              minimumSize: const Size(0, 44),
+                          child: FilledButton.icon(
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size(0, 48),
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 11),
+                                  horizontal: 14, vertical: 12),
                             ),
-                            onPressed: _aiLoading
-                                ? null
-                                : () => _pickPhoto(ImageSource.gallery),
-                            icon: const Icon(Icons.photo_library_rounded,
-                                size: 18),
-                            label: const FittedBox(
+                            onPressed:
+                                (_submitting || _aiLoading) ? null : _submit,
+                            icon: _submitting
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2, color: Colors.white),
+                                  )
+                                : const Icon(Icons.check_circle_rounded,
+                                    size: 19),
+                            label: FittedBox(
                               fit: BoxFit.scaleDown,
-                              child: Text('Galereya (AI)', maxLines: 1),
+                              child: Text(
+                                _submitting
+                                    ? 'Saqlanmoqda...'
+                                    : 'Tasdiqlash va saqlash',
+                                maxLines: 1,
+                              ),
                             ),
                           ),
                         ),
                       ],
                     ),
-                    if (_photoFile != null) ...[
-                      const SizedBox(height: 10),
-                      Stack(
-                        children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: Image.memory(
-                              _photoFile!.bytes,
-                              height: 125,
-                              width: double.infinity,
-                              fit: BoxFit.cover,
-                            ),
-                          ),
-                          if (_aiLoading)
-                            Positioned.fill(
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.black.withValues(alpha: 0.60),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                alignment: Alignment.center,
-                                child: const Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2.3,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                    SizedBox(width: 12),
-                                    Text(
-                                      "✨ AI nakladnoyni o'qimoqda...",
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 13.5,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          Positioned(
-                            top: 6,
-                            right: 6,
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton.filledTonal(
-                                  tooltip: "AI qayta o'qish",
-                                  onPressed: _aiLoading
-                                      ? null
-                                      : () => _runAiExtract(_photoFile!),
-                                  icon: const Icon(Icons.auto_awesome_rounded,
-                                      size: 17),
-                                ),
-                                const SizedBox(width: 4),
-                                IconButton.filled(
-                                  onPressed: () => setState(() {
-                                    _photoFile = null;
-                                    _aiBadgeText = null;
-                                    _mathCheck = null;
-                                    _appliedCalculatedAmount = false;
-                                    _writtenAmountBeforeFix = null;
-                                    _writtenOriginalAmountBeforeFix = null;
-                                  }),
-                                  icon:
-                                      const Icon(Icons.close_rounded, size: 17),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                    if (_aiBadgeText != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        _aiBadgeText!,
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w800,
-                          color: (_mathCheck?.isMismatch == true)
-                              ? AppTokens.dangerRed
-                              : (_mathCheck?.isComputed == true)
-                                  ? AppTokens.brandViolet
-                                  : _aiBadgeText!.startsWith('✨')
-                                      ? AppTokens.cashGreen
-                                      : AppTokens.debtAmber,
-                        ),
-                      ),
-                    ],
-                    if (_buildMathCheckCard(context) case final mathCard?)
-                      mathCard,
                   ],
                 ),
-              ),
-              const SizedBox(height: 14),
-
-              // 2. Supplier field + Dropdown Picker Button + horizontal chips
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _supCtrl,
-                      onChanged: (_) => setState(() {}),
-                      decoration: InputDecoration(
-                        labelText: 'Postavshik nomi',
-                        hintText: 'Tanlang yoki yozing...',
-                        prefixIcon: const Icon(Icons.storefront_rounded),
-                        suffixIcon: _supCtrl.text.isNotEmpty
-                            ? IconButton(
-                                icon: const Icon(Icons.clear_rounded),
-                                onPressed: () {
-                                  _supCtrl.clear();
-                                  setState(() => _recentAmounts = []);
-                                },
-                              )
-                            : null,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size(64, 52),
-                    ),
-                    onPressed: () async {
-                      final picked = await showSupplierPickerDialog(
-                        context,
-                        _allSuppliers,
-                        current: _supCtrl.text,
-                      );
-                      if (picked != null && picked.trim().isNotEmpty) {
-                        await _selectSupplier(picked.trim());
-                      }
-                    },
-                    icon: const Icon(Icons.arrow_drop_down_circle_outlined,
-                        size: 19),
-                    label: const Text("Ro'yxat"),
-                  ),
-                ],
-              ),
-              if (similarCandidates.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(11),
-                  decoration: BoxDecoration(
-                    color: simBg,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: simBorder),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.translate_rounded,
-                              size: 16, color: simFg),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              "O'xshash postavshik (Kirill / O'zbek mosligi):",
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w800,
-                                color: simFg,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      if (topSimilar != null)
-                        FilledButton.icon(
-                          style: FilledButton.styleFrom(
-                            backgroundColor: AppTokens.cashGreen,
-                            minimumSize: const Size(80, 44),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 14, vertical: 10),
-                          ),
-                          onPressed: (_submitting || _aiLoading)
-                              ? null
-                              : () {
-                                  if (parseUzsInput(_amtCtrl.text) != null &&
-                                      parseUzsInput(_amtCtrl.text)! > 0) {
-                                    _selectAndSubmitSupplier(topSimilar);
-                                  } else {
-                                    _selectSupplier(topSimilar);
-                                  }
-                                },
-                          icon: const Icon(Icons.check_circle_rounded,
-                              size: 18),
-                          label: Text(
-                            parseUzsInput(_amtCtrl.text) != null &&
-                                    parseUzsInput(_amtCtrl.text)! > 0
-                                ? "✅ «$topSimilar» qilib darhol tasdiqlash"
-                                : "✨ «$topSimilar» ni tanlash",
-                          ),
-                        ),
-                      const SizedBox(height: 6),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: similarCandidates
-                            .map(
-                              (s) => ActionChip(
-                                avatar: Icon(Icons.auto_fix_high_rounded,
-                                    size: 15, color: simFg),
-                                label: Text(
-                                  s,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 12.5,
-                                  ),
-                                ),
-                                onPressed: () => _selectSupplier(s),
-                              ),
-                            )
-                            .toList(),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-              if (matchingSuppliers.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                SizedBox(
-                  height: 38,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: matchingSuppliers.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 6),
-                    itemBuilder: (ctx, i) {
-                      final name = matchingSuppliers[i];
-                      final isSel = name.toLowerCase() ==
-                          _supCtrl.text.trim().toLowerCase();
-                      return ActionChip(
-                        backgroundColor: isSel
-                            ? AppTokens.brand.withValues(alpha: 0.22)
-                            : null,
-                        label: Text(
-                          name,
-                          style: TextStyle(
-                            fontSize: 12.5,
-                            fontWeight:
-                                isSel ? FontWeight.w900 : FontWeight.w700,
-                          ),
-                        ),
-                        onPressed: () => _selectSupplier(name),
-                      );
-                    },
-                  ),
-                ),
-              ],
-              const SizedBox(height: 14),
-
-              // 3. Space-formatted Amount field (NO -10 000 / +10 000 buttons!)
-              TextField(
-                controller: _amtCtrl,
-                keyboardType: TextInputType.number,
-                inputFormatters: const [UzsAmountInputFormatter()],
-                onChanged: (_) => setState(() {}),
-                style: const TextStyle(
-                  fontSize: 21,
-                  fontWeight: FontWeight.w900,
-                  fontFeatures: AppTokens.tabularNums,
-                ),
-                decoration: const InputDecoration(
-                  labelText: "Summa (so'm)",
-                  hintText: '1 554 000',
-                  prefixIcon: Icon(Icons.payments_outlined),
-                ),
-              ),
-              if (_recentAmounts.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: _recentAmounts
-                        .map(
-                          (a) => Padding(
-                            padding: const EdgeInsets.only(right: 6),
-                            child: ActionChip(
-                              avatar:
-                                  const Icon(Icons.history_rounded, size: 15),
-                              label: Text(formatUzs(a)),
-                              onPressed: () {
-                                _amtCtrl.text =
-                                    UzsAmountInputFormatter.formatDigits(
-                                        a.round().toString());
-                                setState(() {});
-                              },
-                            ),
-                          ),
-                        )
-                        .toList(),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 14),
-
-              // 4. Payment mode selector
-              const Text(
-                "To'lov usuli",
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5),
-              ),
-              const SizedBox(height: 8),
-              PaymentModeSelector(
-                selectedMode: _paymentMode,
-                onChanged: (m) => setState(() => _paymentMode = m),
-              ),
-              const SizedBox(height: 12),
-
-              // 5. Note
-              TextField(
-                controller: _noteCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Izoh (ixtiyoriy)',
-                  prefixIcon: Icon(Icons.notes_rounded),
-                  isDense: true,
-                ),
-              ),
-              const SizedBox(height: 8),
-
-              // 6. Guruhga yuborish toggle (Default ON, always toggleable right above Confirm)
-              SwitchListTile.adaptive(
-                contentPadding: EdgeInsets.zero,
-                title: const Text(
-                  '📤 Guruhga yuborish',
-                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14.5),
-                ),
-                subtitle: Text(
-                  widget.groupInfo.bound
-                      ? 'Telegram guruh: ${widget.groupInfo.title}'
-                      : 'Guruh bog\'langan bo\'lsa avtomatik yuboriladi',
-                  style: TextStyle(
-                      fontSize: 12, color: textSecondaryOf(context)),
-                ),
-                value: _sendToGroup,
-                onChanged: (v) => setState(() => _sendToGroup = v),
-              ),
-
-              if (_error != null) ...[
-                const SizedBox(height: 8),
-                Text(
-                  '⚠️ $_error',
-                  style: const TextStyle(
-                    color: AppTokens.dangerRed,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-              const SizedBox(height: 10),
-              FilledButton.icon(
-                onPressed: (_submitting || _aiLoading) ? null : _submit,
-                icon: _submitting
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
-                      )
-                    : const Icon(Icons.check_circle_rounded),
-                label: Text(
-                    _submitting ? 'Saqlanmoqda...' : 'Tasdiqlash va saqlash'),
               ),
             ],
           ),
@@ -4277,6 +4387,7 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
         supplierName: sup,
         amount: parsed,
         note: _noteCtrl.text.trim(),
+        roundAmount: true,
       );
       if (mounted) {
         setState(() {
@@ -4558,82 +4669,41 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                 ),
                 const SizedBox(height: 12),
 
-                // Supplier field + Searchable Dropdown Modal Picker
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _supCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'Postavshik',
-                          prefixIcon: Icon(Icons.storefront_rounded),
-                          isDense: true,
-                        ),
-                      ),
+                // Supplier field with embedded "Ro'yxat" corner button
+                TextField(
+                  controller: _supCtrl,
+                  decoration: InputDecoration(
+                    labelText: 'Postavshik',
+                    prefixIcon: const Icon(Icons.storefront_rounded),
+                    isDense: true,
+                    suffixIcon: buildSupplierInputSuffix(
+                      context: context,
+                      controller: _supCtrl,
+                      suppliers: _suppliers,
+                      enabled: !_busy,
+                      onPicked: (picked) async {
+                        setState(() => _supCtrl.text = picked);
+                      },
                     ),
-                    const SizedBox(width: 8),
-                    OutlinedButton.icon(
-                      onPressed: _busy
-                          ? null
-                          : () async {
-                              final picked = await showSupplierPickerDialog(
-                                context,
-                                _suppliers,
-                                current: _supCtrl.text,
-                              );
-                              if (picked != null && picked.trim().isNotEmpty) {
-                                setState(() {
-                                  _supCtrl.text = picked.trim();
-                                });
-                              }
-                            },
-                      icon: const Icon(Icons.arrow_drop_down_circle_outlined,
-                          size: 18),
-                      label: const Text("Ro'yxat"),
-                    ),
-                  ],
+                  ),
                 ),
                 const SizedBox(height: 12),
 
-                // Space-formatted Amount field + Yaxlitlash
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _amtCtrl,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: const [UzsAmountInputFormatter()],
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w900,
-                          fontFeatures: AppTokens.tabularNums,
-                        ),
-                        decoration: const InputDecoration(
-                          labelText: "Summa (so'm)",
-                          prefixIcon: Icon(Icons.payments_outlined),
-                          isDense: true,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    OutlinedButton.icon(
-                      onPressed: _busy
-                          ? null
-                          : () {
-                              final parsed = parseUzsInput(_amtCtrl.text);
-                              if (parsed != null && parsed >= 1000) {
-                                final floored = (parsed ~/ 1000) * 1000;
-                                setState(() {
-                                  _amtCtrl.text =
-                                      UzsAmountInputFormatter.formatDigits(
-                                          floored.toString());
-                                });
-                              }
-                            },
-                      icon: const Icon(Icons.auto_fix_high_rounded, size: 17),
-                      label: const Text('Yaxlit'),
-                    ),
-                  ],
+                // Space-formatted Amount field (auto-rounded on save)
+                TextField(
+                  controller: _amtCtrl,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: const [UzsAmountInputFormatter()],
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    fontFeatures: AppTokens.tabularNums,
+                  ),
+                  decoration: const InputDecoration(
+                    labelText: "Summa (so'm)",
+                    prefixIcon: Icon(Icons.payments_outlined),
+                    isDense: true,
+                  ),
                 ),
                 const SizedBox(height: 12),
 
@@ -5606,30 +5676,20 @@ class _NasiyaLedgerViewState extends State<NasiyaLedgerView> {
                     const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
               ),
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: supCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Postavshik nomi',
-                        prefixIcon: Icon(Icons.storefront_rounded),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  OutlinedButton(
-                    onPressed: () async {
-                      final picked = await showSupplierPickerDialog(
-                        ctx,
-                        _suppliers,
-                        current: supCtrl.text,
-                      );
-                      if (picked != null) supCtrl.text = picked;
+              TextField(
+                controller: supCtrl,
+                decoration: InputDecoration(
+                  labelText: 'Postavshik nomi',
+                  prefixIcon: const Icon(Icons.storefront_rounded),
+                  suffixIcon: buildSupplierInputSuffix(
+                    context: ctx,
+                    controller: supCtrl,
+                    suppliers: _suppliers,
+                    onPicked: (picked) async {
+                      supCtrl.text = picked;
                     },
-                    child: const Text("Ro'yxat"),
                   ),
-                ],
+                ),
               ),
               const SizedBox(height: 12),
               TextField(

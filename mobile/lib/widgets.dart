@@ -441,7 +441,6 @@ class DashboardAnalyticsSection extends StatefulWidget {
 }
 
 class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
-  String _timelineFilter = 'all'; // all | in | out | debt
   int? _selectedTrendIdx;
 
   @override
@@ -518,19 +517,22 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
             const Icon(Icons.grid_view_rounded,
                 size: 19, color: AppTokens.brand),
             const SizedBox(width: 7),
-            Text(
-              "To'lov turlari kesimida (${naks.length} ta)",
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w900,
-                color: textPrimaryOf(context),
+            Expanded(
+              child: Text(
+                "To'lov turlari kesimida (${naks.length} ta)",
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 15.5,
+                  fontWeight: FontWeight.w900,
+                  color: textPrimaryOf(context),
+                ),
               ),
             ),
-            const Spacer(),
             TextButton.icon(
               onPressed: widget.onOpenNakladnoyTab,
               icon: const Icon(Icons.receipt_long_rounded, size: 16),
-              label: const Text('Ro\'yxat'),
+              label: const Text("Ro'yxat"),
             ),
           ],
         ),
@@ -703,7 +705,7 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
 
   Widget _buildUnifiedTimelineCard(
       BuildContext context, StatusSummary summary) {
-    // Combine cashTransactions (Pul olindi / Kassa qarz / Qaytarildi) AND nakladnoys (Kimga pul berildi)
+    // Clean Kassa-only transactions list (nakladnoys live in the dedicated Nakladnoylar tab).
     final events = <_TimelineEvent>[];
 
     for (final tx in summary.cashTransactions) {
@@ -728,40 +730,8 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
       );
     }
 
-    for (final nak in summary.nakladnoys) {
-      final spec = _nakTypeSpec(context, nak);
-      events.add(
-        _TimelineEvent(
-          kind: nak.isDebt ? 'debt' : 'out',
-          timeHm: nak.timeHm,
-          createdAt: nak.createdAt,
-          badgeText: '${spec.badge} • ${nak.displayNum}',
-          title: nak.supplierName,
-          subtitle: nak.note.isNotEmpty
-              ? '💬 ${nak.note}'
-              : "Postavshikka to'lov (${spec.methodLabel})",
-          amount: nak.amount,
-          sign: spec.sign,
-          icon: spec.icon,
-          fg: spec.fg,
-          bg: spec.bg,
-          border: spec.border,
-          nakladnoy: nak,
-        ),
-      );
-    }
-
     // Sort newest first by createdAt / timeHm
     events.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-
-    final inCount = events.where((e) => e.kind == 'in').length;
-    final outCount = events.where((e) => e.kind == 'out').length;
-    final debtCount = events.where((e) => e.kind == 'debt').length;
-
-    final filtered = events.where((e) {
-      if (_timelineFilter == 'all') return true;
-      return e.kind == _timelineFilter;
-    }).toList();
 
     return Card(
       child: Padding(
@@ -777,7 +747,7 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
                     gradient: AppTokens.heroGradient,
                     borderRadius: BorderRadius.circular(11),
                   ),
-                  child: const Icon(Icons.timeline_rounded,
+                  child: const Icon(Icons.account_balance_wallet_rounded,
                       color: Colors.white, size: 20),
                 ),
                 const SizedBox(width: 10),
@@ -786,7 +756,7 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        "Qachon nima olindi va Kimga pul berildi",
+                        'Kassa kirim va qarz amallari',
                         style: TextStyle(
                           fontSize: 15.5,
                           fontWeight: FontWeight.w900,
@@ -794,13 +764,31 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
                         ),
                       ),
                       Text(
-                        '${summary.reportDate} sanadagi barcha kirim va chiqimlar xronologiyasi (${events.length} ta)',
+                        '${summary.reportDate} sanadagi kassa harakatlari (${events.length} ta)',
                         style: TextStyle(
                           fontSize: 12,
                           color: textSecondaryOf(context),
                         ),
                       ),
                     ],
+                  ),
+                ),
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(0, 36),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  ),
+                  onPressed: widget.onOpenNakladnoyTab,
+                  icon: const Icon(Icons.receipt_long_rounded, size: 15),
+                  label: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      'Nakladnoylar (${summary.nakladnoys.length})',
+                      maxLines: 1,
+                      style: const TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w800),
+                    ),
                   ),
                 ),
               ],
@@ -843,30 +831,13 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
                 ],
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 6),
 
-            // Filter Pills: Barchasi | Pul olindi | Kimga berildi | Qarzga
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  _timelineChip('all', '⚡ Barchasi (${events.length})'),
-                  const SizedBox(width: 6),
-                  _timelineChip('in', '🟢 Pul olindi ($inCount)'),
-                  const SizedBox(width: 6),
-                  _timelineChip('out', '🔴 Kimga berildi ($outCount)'),
-                  const SizedBox(width: 6),
-                  _timelineChip('debt', '📌 Qarzga ($debtCount)'),
-                ],
-              ),
-            ),
-            const SizedBox(height: 10),
-
-            if (filtered.isEmpty)
+            if (events.isEmpty)
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 18),
+                padding: const EdgeInsets.symmetric(vertical: 16),
                 child: Text(
-                  "Bu bo'limda hozircha amallar yo'q.",
+                  "Bu smenada kassa kirim-qarz amallari yo'q.",
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 13,
@@ -875,25 +846,10 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
                 ),
               )
             else
-              ...filtered.map((ev) => _buildTimelineRow(context, ev)),
+              ...events.map((ev) => _buildTimelineRow(context, ev)),
           ],
         ),
       ),
-    );
-  }
-
-  Widget _timelineChip(String key, String label) {
-    final sel = _timelineFilter == key;
-    return ChoiceChip(
-      label: Text(
-        label,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: sel ? FontWeight.w900 : FontWeight.w700,
-        ),
-      ),
-      selected: sel,
-      onSelected: (_) => setState(() => _timelineFilter = key),
     );
   }
 
@@ -907,13 +863,9 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
-        onTap: () {
-          if (ev.nakladnoy != null) {
-            widget.onTapNakladnoy(ev.nakladnoy!);
-          } else if (ev.cashTx != null && widget.canWrite) {
-            widget.onEditCashTx(ev.cashTx!);
-          }
-        },
+        onTap: (ev.cashTx != null && widget.canWrite)
+            ? () => widget.onEditCashTx(ev.cashTx!)
+            : null,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
           child: Row(
@@ -1110,68 +1062,6 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
         );
     }
   }
-
-  ({
-    String badge,
-    String methodLabel,
-    String sign,
-    IconData icon,
-    Color fg,
-    Color bg,
-    Color border
-  }) _nakTypeSpec(BuildContext context, NakladnoyItem nak) {
-    if (nak.isDebt) {
-      final (fg, bg, border) =
-          AppTokens.semanticSurface(context, AppTokens.debtAmber);
-      return (
-        badge: '📌 QARZGA YOZILDI',
-        methodLabel: 'Qarzga',
-        sign: '',
-        icon: Icons.push_pin_rounded,
-        fg: fg,
-        bg: bg,
-        border: border,
-      );
-    }
-    switch (nak.paymentMethod) {
-      case 'card':
-        final (fg, bg, border) =
-            AppTokens.semanticSurface(context, AppTokens.cardBlue);
-        return (
-          badge: '💳 KARTA BERILDI',
-          methodLabel: 'Karta orqali',
-          sign: '−',
-          icon: Icons.credit_card_rounded,
-          fg: fg,
-          bg: bg,
-          border: border,
-        );
-      case 'transfer':
-        final (fg, bg, border) =
-            AppTokens.semanticSurface(context, AppTokens.transferPurple);
-        return (
-          badge: "🏦 O'TKAZMA BERILDI",
-          methodLabel: 'Perechesleniya',
-          sign: '−',
-          icon: Icons.account_balance_rounded,
-          fg: fg,
-          bg: bg,
-          border: border,
-        );
-      default:
-        final (fg, bg, border) =
-            AppTokens.semanticSurface(context, AppTokens.dangerRed);
-        return (
-          badge: '💵 NAQD PUL BERILDI',
-          methodLabel: 'Naqd pulda',
-          sign: '−',
-          icon: Icons.north_east_rounded,
-          fg: fg,
-          bg: bg,
-          border: border,
-        );
-    }
-  }
 }
 
 class _TimelineEvent {
@@ -1188,7 +1078,6 @@ class _TimelineEvent {
   final Color bg;
   final Color border;
   final CashTxItem? cashTx;
-  final NakladnoyItem? nakladnoy;
 
   const _TimelineEvent({
     required this.kind,
@@ -1204,7 +1093,6 @@ class _TimelineEvent {
     required this.bg,
     required this.border,
     this.cashTx,
-    this.nakladnoy,
   });
 }
 
@@ -2285,90 +2173,132 @@ class PaymentModeSelector extends StatelessWidget {
       orElse: () => modes.first,
     );
     final Color baseColor = current['color'] as Color;
-    final (activeFg, _, _) = AppTokens.semanticSurface(context, baseColor);
+    final (activeFg, activeBg, activeBorder) =
+        AppTokens.semanticSurface(context, baseColor);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        GridView.count(
-          crossAxisCount: 2,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          mainAxisSpacing: 8,
-          crossAxisSpacing: 8,
-          childAspectRatio: 2.85,
-          children: modes.map((m) {
-            final key = m['key'] as String;
-            final isSelected = key == selectedMode;
-            final c = m['color'] as Color;
-            final (fg, bg, border) = AppTokens.semanticSurface(context, c);
-            final ic = m['icon'] as IconData;
-            return InkWell(
-              borderRadius: BorderRadius.circular(14),
-              onTap: () => onChanged(key),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 160),
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? bg
-                      : Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerHighest
-                          .withValues(alpha: 0.45),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: isSelected ? border : Colors.transparent,
-                    width: 1.8,
-                  ),
-                ),
-                alignment: Alignment.center,
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      ic,
-                      size: 18,
-                      color: isSelected ? fg : textSecondaryOf(context),
-                    ),
-                    const SizedBox(width: 7),
-                    Flexible(
-                      child: Text(
-                        m['label'] as String,
-                        style: TextStyle(
-                          fontWeight:
-                              isSelected ? FontWeight.w900 : FontWeight.w700,
-                          fontSize: 13.5,
-                          color: isSelected ? fg : textPrimaryOf(context),
+        Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: isDark
+                ? AppTokens.surfaceDark.withValues(alpha: 0.7)
+                : Theme.of(context)
+                    .colorScheme
+                    .surfaceContainerHighest
+                    .withValues(alpha: 0.55),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color:
+                  isDark ? AppTokens.cardBorderDark : AppTokens.cardBorderLight,
+            ),
+          ),
+          child: Row(
+            children: List.generate(modes.length, (i) {
+              final m = modes[i];
+              final key = m['key'] as String;
+              final isSelected = key == selectedMode;
+              final c = m['color'] as Color;
+              final (fg, bg, border) = AppTokens.semanticSurface(context, c);
+              final ic = m['icon'] as IconData;
+
+              return Expanded(
+                child: Padding(
+                  padding: EdgeInsets.only(right: i < modes.length - 1 ? 4 : 0),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        onChanged(key);
+                      },
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 160),
+                        curve: Curves.easeOutCubic,
+                        padding: const EdgeInsets.symmetric(
+                            vertical: 9, horizontal: 4),
+                        decoration: BoxDecoration(
+                          color: isSelected ? bg : Colors.transparent,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: isSelected ? border : Colors.transparent,
+                            width: 1.5,
+                          ),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  ic,
+                                  size: 18,
+                                  color: isSelected
+                                      ? fg
+                                      : textSecondaryOf(context),
+                                ),
+                                if (isSelected) ...[
+                                  const SizedBox(width: 3),
+                                  Icon(Icons.check_circle_rounded,
+                                      size: 12, color: fg),
+                                ],
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                m['label'] as String,
+                                maxLines: 1,
+                                style: TextStyle(
+                                  fontWeight: isSelected
+                                      ? FontWeight.w900
+                                      : FontWeight.w700,
+                                  fontSize: 12.5,
+                                  color:
+                                      isSelected ? fg : textPrimaryOf(context),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
-                    if (isSelected) ...[
-                      const SizedBox(width: 4),
-                      Icon(Icons.check_circle_rounded, size: 15, color: fg),
-                    ],
-                  ],
+                  ),
                 ),
-              ),
-            );
-          }).toList(),
+              );
+            }),
+          ),
         ),
         const SizedBox(height: 6),
-        Row(
-          children: [
-            Icon(Icons.info_outline_rounded, size: 14, color: activeFg),
-            const SizedBox(width: 5),
-            Expanded(
-              child: Text(
-                current['sub'] as String,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: activeFg,
-                  fontWeight: FontWeight.w700,
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: activeBg,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: activeBorder.withValues(alpha: 0.4)),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.info_outline_rounded, size: 14, color: activeFg),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  current['sub'] as String,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: activeFg,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ],
     );
