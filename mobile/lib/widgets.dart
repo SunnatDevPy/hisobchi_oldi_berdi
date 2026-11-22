@@ -1766,7 +1766,10 @@ class _TrendLineStatisticsCard extends StatelessWidget {
                     }
 
                     return GestureDetector(
+                      behavior: HitTestBehavior.opaque,
                       onTapDown: (d) => handleDx(d.localPosition.dx),
+                      onHorizontalDragStart: (d) =>
+                          handleDx(d.localPosition.dx),
                       onHorizontalDragUpdate: (d) =>
                           handleDx(d.localPosition.dx),
                       child: CustomPaint(

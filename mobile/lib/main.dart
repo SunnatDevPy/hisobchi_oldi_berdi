@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -878,6 +879,8 @@ class MainWorkspaceScreen extends StatefulWidget {
 
 class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   int _tabIndex = 0;
+  late final PageController _pageController;
+  int? _programmaticTargetTab;
   StatusSummary? _summary;
   List<NakladnoyItem> _allDebts = [];
   bool _loading = true;
@@ -909,7 +912,39 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   @override
   void initState() {
     super.initState();
+    _pageController = PageController(initialPage: _tabIndex);
     _refreshAll();
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _switchToTab(int index, {bool animate = true}) async {
+    if (index < 0 || index > 3) return;
+    if (mounted) {
+      setState(() => _tabIndex = index);
+    }
+    if (!_pageController.hasClients) return;
+    if (!animate) {
+      _programmaticTargetTab = null;
+      _pageController.jumpToPage(index);
+      return;
+    }
+    _programmaticTargetTab = index;
+    try {
+      await _pageController.animateToPage(
+        index,
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
+      );
+    } finally {
+      if (_programmaticTargetTab == index) {
+        _programmaticTargetTab = null;
+      }
+    }
   }
 
   Future<Map<String, dynamic>> _fetchPeriodStatsForKey(String key) {
@@ -1442,7 +1477,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
         top: false,
         child: NavigationBar(
           selectedIndex: _tabIndex,
-          onDestinationSelected: (i) => setState(() => _tabIndex = i),
+          onDestinationSelected: _switchToTab,
           destinations: [
             const NavigationDestination(
               icon: Icon(Icons.space_dashboard_outlined),
@@ -1533,14 +1568,40 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                         ),
                       ),
                     Expanded(
-                      child: IndexedStack(
-                        index: _tabIndex,
-                        children: [
-                          _buildDashboardTab(),
-                          _buildNakladnoylarTab(),
-                          _buildDebtsTab(),
-                          _buildSmenaAndReportsTab(),
-                        ],
+                      child: ScrollConfiguration(
+                        behavior: ScrollConfiguration.of(context).copyWith(
+                          dragDevices: {
+                            PointerDeviceKind.touch,
+                            PointerDeviceKind.mouse,
+                            PointerDeviceKind.trackpad,
+                            PointerDeviceKind.stylus,
+                          },
+                        ),
+                        child: PageView(
+                          controller: _pageController,
+                          physics: const PageScrollPhysics(),
+                          onPageChanged: (index) {
+                            if (_programmaticTargetTab != null) {
+                              if (index == _programmaticTargetTab) {
+                                _programmaticTargetTab = null;
+                                if (_tabIndex != index) {
+                                  setState(() => _tabIndex = index);
+                                }
+                              }
+                              return;
+                            }
+                            if (_tabIndex != index) {
+                              setState(() => _tabIndex = index);
+                            }
+                          },
+                          children: [
+                            _KeepAliveTabPage(child: _buildDashboardTab()),
+                            _KeepAliveTabPage(child: _buildNakladnoylarTab()),
+                            _KeepAliveTabPage(child: _buildDebtsTab()),
+                            _KeepAliveTabPage(
+                                child: _buildSmenaAndReportsTab()),
+                          ],
+                        ),
                       ),
                     ),
                   ],
@@ -1700,12 +1761,10 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
             onSelectPeriodKey: _selectTrendPeriodKey,
             onPickCustomDateRange: _pickCustomTrendDateRange,
             onTapPaymentFilter: (mode) {
-              setState(() {
-                _filterMode = mode;
-                _tabIndex = 1;
-              });
+              setState(() => _filterMode = mode);
+              _switchToTab(1);
             },
-            onOpenNakladnoyTab: () => setState(() => _tabIndex = 1),
+            onOpenNakladnoyTab: () => _switchToTab(1),
             onTapNakladnoy: (item) => _openNakladnoyDetail(
               item,
               readOnly: isViewingPast ||
@@ -6247,5 +6306,26 @@ class _SupplierAndRoundingSettingsSheetState
         ),
       ),
     );
+  }
+}
+
+class _KeepAliveTabPage extends StatefulWidget {
+  final Widget child;
+
+  const _KeepAliveTabPage({required this.child});
+
+  @override
+  State<_KeepAliveTabPage> createState() => _KeepAliveTabPageState();
+}
+
+class _KeepAliveTabPageState extends State<_KeepAliveTabPage>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
   }
 }
