@@ -23,6 +23,209 @@ double sheetBottomPadding(BuildContext context) {
   return (insets > navBar ? insets : navBar) + 24;
 }
 
+const Map<String, String> _kCyrToLat = {
+  'а': 'a',
+  'б': 'b',
+  'в': 'v',
+  'г': 'g',
+  'ғ': 'g',
+  'д': 'd',
+  'е': 'e',
+  'ё': 'yo',
+  'ж': 'j',
+  'з': 'z',
+  'и': 'i',
+  'й': 'y',
+  'к': 'k',
+  'қ': 'q',
+  'л': 'l',
+  'м': 'm',
+  'н': 'n',
+  'о': 'o',
+  'п': 'p',
+  'р': 'r',
+  'с': 's',
+  'т': 't',
+  'у': 'u',
+  'ў': 'o',
+  'ф': 'f',
+  'х': 'x',
+  'ҳ': 'h',
+  'ц': 'ts',
+  'ч': 'ch',
+  'ш': 'sh',
+  'щ': 'sh',
+  'ъ': '',
+  'ы': 'i',
+  'ь': '',
+  'э': 'e',
+  'ю': 'yu',
+  'я': 'ya',
+};
+
+const Map<String, String> _kCursiveSkeletonMap = {
+  'и': 'u',
+  'й': 'u',
+  'у': 'u',
+  'ы': 'u',
+  'ю': 'u',
+  'i': 'u',
+  'u': 'u',
+  'y': 'u',
+  'т': 'm',
+  'м': 'm',
+  'п': 'm',
+  'н': 'm',
+  'ш': 'm',
+  'щ': 'm',
+  't': 'm',
+  'm': 'm',
+  'n': 'm',
+  'а': 'a',
+  'о': 'a',
+  'ў': 'a',
+  'я': 'a',
+  'a': 'a',
+  'o': 'a',
+  'е': 'e',
+  'э': 'e',
+  'ё': 'e',
+  'e': 'e',
+  'р': 'p',
+  'p': 'p',
+  'r': 'p',
+  'с': 'c',
+  's': 'c',
+  'c': 'c',
+  'х': 'x',
+  'ҳ': 'x',
+  'x': 'x',
+  'h': 'x',
+  'в': 'b',
+  'б': 'b',
+  'v': 'b',
+  'b': 'b',
+  'к': 'k',
+  'қ': 'k',
+  'k': 'k',
+  'q': 'k',
+  'г': 'g',
+  'ғ': 'g',
+  'д': 'g',
+  'g': 'g',
+  'd': 'g',
+  'л': 'l',
+  'l': 'l',
+  'з': 'z',
+  'z': 'z',
+  'ж': 'j',
+  'j': 'j',
+  'ч': 'r',
+  'ф': 'f',
+  'f': 'f',
+};
+
+String _toLatPhonetic(String s) {
+  final low = s.trim().toLowerCase();
+  final sb = StringBuffer();
+  for (var i = 0; i < low.length; i++) {
+    final ch = low[i];
+    sb.write(_kCyrToLat[ch] ?? ch);
+  }
+  return sb.toString();
+}
+
+String _toCursiveSkeleton(String s) {
+  final low = s.trim().toLowerCase();
+  final sb = StringBuffer();
+  for (var i = 0; i < low.length; i++) {
+    final ch = low[i];
+    sb.write(_kCursiveSkeletonMap[ch] ?? ch);
+  }
+  return sb.toString();
+}
+
+double _charBigramSimilarity(String a, String b) {
+  if (a.isEmpty || b.isEmpty) return 0.0;
+  if (a == b) return 1.0;
+  if (a.length < 2 || b.length < 2) {
+    return a[0] == b[0] ? 0.6 : 0.0;
+  }
+  final aGrams = <String>[];
+  for (var i = 0; i < a.length - 1; i++) {
+    aGrams.add(a.substring(i, i + 2));
+  }
+  final bGrams = <String>[];
+  for (var i = 0; i < b.length - 1; i++) {
+    bGrams.add(b.substring(i, i + 2));
+  }
+  var matches = 0;
+  final used = List<bool>.filled(bGrams.length, false);
+  for (final ag in aGrams) {
+    for (var j = 0; j < bGrams.length; j++) {
+      if (!used[j] && ag == bGrams[j]) {
+        used[j] = true;
+        matches++;
+        break;
+      }
+    }
+  }
+  return (2.0 * matches) / (aGrams.length + bGrams.length);
+}
+
+double crossScriptSupplierScore(String query, String candidate) {
+  final q = query.trim().toLowerCase();
+  final c = candidate.trim().toLowerCase();
+  if (q.isEmpty || c.isEmpty) return 0.0;
+  if (q == c) return 1.0;
+  if (c.contains(q) || q.contains(c)) return 0.88;
+
+  final direct = _charBigramSimilarity(q, c);
+  final qLat = _toLatPhonetic(q);
+  final cLat = _toLatPhonetic(c);
+  final phonetic = qLat == cLat ? 0.98 : _charBigramSimilarity(qLat, cLat);
+
+  final qCur = _toCursiveSkeleton(q);
+  final cCur = _toCursiveSkeleton(c);
+  var cursive = 0.0;
+  if (qCur.length >= 3 && cCur.length >= 3) {
+    final raw = qCur == cCur ? 1.0 : _charBigramSimilarity(qCur, cCur);
+    final lenRatio =
+        (qCur.length < cCur.length ? qCur.length : cCur.length) /
+            (qCur.length > cCur.length ? qCur.length : cCur.length);
+    cursive = raw * (0.74 + 0.21 * lenRatio);
+  }
+  var best = direct > phonetic ? direct : phonetic;
+  if (cursive > best) best = cursive;
+  return best;
+}
+
+List<String> findLocalSimilarSuppliers(
+  String raw,
+  List<String> allSuppliers, {
+  int limit = 4,
+  double cutoff = 0.58,
+}) {
+  final q = raw.trim();
+  if (q.isEmpty) return const [];
+  final qLow = q.toLowerCase();
+  final scored = <({String name, double score})>[];
+  for (final s in allSuppliers) {
+    if (s.trim().toLowerCase() == qLow) continue;
+    var sc = crossScriptSupplierScore(qLow, s);
+    final firstWord = s.trim().split(' ').first;
+    if (firstWord.length >= 4 && !qLow.contains(' ')) {
+      final wSc = crossScriptSupplierScore(qLow, firstWord) * 0.93;
+      if (wSc > sc) sc = wSc;
+    }
+    if (sc >= cutoff) {
+      scored.add((name: s, score: sc));
+    }
+  }
+  scored.sort((a, b) => b.score.compareTo(a.score));
+  return scored.take(limit).map((e) => e.name).toList();
+}
+
 /// Opens a searchable bottom picker of all known suppliers.
 Future<String?> showSupplierPickerDialog(
   BuildContext context,
@@ -38,7 +241,9 @@ Future<String?> showSupplierPickerDialog(
       builder: (ctx, setModalState) {
         final filtered = suppliers
             .where((s) =>
-                query.isEmpty || s.toLowerCase().contains(query.toLowerCase()))
+                query.isEmpty ||
+                s.toLowerCase().contains(query.toLowerCase()) ||
+                crossScriptSupplierScore(query, s) >= 0.62)
             .toList();
         return SafeArea(
           top: false,
@@ -1937,6 +2142,7 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
   File? _photoFile;
   double? _originalAmount;
   String? _supplierSuggestion;
+  List<String> _aiSimilarSuppliers = [];
   bool _aiLoading = false;
   String? _aiBadgeText;
   bool _submitting = false;
@@ -1973,11 +2179,20 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
   Future<void> _selectSupplier(String name) async {
     _supCtrl.text = name;
     _supplierSuggestion = null;
+    _aiSimilarSuppliers = [];
     setState(() {});
     try {
       final amts = await widget.api.getSupplierAmounts(name);
       if (mounted) setState(() => _recentAmounts = amts);
     } catch (_) {}
+  }
+
+  Future<void> _selectAndSubmitSupplier(String name) async {
+    _supCtrl.text = name;
+    _supplierSuggestion = null;
+    _aiSimilarSuppliers = [];
+    setState(() {});
+    await _submit();
   }
 
   /// Automatically calls server Gemini Vision OCR the moment a photo is picked!
@@ -2001,6 +2216,7 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
         }
         _originalAmount = res.originalAmount;
         _supplierSuggestion = res.supplierSuggestion;
+        _aiSimilarSuppliers = res.similarSuppliers;
         if (res.recentAmounts.isNotEmpty) {
           _recentAmounts = res.recentAmounts;
         }
@@ -2095,6 +2311,34 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
         .where((s) => q.isEmpty || s.toLowerCase().contains(q))
         .take(20)
         .toList();
+
+    // Combine server AI similar suppliers + local cross-script/cursive matches (e.g. "Иттин" -> "Ummun")
+    final similarCandidates = <String>[];
+    if (_supplierSuggestion != null &&
+        _supplierSuggestion!.trim().isNotEmpty &&
+        _supplierSuggestion!.trim().toLowerCase() != q) {
+      similarCandidates.add(_supplierSuggestion!.trim());
+    }
+    for (final s in _aiSimilarSuppliers) {
+      if (s.trim().isNotEmpty &&
+          s.trim().toLowerCase() != q &&
+          !similarCandidates
+              .any((e) => e.toLowerCase() == s.trim().toLowerCase())) {
+        similarCandidates.add(s.trim());
+      }
+    }
+    if (q.length >= 2) {
+      for (final s in findLocalSimilarSuppliers(q, _allSuppliers, limit: 4)) {
+        if (!similarCandidates
+            .any((e) => e.toLowerCase() == s.toLowerCase())) {
+          similarCandidates.add(s);
+        }
+      }
+    }
+    final topSimilar =
+        similarCandidates.isNotEmpty ? similarCandidates.first : null;
+    final (simFg, simBg, simBorder) =
+        AppTokens.semanticSurface(context, AppTokens.cashGreen);
 
     return SafeArea(
       top: false,
@@ -2317,17 +2561,85 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
                   ),
                 ],
               ),
-              if (_supplierSuggestion != null &&
-                  _supplierSuggestion!.toLowerCase() !=
-                      _supCtrl.text.trim().toLowerCase()) ...[
-                const SizedBox(height: 6),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: ActionChip(
-                    avatar: const Icon(Icons.lightbulb_outline_rounded,
-                        size: 16, color: AppTokens.brand),
-                    label: Text("Balki: $_supplierSuggestion ?"),
-                    onPressed: () => _selectSupplier(_supplierSuggestion!),
+              if (similarCandidates.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(11),
+                  decoration: BoxDecoration(
+                    color: simBg,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: simBorder),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.translate_rounded,
+                              size: 16, color: simFg),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              "O'xshash postavshik (Kirill / O'zbek mosligi):",
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                                color: simFg,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      if (topSimilar != null)
+                        FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: AppTokens.cashGreen,
+                            minimumSize: const Size(80, 44),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 10),
+                          ),
+                          onPressed: (_submitting || _aiLoading)
+                              ? null
+                              : () {
+                                  if (parseUzsInput(_amtCtrl.text) != null &&
+                                      parseUzsInput(_amtCtrl.text)! > 0) {
+                                    _selectAndSubmitSupplier(topSimilar);
+                                  } else {
+                                    _selectSupplier(topSimilar);
+                                  }
+                                },
+                          icon: const Icon(Icons.check_circle_rounded,
+                              size: 18),
+                          label: Text(
+                            parseUzsInput(_amtCtrl.text) != null &&
+                                    parseUzsInput(_amtCtrl.text)! > 0
+                                ? "✅ «$topSimilar» qilib darhol tasdiqlash"
+                                : "✨ «$topSimilar» ni tanlash",
+                          ),
+                        ),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: similarCandidates
+                            .map(
+                              (s) => ActionChip(
+                                avatar: Icon(Icons.auto_fix_high_rounded,
+                                    size: 15, color: simFg),
+                                label: Text(
+                                  s,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 12.5,
+                                  ),
+                                ),
+                                onPressed: () => _selectSupplier(s),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ],
                   ),
                 ),
               ],

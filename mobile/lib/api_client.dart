@@ -638,6 +638,7 @@ class AiExtractResult {
   final bool ok;
   final String? supplierName;
   final String? supplierSuggestion;
+  final List<String> similarSuppliers;
   final double? amount;
   final double? originalAmount;
   final bool isClear;
@@ -649,6 +650,7 @@ class AiExtractResult {
     required this.ok,
     this.supplierName,
     this.supplierSuggestion,
+    this.similarSuppliers = const [],
     this.amount,
     this.originalAmount,
     required this.isClear,
@@ -661,6 +663,9 @@ class AiExtractResult {
         ok: j['ok'] == true,
         supplierName: j['supplier_name']?.toString(),
         supplierSuggestion: j['supplier_suggestion']?.toString(),
+        similarSuppliers: ((j['similar_suppliers'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .toList(),
         amount: (j['amount'] as num?)?.toDouble(),
         originalAmount: (j['original_amount'] as num?)?.toDouble(),
         isClear: j['is_clear'] == true,

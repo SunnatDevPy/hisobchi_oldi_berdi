@@ -1470,6 +1470,27 @@ async def cb_nakladnoy_debts_list(cb: CallbackQuery) -> None:
     await cb.answer()
 
 
+@router.callback_query(F.data.startswith("nak:confirm_sup:"))
+async def cb_nakladnoy_confirm_suggested(cb: CallbackQuery, state: FSMContext) -> None:
+    """One-click: replace OCR supplier with fuzzy Cyrillic/Uzbek suggestion AND confirm to group."""
+    if await deny_if_unauthorized(cb, ("admin", "kassir")):
+        return
+    payment_id = int(cb.data.split(":")[-1])
+    async with async_session_maker() as db:
+        payment = await get_nakladnoy(db, payment_id)
+        if not payment or payment.status == "deleted":
+            await cb.answer("Topilmadi", show_alert=True)
+            return
+        _, suggested = await resolve_supplier_name(db, payment.supplier_name)
+        if suggested:
+            await update_nakladnoy(
+                db, payment_id, supplier_name=suggested, user_id=cb.from_user.id
+            )
+    await _finalize_nakladnoy_confirmation(
+        cb, payment_id, send_to_group=True, is_debt=False, state=state
+    )
+
+
 @router.callback_query(F.data.startswith("nak:use_sup:"))
 async def cb_nakladnoy_use_suggested(cb: CallbackQuery) -> None:
     """Merge fuzzy-matched supplier name to its canonical name (Y1)."""

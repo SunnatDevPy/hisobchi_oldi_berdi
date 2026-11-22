@@ -1098,6 +1098,168 @@ def _norm_key(name: str) -> str:
     return " ".join(name.strip().lower().split())
 
 
+_CYR_TO_LAT_MAP: dict[str, str] = {
+    "а": "a",
+    "б": "b",
+    "в": "v",
+    "г": "g",
+    "ғ": "g",
+    "д": "d",
+    "е": "e",
+    "ё": "yo",
+    "ж": "j",
+    "з": "z",
+    "и": "i",
+    "й": "y",
+    "к": "k",
+    "қ": "q",
+    "л": "l",
+    "м": "m",
+    "н": "n",
+    "о": "o",
+    "п": "p",
+    "р": "r",
+    "с": "s",
+    "т": "t",
+    "у": "u",
+    "ў": "o",
+    "ф": "f",
+    "х": "x",
+    "ҳ": "h",
+    "ц": "ts",
+    "ч": "ch",
+    "ш": "sh",
+    "щ": "sh",
+    "ъ": "",
+    "ы": "i",
+    "ь": "",
+    "э": "e",
+    "ю": "yu",
+    "я": "ya",
+}
+
+# Cursive handwritten lookalikes between Cyrillic & Latin (e.g. handwritten "Ummun" -> "Иттин" / "Ittin")
+_CURSIVE_CHAR_MAP: dict[str, str] = {
+    # Cyrillic cursive lookalikes -> Latin stroke class
+    "и": "u",
+    "й": "u",
+    "у": "u",
+    "ы": "u",
+    "ю": "u",
+    "т": "m",
+    "м": "m",
+    "п": "m",
+    "н": "m",
+    "ш": "m",
+    "щ": "m",
+    "а": "a",
+    "о": "a",
+    "ў": "a",
+    "я": "a",
+    "е": "e",
+    "э": "e",
+    "ё": "e",
+    "р": "p",
+    "с": "c",
+    "х": "x",
+    "ҳ": "x",
+    "в": "b",
+    "б": "b",
+    "к": "k",
+    "қ": "k",
+    "г": "g",
+    "ғ": "g",
+    "д": "g",
+    "л": "l",
+    "з": "z",
+    "ж": "j",
+    "ч": "r",
+    "ф": "f",
+    "ц": "u",
+    "ъ": "",
+    "ь": "",
+    # Latin cursive lookalikes -> unified stroke class
+    "i": "u",
+    "u": "u",
+    "y": "u",
+    "t": "m",
+    "m": "m",
+    "n": "m",
+    "o": "a",
+    "a": "a",
+    "s": "c",
+    "c": "c",
+    "r": "p",
+    "p": "p",
+    "v": "b",
+    "b": "b",
+    "q": "k",
+    "k": "k",
+    "d": "g",
+    "g": "g",
+    "h": "x",
+    "x": "x",
+}
+
+
+def _cyr_to_lat(text: str) -> str:
+    """Transliterate Uzbek/Russian Cyrillic string into normalized Latin lowercase."""
+    low = _norm_key(text)
+    out: list[str] = []
+    for ch in low:
+        if ch in _CYR_TO_LAT_MAP:
+            out.append(_CYR_TO_LAT_MAP[ch])
+        elif ch.isalnum() or ch == " ":
+            out.append(ch)
+    return " ".join("".join(out).split())
+
+
+def _cursive_skeleton(text: str) -> str:
+    """Normalize Cyrillic/Latin text into a handwritten cursive stroke skeleton.
+
+    Example: 'Ummun', 'Уммун', 'Иттин', and 'Ittin' all map to 'ummum'.
+    """
+    low = _norm_key(text)
+    out: list[str] = []
+    for ch in low:
+        if ch in _CURSIVE_CHAR_MAP:
+            out.append(_CURSIVE_CHAR_MAP[ch])
+        elif ch.isalnum() or ch == " ":
+            out.append(ch)
+    return " ".join("".join(out).split())
+
+
+def _cross_script_similarity(a: str, b: str) -> float:
+    """Compute similarity score [0.0..1.0] across raw, Cyrillic<->Latin phonetic, and cursive handwriting."""
+    a_low = _norm_key(a)
+    b_low = _norm_key(b)
+    if not a_low or not b_low:
+        return 0.0
+    if a_low == b_low:
+        return 1.0
+
+    direct = difflib.SequenceMatcher(None, a_low, b_low).ratio()
+
+    a_lat = _cyr_to_lat(a_low)
+    b_lat = _cyr_to_lat(b_low)
+    phonetic = (
+        0.99
+        if (a_lat and a_lat == b_lat)
+        else difflib.SequenceMatcher(None, a_lat, b_lat).ratio()
+    )
+
+    a_cur = _cursive_skeleton(a_low)
+    b_cur = _cursive_skeleton(b_low)
+    cursive = 0.0
+    if len(a_cur) >= 3 and len(b_cur) >= 3:
+        raw_cur = difflib.SequenceMatcher(None, a_cur, b_cur).ratio()
+        # Penalize if length differs sharply so tiny words don't match long ones
+        len_ratio = min(len(a_cur), len(b_cur)) / max(len(a_cur), len(b_cur))
+        cursive = raw_cur * (0.75 + 0.21 * len_ratio)
+
+    return max(direct, phonetic, cursive)
+
+
 async def _supplier_alias_lookup(db: AsyncSession) -> Dict[str, str]:
     """Map normalized lowercase display names and aliases -> canonical SupplierConfig display_name."""
     cfgs = await list_suppliers(db, active_only=True)
@@ -1111,6 +1273,45 @@ async def _supplier_alias_lookup(db: AsyncSession) -> Dict[str, str]:
             if ak:
                 mapping[ak] = disp
     return mapping
+
+
+async def find_similar_suppliers(
+    db: AsyncSession,
+    raw_name: str,
+    limit: int = 4,
+    cutoff: float = 0.64,
+) -> List[str]:
+    """Find top similar suppliers in DB using Cyrillic<->Latin phonetic + cursive handwriting matching."""
+    cleaned = " ".join((raw_name or "").strip().split())
+    if not cleaned:
+        return []
+    low = cleaned.lower()
+
+    alias_map = await _supplier_alias_lookup(db)
+    known = await get_all_known_suppliers(db)
+
+    # Candidate key -> canonical display name
+    all_lookup: Dict[str, str] = {}
+    for k in reversed(known):
+        all_lookup[_norm_key(k)] = k
+    all_lookup.update(alias_map)
+
+    scored_by_canon: Dict[str, float] = {}
+    for cand_key, canon_name in all_lookup.items():
+        if canon_name.lower() == low:
+            continue
+        score = _cross_script_similarity(low, cand_key)
+        # Also check first word similarity for multi-word supplier names
+        first_word = cand_key.split()[0] if cand_key.split() else ""
+        if len(first_word) >= 4 and len(low.split()) == 1:
+            score = max(score, _cross_script_similarity(low, first_word) * 0.93)
+        if score >= cutoff:
+            prev = scored_by_canon.get(canon_name, 0.0)
+            if score > prev:
+                scored_by_canon[canon_name] = score
+
+    ranked = sorted(scored_by_canon.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [name for name, _ in ranked[:limit]]
 
 
 async def resolve_supplier_name(
@@ -1143,15 +1344,9 @@ async def resolve_supplier_name(
     if low in hist_canonical:
         return hist_canonical[low], None
 
-    all_lookup: Dict[str, str] = {}
-    all_lookup.update(hist_canonical)
-    all_lookup.update(alias_map)
-
-    matches = difflib.get_close_matches(low, list(all_lookup.keys()), n=1, cutoff=0.78)
-    if matches:
-        suggested = all_lookup[matches[0]]
-        if suggested.lower() != low:
-            return cleaned, suggested
+    similar = await find_similar_suppliers(db, cleaned, limit=1, cutoff=0.68)
+    if similar:
+        return cleaned, similar[0]
     return cleaned, None
 
 

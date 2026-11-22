@@ -12,6 +12,20 @@ void main() {
     expect(UzsAmountInputFormatter.formatDigits('1554000'), '1 554 000');
   });
 
+  test('findLocalSimilarSuppliers matches Cyrillic and cursive Ittin to Ummun',
+      () {
+    final suppliers = ['Coca Cola', 'Ummun', 'ISMAT KEPAK NON', 'Non Oka'];
+    final fromCyr = findLocalSimilarSuppliers('Иттин', suppliers);
+    expect(fromCyr, contains('Ummun'));
+    expect(fromCyr.first, 'Ummun');
+
+    final fromLat = findLocalSimilarSuppliers('Ittin', suppliers);
+    expect(fromLat.first, 'Ummun');
+
+    final fromPhonetic = findLocalSimilarSuppliers('Уммун', suppliers);
+    expect(fromPhonetic.first, 'Ummun');
+  });
+
   testWidgets('LoginScreen renders instructions and 8-digit code input',
       (WidgetTester tester) async {
     final api = HisobchiApiClient(baseUrl: 'https://hisobchi.domen.uz');

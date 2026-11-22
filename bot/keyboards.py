@@ -131,6 +131,14 @@ def nakladnoy_confirm_kb(
         rows.append(
             [
                 InlineKeyboardButton(
+                    text=f"✅ «{suggested_supplier[:22]}» qilib tasdiqlash",
+                    callback_data=f"nak:confirm_sup:{payment_id}",
+                )
+            ]
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
                     text=f"✨ «{suggested_supplier[:24]}» ga birlashtirish",
                     callback_data=f"nak:use_sup:{payment_id}",
                 )

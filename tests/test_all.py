@@ -1635,6 +1635,40 @@ def test_mobile_apk_rest_api_and_group_posting(tmp_path: Path, monkeypatch):
                 assert r_round.status_code == 200
                 assert r_round.json()["amount"] == 1_200_000.0
 
+                # 8d. Cross-script Cyrillic/Latin & cursive lookalike ("Иттин" / "Ittin" -> "Ummun")
+                r_ummun = await client.post(
+                    "/nakladnoy",
+                    headers=headers,
+                    data={
+                        "supplier_name": "Ummun",
+                        "amount": "350000",
+                        "payment_mode": "card",
+                        "send_to_group": "false",
+                    },
+                )
+                assert r_ummun.status_code == 200
+
+                async def fake_extract_cursive(raw, mime_type="image/jpeg", caption=None):
+                    return {
+                        "supplier_name": "Иттин",
+                        "amount": 350_000.0,
+                        "is_clear": True,
+                        "notes": "",
+                        "error_code": None,
+                    }
+
+                monkeypatch.setattr(api_app_mod, "extract_nakladnoy_from_image", fake_extract_cursive)
+                r_ai_cur = await client.post(
+                    "/ai/extract",
+                    headers=headers,
+                    files={"photo": ("ummun.jpg", b"\xff\xd8\xff\xe0fake", "image/jpeg")},
+                )
+                assert r_ai_cur.status_code == 200
+                ai_cur = r_ai_cur.json()
+                assert ai_cur["supplier_name"] == "Иттин"
+                assert ai_cur["supplier_suggestion"] == "Ummun"
+                assert "Ummun" in ai_cur["similar_suppliers"]
+
                 # 9. Close day
                 r_close = await client.post(
                     "/day/close",

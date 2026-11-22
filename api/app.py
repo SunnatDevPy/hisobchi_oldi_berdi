@@ -52,6 +52,7 @@ from database.crud import (
     create_pending_nakladnoy,
     delete_cash_transaction,
     delete_nakladnoy,
+    find_similar_suppliers,
     format_local_dt,
     get_all_known_suppliers,
     get_app_setting,
@@ -339,6 +340,15 @@ def create_api_app() -> FastAPI:
             amounts = await get_recent_amounts_for_supplier(db, canonical, limit=6)
         return {"supplier": canonical, "amounts": [float(a) for a in amounts]}
 
+    @app.get("/suppliers/similar")
+    async def get_similar_suppliers_endpoint(
+        q: str = Query(..., min_length=1),
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        async with async_session_maker() as db:
+            similar = await find_similar_suppliers(db, q.strip(), limit=4, cutoff=0.60)
+        return {"query": q.strip(), "similar": similar}
+
     @app.post("/ai/extract")
     async def ai_extract_nakladnoy(
         photo: UploadFile = File(...),
@@ -358,14 +368,24 @@ def create_api_app() -> FastAPI:
 
         canonical: Optional[str] = None
         suggestion: Optional[str] = None
+        similar_list: list[str] = []
         amounts: list[float] = []
         rounded: Optional[float] = None
         async with async_session_maker() as db:
             if supplier_raw:
                 canonical, suggestion = await resolve_supplier_name(db, str(supplier_raw))
-                if canonical:
+                similar_list = await find_similar_suppliers(
+                    db, str(supplier_raw), limit=4, cutoff=0.60
+                )
+                if suggestion and suggestion not in similar_list:
+                    similar_list.insert(0, suggestion)
+                target_for_amts = suggestion or canonical
+                if target_for_amts:
                     amounts = [
-                        float(a) for a in await get_recent_amounts_for_supplier(db, canonical, limit=6)
+                        float(a)
+                        for a in await get_recent_amounts_for_supplier(
+                            db, target_for_amts, limit=6
+                        )
                     ]
             if amount_raw:
                 r_mode = await get_app_setting(db, "round_mode", "floor_1000")
@@ -380,6 +400,7 @@ def create_api_app() -> FastAPI:
             "ok": err is None and bool(canonical or rounded),
             "supplier_name": canonical or (str(supplier_raw) if supplier_raw else None),
             "supplier_suggestion": suggestion,
+            "similar_suppliers": similar_list,
             "amount": rounded,
             "original_amount": float(amount_raw) if amount_raw else None,
             "is_clear": bool(res.get("is_clear")),
