@@ -1311,9 +1311,27 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
         api: widget.api,
         groupInfo: grpInfo,
         initialPhoto: initialPhoto,
+        existingTodayNakladnoys: _summary?.nakladnoys ?? const [],
       ),
     );
     if (saved == true) {
+      await _refreshAll();
+    }
+  }
+
+  Future<void> _openSupplierProfile(String supplierName) async {
+    final changed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (ctx) => SupplierProfileSheet(
+        api: widget.api,
+        supplierName: supplierName,
+        onOpenNakladnoyDetail: _openNakladnoyDetail,
+        onOpenSupplierProfile: _openSupplierProfile,
+      ),
+    );
+    if (changed == true) {
       await _refreshAll();
     }
   }
@@ -1330,6 +1348,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
         api: widget.api,
         item: item,
         readOnly: readOnly || item.isClosedSession,
+        onOpenSupplierProfile: _openSupplierProfile,
       ),
     );
     if (changed == true) {
@@ -1670,6 +1689,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
       builder: (ctx) => LiveSverkaAndStatsSheet(
         api: widget.api,
         showSnack: _showSnack,
+        onOpenSupplierProfile: _openSupplierProfile,
       ),
     );
   }
@@ -1779,6 +1799,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
               _switchToTab(1);
             },
             onOpenNakladnoyTab: () => _switchToTab(1),
+            onTapSupplier: _openSupplierProfile,
             onTapNakladnoy: (item) => _openNakladnoyDetail(
               item,
               readOnly: isViewingPast ||
@@ -2604,6 +2625,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
   bool _closing = false;
   String _selectedReportType = 'today'; // today | week | month | custom | sverka
   bool _downloadingExcel = false;
+  bool _sendingExcelTelegram = false;
 
   @override
   void dispose() {
@@ -2632,54 +2654,110 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
     }
   }
 
-  Future<void> _runSelectedExcelExport() async {
+  Future<({String endpoint, String filename, Map<String, String>? query, String reportType, int? sessionId, String? month})?>
+      _resolveSelectedExcelConfig() async {
     final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
     final weekAgo = DateFormat('yyyy-MM-dd')
         .format(DateTime.now().subtract(const Duration(days: 6)));
     final monthStart = DateFormat('yyyy-MM-01').format(DateTime.now());
 
-    String endpoint = '/export/session';
-    String filename = 'Hisobot_${widget.summary.reportDate}.xlsx';
-    Map<String, String>? query;
-
     if (_selectedReportType == 'week') {
-      endpoint = '/export/range';
-      query = {'date_from': weekAgo, 'date_to': today};
-      filename = 'Hisobot_7kun_${weekAgo}_$today.xlsx';
-    } else if (_selectedReportType == 'month') {
-      endpoint = '/export/range';
-      query = {'date_from': monthStart, 'date_to': today};
-      filename = 'Hisobot_Oy_${monthStart}_$today.xlsx';
-    } else if (_selectedReportType == 'sverka') {
-      endpoint = '/export/sverka';
-      filename = 'Sverka_$today.xlsx';
-    } else if (_selectedReportType == 'custom') {
+      return (
+        endpoint: '/export/range',
+        filename: 'Hisobot_7kun_${weekAgo}_$today.xlsx',
+        query: {'date_from': weekAgo, 'date_to': today},
+        reportType: 'range',
+        sessionId: null,
+        month: null,
+      );
+    }
+    if (_selectedReportType == 'month') {
+      return (
+        endpoint: '/export/range',
+        filename: 'Hisobot_Oy_${monthStart}_$today.xlsx',
+        query: {'date_from': monthStart, 'date_to': today},
+        reportType: 'range',
+        sessionId: null,
+        month: null,
+      );
+    }
+    if (_selectedReportType == 'sverka') {
+      return (
+        endpoint: '/export/sverka',
+        filename: 'Sverka_$today.xlsx',
+        query: null,
+        reportType: 'sverka',
+        sessionId: null,
+        month: DateFormat('yyyy-MM').format(DateTime.now()),
+      );
+    }
+    if (_selectedReportType == 'custom') {
       final picked = await showDateRangePicker(
         context: context,
         firstDate: DateTime(2024, 1, 1),
         lastDate: DateTime.now().add(const Duration(days: 1)),
       );
-      if (picked == null) return;
+      if (picked == null) return null;
       final d1 = DateFormat('yyyy-MM-dd').format(picked.start);
       final d2 = DateFormat('yyyy-MM-dd').format(picked.end);
-      endpoint = '/export/range';
-      query = {'date_from': d1, 'date_to': d2};
-      filename = 'Hisobot_${d1}_$d2.xlsx';
+      return (
+        endpoint: '/export/range',
+        filename: 'Hisobot_${d1}_$d2.xlsx',
+        query: {'date_from': d1, 'date_to': d2},
+        reportType: 'range',
+        sessionId: null,
+        month: null,
+      );
     }
+    return (
+      endpoint: '/export/session',
+      filename: 'Hisobot_${widget.summary.reportDate}.xlsx',
+      query: null,
+      reportType: 'session',
+      sessionId: widget.summary.sessionId,
+      month: null,
+    );
+  }
+
+  Future<void> _runSelectedExcelExport() async {
+    final cfg = await _resolveSelectedExcelConfig();
+    if (cfg == null) return;
 
     setState(() => _downloadingExcel = true);
     widget.showSnack('📥 Excel tayyorlanmoqda...');
     try {
       await saveAndShareExcel(
-        fetchBytes: () => widget.api.downloadExcelBytes(endpoint, query: query),
-        filename: filename,
-        authenticatedDownloadUrl:
-            widget.api.buildAuthenticatedDownloadUrl(endpoint, query: query),
+        fetchBytes: () =>
+            widget.api.downloadExcelBytes(cfg.endpoint, query: cfg.query),
+        filename: cfg.filename,
+        authenticatedDownloadUrl: widget.api
+            .buildAuthenticatedDownloadUrl(cfg.endpoint, query: cfg.query),
       );
     } catch (e) {
       widget.showSnack('Excel yuklashda xatolik: $e', isError: true);
     } finally {
       if (mounted) setState(() => _downloadingExcel = false);
+    }
+  }
+
+  Future<void> _sendSelectedExcelToTelegram() async {
+    final cfg = await _resolveSelectedExcelConfig();
+    if (cfg == null) return;
+
+    setState(() => _sendingExcelTelegram = true);
+    try {
+      final msg = await widget.api.sendExcelToTelegram(
+        reportType: cfg.reportType,
+        sessionId: cfg.sessionId,
+        dateFrom: cfg.query?['date_from'],
+        dateTo: cfg.query?['date_to'],
+        month: cfg.month,
+      );
+      widget.showSnack(msg);
+    } catch (e) {
+      widget.showSnack('Telegramga yuborishda xatolik: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => _sendingExcelTelegram = false);
     }
   }
 
@@ -2882,8 +2960,9 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                 FilledButton.icon(
                   style: FilledButton.styleFrom(
                       backgroundColor: AppTokens.cashGreen),
-                  onPressed:
-                      _downloadingExcel ? null : _runSelectedExcelExport,
+                  onPressed: _downloadingExcel || _sendingExcelTelegram
+                      ? null
+                      : _runSelectedExcelExport,
                   icon: _downloadingExcel
                       ? const SizedBox(
                           width: 18,
@@ -2895,6 +2974,22 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                   label: Text(_downloadingExcel
                       ? 'Tayyorlanmoqda...'
                       : 'Excel yuklab olish va ulashish'),
+                ),
+                const SizedBox(height: 10),
+                FilledButton.tonalIcon(
+                  onPressed: _downloadingExcel || _sendingExcelTelegram
+                      ? null
+                      : _sendSelectedExcelToTelegram,
+                  icon: _sendingExcelTelegram
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.telegram),
+                  label: Text(_sendingExcelTelegram
+                      ? 'Yuborilmoqda...'
+                      : '📤 Excelni Telegram botga yuborish'),
                 ),
                 const SizedBox(height: 10),
                 OutlinedButton.icon(
@@ -3131,12 +3226,14 @@ class AddNakladnoySheet extends StatefulWidget {
   final HisobchiApiClient api;
   final GroupInfo groupInfo;
   final PickedBytesFile? initialPhoto;
+  final List<NakladnoyItem> existingTodayNakladnoys;
 
   const AddNakladnoySheet({
     super.key,
     required this.api,
     required this.groupInfo,
     this.initialPhoto,
+    this.existingTodayNakladnoys = const [],
   });
 
   @override
@@ -3300,6 +3397,24 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
     }
   }
 
+  List<NakladnoyItem> _findTodayDuplicates() {
+    final sup = _supCtrl.text.trim().toLowerCase();
+    final amt = parseUzsInput(_amtCtrl.text);
+    if (sup.isEmpty || amt == null || amt <= 0) return const [];
+    final roundedThousand = (amt ~/ 1000) * 1000;
+    return widget.existingTodayNakladnoys.where((item) {
+      if (item.supplierName.trim().toLowerCase() != sup) return false;
+      if ((item.amount - amt).abs() < 1) return true;
+      if (roundedThousand > 0 && (item.amount - roundedThousand).abs() < 1) {
+        return true;
+      }
+      if (item.originalAmount != null && (item.originalAmount! - amt).abs() < 1) {
+        return true;
+      }
+      return false;
+    }).toList();
+  }
+
   Future<void> _submit() async {
     final sup = _supCtrl.text.trim();
     final amt = parseUzsInput(_amtCtrl.text);
@@ -3310,6 +3425,49 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
     if (amt == null || amt <= 0) {
       setState(() => _error = 'Summani kiriting');
       return;
+    }
+    final dups = _findTodayDuplicates();
+    if (dups.isNotEmpty) {
+      final dup = dups.first;
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded,
+                  color: AppTokens.debtAmber, size: 26),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '⚠️ Dublikat nakladnoy!',
+                  style: TextStyle(fontSize: 17.5, fontWeight: FontWeight.w900),
+                ),
+              ),
+            ],
+          ),
+          content: Text(
+            "Bugun soat ${dup.timeHm} da «${dup.supplierName}» uchun ${formatUzs(dup.amount, withCurrency: true)} allaqachon kiritilgan (${dup.displayNum}).\n\nBaribir yangi nakladnoy sifatida saqlansinmi?",
+            style: const TextStyle(fontSize: 14, height: 1.45),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Bekor qilish'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTokens.debtAmber,
+                minimumSize: const Size(0, 42),
+              ),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Ha, saqlash'),
+            ),
+          ],
+        ),
+      );
+      if (proceed != true || !mounted) return;
     }
     setState(() {
       _submitting = true;
@@ -4012,6 +4170,42 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
                           prefixIcon: Icon(Icons.payments_outlined),
                         ),
                       ),
+                      Builder(builder: (ctx) {
+                        final dups = _findTodayDuplicates();
+                        if (dups.isEmpty) return const SizedBox.shrink();
+                        final dup = dups.first;
+                        final (ambFg, ambBg, ambBorder) =
+                            AppTokens.semanticSurface(ctx, AppTokens.debtAmber);
+                        return Container(
+                          margin: const EdgeInsets.only(top: 8),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 11, vertical: 9),
+                          decoration: BoxDecoration(
+                            color: ambBg,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: ambBorder),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(Icons.warning_amber_rounded,
+                                  color: ambFg, size: 19),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  "⚠️ Dublikat ehtimoli: Bugun soat ${dup.timeHm} da «${dup.supplierName}» uchun ${formatUzs(dup.amount, withCurrency: true)} (${dup.displayNum}) allaqachon kiritilgan!",
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w800,
+                                    color: ambFg,
+                                    height: 1.35,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
                       if (_recentAmounts.isNotEmpty) ...[
                         const SizedBox(height: 8),
                         SingleChildScrollView(
@@ -4088,7 +4282,7 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
                 ),
               ),
 
-              // Sticky Bottom Action Dock: Camera AI + Gallery + Save
+              // Sticky Bottom Action Dock: Save + Gallery + Camera AI (right thumb)
               Container(
                 padding: EdgeInsets.fromLTRB(
                     16, 10, 16, hasBottomInsets ? 10 : 12),
@@ -4119,43 +4313,6 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
                     ],
                     Row(
                       children: [
-                        Tooltip(
-                          message: "Kameradan AI orqali o'qish",
-                          child: FilledButton.tonalIcon(
-                            style: FilledButton.styleFrom(
-                              backgroundColor: AppTokens.brandViolet
-                                  .withValues(alpha: isDark ? 0.28 : 0.14),
-                              foregroundColor: isDark
-                                  ? const Color(0xFFD8B4FE)
-                                  : AppTokens.brandViolet,
-                              minimumSize: const Size(0, 48),
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 11, vertical: 12),
-                            ),
-                            onPressed: (_submitting || _aiLoading)
-                                ? null
-                                : () => _pickPhoto(ImageSource.camera),
-                            icon: const Icon(Icons.photo_camera_rounded,
-                                size: 19),
-                            label: const Text('AI'),
-                          ),
-                        ),
-                        const SizedBox(width: 7),
-                        Tooltip(
-                          message: "Galereyadan AI orqali o'qish",
-                          child: OutlinedButton(
-                            style: OutlinedButton.styleFrom(
-                              minimumSize: const Size(46, 48),
-                              padding: EdgeInsets.zero,
-                            ),
-                            onPressed: (_submitting || _aiLoading)
-                                ? null
-                                : () => _pickPhoto(ImageSource.gallery),
-                            child: const Icon(Icons.photo_library_rounded,
-                                size: 19),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
                         Expanded(
                           child: FilledButton.icon(
                             style: FilledButton.styleFrom(
@@ -4185,6 +4342,43 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
                             ),
                           ),
                         ),
+                        const SizedBox(width: 8),
+                        Tooltip(
+                          message: "Galereyadan AI orqali o'qish",
+                          child: OutlinedButton(
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size(46, 48),
+                              padding: EdgeInsets.zero,
+                            ),
+                            onPressed: (_submitting || _aiLoading)
+                                ? null
+                                : () => _pickPhoto(ImageSource.gallery),
+                            child: const Icon(Icons.photo_library_rounded,
+                                size: 19),
+                          ),
+                        ),
+                        const SizedBox(width: 7),
+                        Tooltip(
+                          message: "Kameradan AI orqali o'qish",
+                          child: FilledButton.tonalIcon(
+                            style: FilledButton.styleFrom(
+                              backgroundColor: AppTokens.brandViolet
+                                  .withValues(alpha: isDark ? 0.28 : 0.14),
+                              foregroundColor: isDark
+                                  ? const Color(0xFFD8B4FE)
+                                  : AppTokens.brandViolet,
+                              minimumSize: const Size(0, 48),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 11, vertical: 12),
+                            ),
+                            onPressed: (_submitting || _aiLoading)
+                                ? null
+                                : () => _pickPhoto(ImageSource.camera),
+                            icon: const Icon(Icons.photo_camera_rounded,
+                                size: 19),
+                            label: const Text('AI'),
+                          ),
+                        ),
                       ],
                     ),
                   ],
@@ -4209,12 +4403,14 @@ class NakladnoyDetailSheet extends StatefulWidget {
   final HisobchiApiClient api;
   final NakladnoyItem item;
   final bool readOnly;
+  final Future<void> Function(String supplier)? onOpenSupplierProfile;
 
   const NakladnoyDetailSheet({
     super.key,
     required this.api,
     required this.item,
     this.readOnly = false,
+    this.onOpenSupplierProfile,
   });
 
   @override
@@ -4558,6 +4754,24 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                           fontSize: 18, fontWeight: FontWeight.w900),
                     ),
                   ),
+                  if (widget.onOpenSupplierProfile != null)
+                    TextButton.icon(
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(0, 34),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                      ),
+                      onPressed: () {
+                        Navigator.pop(context, _changed);
+                        widget.onOpenSupplierProfile!(_cur.supplierName);
+                      },
+                      icon: const Icon(Icons.storefront_rounded, size: 16),
+                      label: const Text(
+                        'Profil',
+                        style: TextStyle(
+                            fontSize: 12.5, fontWeight: FontWeight.w800),
+                      ),
+                    ),
                   IconButton(
                     onPressed: () => Navigator.pop(context, _changed),
                     icon: const Icon(Icons.close_rounded),
@@ -5025,10 +5239,64 @@ class _HistorySessionsSheetState extends State<HistorySessionsSheet> {
                   style: const TextStyle(fontSize: 13.5, height: 1.45),
                 ),
                 const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: _busy ? null : () => _exportSessionExcel(d),
-                  icon: const Icon(Icons.table_view_rounded, size: 17),
-                  label: const Text('Excel yuklash'),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(0, 44),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 10),
+                        ),
+                        onPressed: _busy ? null : () => _exportSessionExcel(d),
+                        icon: const Icon(Icons.table_view_rounded, size: 17),
+                        label: const FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text('Excel yuklash', maxLines: 1),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: FilledButton.tonalIcon(
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(0, 44),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 10),
+                        ),
+                        onPressed: _busy
+                            ? null
+                            : () async {
+                                setState(() => _busy = true);
+                                try {
+                                  final msg = await widget.api
+                                      .sendExcelToTelegram(
+                                    reportType: 'session',
+                                    sessionId: d.sessionId,
+                                  );
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text(msg)),
+                                    );
+                                  }
+                                } catch (e) {
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text(e.toString())),
+                                    );
+                                  }
+                                } finally {
+                                  if (mounted) setState(() => _busy = false);
+                                }
+                              },
+                        icon: const Icon(Icons.telegram, size: 18),
+                        label: const FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text('📤 Telegramga', maxLines: 1),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -5215,11 +5483,13 @@ class _GlobalHistorySearchSheetState extends State<GlobalHistorySearchSheet> {
 class LiveSverkaAndStatsSheet extends StatefulWidget {
   final HisobchiApiClient api;
   final void Function(String, {bool isError}) showSnack;
+  final Future<void> Function(String supplier)? onOpenSupplierProfile;
 
   const LiveSverkaAndStatsSheet({
     super.key,
     required this.api,
     required this.showSnack,
+    this.onOpenSupplierProfile,
   });
 
   @override
@@ -5234,6 +5504,7 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
   Map<String, dynamic>? _periodData;
   bool _loading = true;
   bool _downloadingExcel = false;
+  bool _sendingTelegram = false;
   String? _error;
 
   String get _monthStr => DateFormat('yyyy-MM').format(_selectedMonth);
@@ -5266,7 +5537,7 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
   }
 
   Future<void> _downloadSverkaExcel() async {
-    if (_downloadingExcel) return;
+    if (_downloadingExcel || _sendingTelegram) return;
     setState(() => _downloadingExcel = true);
     try {
       final filename = 'Sverka_$_monthStr.xlsx';
@@ -5282,6 +5553,22 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
       widget.showSnack('Excel yuklashda xatolik: $e', isError: true);
     } finally {
       if (mounted) setState(() => _downloadingExcel = false);
+    }
+  }
+
+  Future<void> _sendSverkaTelegram() async {
+    if (_downloadingExcel || _sendingTelegram) return;
+    setState(() => _sendingTelegram = true);
+    try {
+      final msg = await widget.api.sendExcelToTelegram(
+        reportType: 'sverka',
+        month: _monthStr,
+      );
+      widget.showSnack(msg);
+    } catch (e) {
+      widget.showSnack('Telegramga yuborishda xatolik: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => _sendingTelegram = false);
     }
   }
 
@@ -5462,12 +5749,32 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
                 ),
                 const SizedBox(height: 10),
                 FilledButton.tonalIcon(
-                  onPressed: _downloadingExcel ? null : _downloadSverkaExcel,
+                  onPressed: (_downloadingExcel || _sendingTelegram)
+                      ? null
+                      : _downloadSverkaExcel,
                   icon: const Icon(Icons.table_view_rounded, size: 17),
                   label: Text(
                     _downloadingExcel
                         ? 'Tayyorlanmoqda...'
                         : '📥 $_monthStr Sverka Excel (.xlsx) yuklash',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: (_downloadingExcel || _sendingTelegram)
+                      ? null
+                      : _sendSverkaTelegram,
+                  icon: _sendingTelegram
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.telegram, size: 18),
+                  label: Text(
+                    _sendingTelegram
+                        ? 'Yuborilmoqda...'
+                        : '📤 Telegram botga yuborish',
                   ),
                 ),
               ],
@@ -5476,52 +5783,64 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
         ),
         const SizedBox(height: 8),
         ...sups.map((s) {
+          final supName = s['supplier'].toString();
           final cash = ((s['cash_total'] as num?) ?? 0).toDouble();
           final card = ((s['card_total'] as num?) ?? 0).toDouble();
           final xfer = ((s['transfer_total'] as num?) ?? 0).toDouble();
           final tot = ((s['total'] as num?) ?? 0).toDouble();
           return Card(
-            child: Padding(
-              padding: const EdgeInsets.all(13),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          '${s['supplier']} (${s['count']} ta)',
+            child: InkWell(
+              borderRadius: BorderRadius.circular(AppTokens.radius),
+              onTap: widget.onOpenSupplierProfile != null
+                  ? () => widget.onOpenSupplierProfile!(supName)
+                  : null,
+              child: Padding(
+                padding: const EdgeInsets.all(13),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '$supName (${s['count']} ta)',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w900, fontSize: 14.5),
+                          ),
+                        ),
+                        Text(
+                          formatUzs(tot, withCurrency: true),
                           style: const TextStyle(
-                              fontWeight: FontWeight.w900, fontSize: 14.5),
+                            fontWeight: FontWeight.w900,
+                            fontSize: 15,
+                            color: AppTokens.brand,
+                          ),
                         ),
-                      ),
-                      Text(
-                        formatUzs(tot, withCurrency: true),
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w900,
-                          fontSize: 15,
-                          color: AppTokens.brand,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 4,
-                    children: [
-                      if (cash > 0)
-                        Text('💵 Naqd: ${formatUzs(cash)}',
-                            style: const TextStyle(fontSize: 12.5)),
-                      if (card > 0)
-                        Text('💳 Karta: ${formatUzs(card)}',
-                            style: const TextStyle(fontSize: 12.5)),
-                      if (xfer > 0)
-                        Text("🏦 O'tkazma: ${formatUzs(xfer)}",
-                            style: const TextStyle(fontSize: 12.5)),
-                    ],
-                  ),
-                ],
+                        if (widget.onOpenSupplierProfile != null) ...[
+                          const SizedBox(width: 4),
+                          Icon(Icons.chevron_right_rounded,
+                              size: 18, color: textSecondaryOf(context)),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 4,
+                      children: [
+                        if (cash > 0)
+                          Text('💵 Naqd: ${formatUzs(cash)}',
+                              style: const TextStyle(fontSize: 12.5)),
+                        if (card > 0)
+                          Text('💳 Karta: ${formatUzs(card)}',
+                              style: const TextStyle(fontSize: 12.5)),
+                        if (xfer > 0)
+                          Text("🏦 O'tkazma: ${formatUzs(xfer)}",
+                              style: const TextStyle(fontSize: 12.5)),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           );
@@ -5582,19 +5901,35 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
         ),
         const SizedBox(height: 6),
         ...topSups.map(
-          (s) => Card(
-            child: ListTile(
-              dense: true,
-              title: Text(
-                '${s['supplier']} (${s['count']} ta)',
-                style: const TextStyle(fontWeight: FontWeight.w800),
+          (s) {
+            final supName = s['supplier'].toString();
+            return Card(
+              child: ListTile(
+                dense: true,
+                onTap: widget.onOpenSupplierProfile != null
+                    ? () => widget.onOpenSupplierProfile!(supName)
+                    : null,
+                title: Text(
+                  '$supName (${s['count']} ta)',
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '${formatUzs(s['total'] as num?, withCurrency: true)} (${((s['percent'] as num?) ?? 0).toStringAsFixed(0)}%)',
+                      style: const TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                    if (widget.onOpenSupplierProfile != null) ...[
+                      const SizedBox(width: 4),
+                      Icon(Icons.chevron_right_rounded,
+                          size: 17, color: textSecondaryOf(context)),
+                    ],
+                  ],
+                ),
               ),
-              trailing: Text(
-                '${formatUzs(s['total'] as num?, withCurrency: true)} (${((s['percent'] as num?) ?? 0).toStringAsFixed(0)}%)',
-                style: const TextStyle(fontWeight: FontWeight.w900),
-              ),
-            ),
-          ),
+            );
+          },
         ),
       ],
     );
@@ -6526,5 +6861,434 @@ class _KeepAliveTabPageState extends State<_KeepAliveTabPage>
   Widget build(BuildContext context) {
     super.build(context);
     return widget.child;
+  }
+}
+
+// ============================================================================
+// SUPPLIER PROFILE SHEET (/suppliers/profile)
+// ============================================================================
+
+class SupplierProfileSheet extends StatefulWidget {
+  final HisobchiApiClient api;
+  final String supplierName;
+  final Future<void> Function(NakladnoyItem) onOpenNakladnoyDetail;
+  final Future<void> Function(String supplier)? onOpenSupplierProfile;
+
+  const SupplierProfileSheet({
+    super.key,
+    required this.api,
+    required this.supplierName,
+    required this.onOpenNakladnoyDetail,
+    this.onOpenSupplierProfile,
+  });
+
+  @override
+  State<SupplierProfileSheet> createState() => _SupplierProfileSheetState();
+}
+
+class _SupplierProfileSheetState extends State<SupplierProfileSheet> {
+  Map<String, dynamic>? _data;
+  bool _loading = true;
+  bool _changed = false;
+  String? _error;
+  String _filter = 'all'; // all | cash | card | transfer | debt
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final res = await widget.api.getSupplierProfile(widget.supplierName);
+      if (mounted) {
+        setState(() {
+          _data = res;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  Widget _statBox(
+    BuildContext context, {
+    required String label,
+    required double amount,
+    required int count,
+    required Color color,
+    required IconData icon,
+  }) {
+    final (fg, bg, border) = AppTokens.semanticSurface(context, color);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: border.withValues(alpha: 0.65)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 14, color: fg),
+              const SizedBox(width: 5),
+              Expanded(
+                child: Text(
+                  '$label ($count ta)',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    color: fg,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              formatUzs(amount, withCurrency: true),
+              maxLines: 1,
+              style: TextStyle(
+                fontSize: 14.5,
+                fontWeight: FontWeight.w900,
+                color: textPrimaryOf(context),
+                fontFeatures: AppTokens.tabularNums,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _filterPill(String key, String label) {
+    final sel = _filter == key;
+    return ChoiceChip(
+      label: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: sel ? FontWeight.w900 : FontWeight.w700,
+        ),
+      ),
+      selected: sel,
+      onSelected: (_) => setState(() => _filter = key),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final d = _data;
+    final supTitle = (d?['supplier_name'] ?? widget.supplierName).toString();
+    final totalCount = ((d?['total_count'] as num?) ?? 0).toInt();
+    final totalAmount = ((d?['total_amount'] as num?) ?? 0).toDouble();
+    final cashAmt = ((d?['cash_amount'] as num?) ?? 0).toDouble();
+    final cashCnt = ((d?['cash_count'] as num?) ?? 0).toInt();
+    final cardAmt = ((d?['card_amount'] as num?) ?? 0).toDouble();
+    final cardCnt = ((d?['card_count'] as num?) ?? 0).toInt();
+    final xferAmt = ((d?['transfer_amount'] as num?) ?? 0).toDouble();
+    final xferCnt = ((d?['transfer_count'] as num?) ?? 0).toInt();
+    final debtAmt = ((d?['unpaid_debt_amount'] as num?) ?? 0).toDouble();
+    final debtCnt = ((d?['unpaid_debt_count'] as num?) ?? 0).toInt();
+    final nasiyaBal = ((d?['nasiya_balance'] as num?) ?? 0).toDouble();
+    final firstDate = d?['first_date']?.toString();
+    final lastDate = d?['last_date']?.toString();
+
+    final items = ((d?['items'] as List?) ?? const [])
+        .map((e) => NakladnoyItem.fromJson(Map<String, dynamic>.from(e as Map)))
+        .where((n) {
+      if (_filter == 'cash') return !n.isDebt && n.paymentMethod == 'cash';
+      if (_filter == 'card') return !n.isDebt && n.paymentMethod == 'card';
+      if (_filter == 'transfer') {
+        return !n.isDebt && n.paymentMethod == 'transfer';
+      }
+      if (_filter == 'debt') return n.isDebt;
+      return true;
+    }).toList();
+
+    final (amberFg, amberBg, amberBorder) =
+        AppTokens.semanticSurface(context, AppTokens.debtAmber);
+
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 18,
+          right: 18,
+          bottom: sheetBottomPadding(context),
+        ),
+        child: SizedBox(
+          height: MediaQuery.sizeOf(context).height * 0.85,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      gradient: AppTokens.heroGradient,
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                    child: const Icon(Icons.storefront_rounded,
+                        color: Colors.white, size: 19),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          supTitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        if (firstDate != null && lastDate != null)
+                          Text(
+                            '$firstDate — $lastDate ($totalCount ta chek)',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: textSecondaryOf(context),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context, _changed),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              if (_loading && _data == null)
+                const Expanded(
+                    child: Center(child: CircularProgressIndicator()))
+              else if (_error != null && _data == null)
+                Expanded(
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(_error!, textAlign: TextAlign.center),
+                        const SizedBox(height: 12),
+                        FilledButton.icon(
+                          onPressed: _load,
+                          icon: const Icon(Icons.refresh_rounded),
+                          label: const Text('Qayta urinish'),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else
+                Expanded(
+                  child: ListView(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          gradient: AppTokens.heroGradient,
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'JAMI AYLANMA',
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.8,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                formatUzs(totalAmount, withCurrency: true),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 25,
+                                  fontWeight: FontWeight.w900,
+                                  fontFeatures: AppTokens.tabularNums,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Jami $totalCount ta nakladnoy',
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _statBox(
+                              context,
+                              label: 'Naqd',
+                              amount: cashAmt,
+                              count: cashCnt,
+                              color: AppTokens.cashGreen,
+                              icon: Icons.payments_rounded,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _statBox(
+                              context,
+                              label: 'Karta',
+                              amount: cardAmt,
+                              count: cardCnt,
+                              color: AppTokens.cardBlue,
+                              icon: Icons.credit_card_rounded,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _statBox(
+                              context,
+                              label: "O'tkazma",
+                              amount: xferAmt,
+                              count: xferCnt,
+                              color: AppTokens.transferPurple,
+                              icon: Icons.account_balance_rounded,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _statBox(
+                              context,
+                              label: 'Qarzga',
+                              amount: debtAmt,
+                              count: debtCnt,
+                              color: AppTokens.debtAmber,
+                              icon: Icons.push_pin_rounded,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (nasiyaBal != 0) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: amberBg,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: amberBorder),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.menu_book_rounded,
+                                  size: 17, color: amberFg),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Nasiya daftari qoldig\'i:',
+                                  style: TextStyle(
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w800,
+                                    color: amberFg,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                formatUzs(nasiyaBal, withCurrency: true),
+                                style: TextStyle(
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w900,
+                                  color: amberFg,
+                                  fontFeatures: AppTokens.tabularNums,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            _filterPill('all', 'Barchasi ($totalCount)'),
+                            const SizedBox(width: 6),
+                            _filterPill('cash', 'Naqd ($cashCnt)'),
+                            const SizedBox(width: 6),
+                            _filterPill('card', 'Karta ($cardCnt)'),
+                            const SizedBox(width: 6),
+                            _filterPill('transfer', "O'tkazma ($xferCnt)"),
+                            const SizedBox(width: 6),
+                            _filterPill('debt', 'Qarzga ($debtCnt)'),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      if (items.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 28),
+                          child: Text(
+                            "Bu bo'limda nakladnoylar topilmadi.",
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: textSecondaryOf(context)),
+                          ),
+                        )
+                      else
+                        ...items.map(
+                          (item) => Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: NakladnoyListCard(
+                              item: item,
+                              onTap: () async {
+                                await widget.onOpenNakladnoyDetail(item);
+                                _changed = true;
+                                await _load();
+                              },
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

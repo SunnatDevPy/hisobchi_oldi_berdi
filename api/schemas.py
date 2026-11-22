@@ -150,3 +150,12 @@ class RoundModeUpdateRequest(BaseModel):
     round_mode: str = Field(..., pattern="^(floor_1000|nearest_1000|none)$")
 
 
+class ExcelSendTelegramRequest(BaseModel):
+    report_type: str = Field(..., pattern="^(session|range|sverka)$")
+    session_id: Optional[int] = None
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+    month: Optional[str] = None
+
+
+

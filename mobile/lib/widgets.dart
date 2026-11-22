@@ -415,6 +415,7 @@ class DashboardAnalyticsSection extends StatefulWidget {
   final ValueChanged<String> onTapPaymentFilter;
   final VoidCallback onOpenNakladnoyTab;
   final ValueChanged<NakladnoyItem> onTapNakladnoy;
+  final ValueChanged<String>? onTapSupplier;
   final ValueChanged<CashTxItem> onEditCashTx;
   final ValueChanged<CashTxItem> onDeleteCashTx;
 
@@ -431,6 +432,7 @@ class DashboardAnalyticsSection extends StatefulWidget {
     required this.onTapPaymentFilter,
     required this.onOpenNakladnoyTab,
     required this.onTapNakladnoy,
+    this.onTapSupplier,
     required this.onEditCashTx,
     required this.onDeleteCashTx,
   });
@@ -649,49 +651,66 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
                     final ratio =
                         (entry.value.sum / maxSupSum).clamp(0.06, 1.0);
                     return Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(10),
+                        onTap: widget.onTapSupplier != null
+                            ? () => widget.onTapSupplier!(entry.key)
+                            : null,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 4, horizontal: 2),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Expanded(
-                                child: Text(
-                                  entry.key,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 13.5,
-                                    color: textPrimaryOf(context),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      entry.key,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 13.5,
+                                        color: textPrimaryOf(context),
+                                      ),
+                                    ),
                                   ),
-                                ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    '${entry.value.count} ta • ${formatUzs(entry.value.sum, withCurrency: true)}',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 13,
+                                      color: textPrimaryOf(context),
+                                      fontFeatures: AppTokens.tabularNums,
+                                    ),
+                                  ),
+                                  if (widget.onTapSupplier != null) ...[
+                                    const SizedBox(width: 4),
+                                    Icon(Icons.chevron_right_rounded,
+                                        size: 17,
+                                        color: textSecondaryOf(context)),
+                                  ],
+                                ],
                               ),
-                              const SizedBox(width: 8),
-                              Text(
-                                '${entry.value.count} ta • ${formatUzs(entry.value.sum, withCurrency: true)}',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 13,
-                                  color: textPrimaryOf(context),
-                                  fontFeatures: AppTokens.tabularNums,
+                              const SizedBox(height: 5),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(6),
+                                child: LinearProgressIndicator(
+                                  value: ratio,
+                                  minHeight: 7,
+                                  backgroundColor:
+                                      AppTokens.brand.withValues(alpha: 0.12),
+                                  valueColor:
+                                      const AlwaysStoppedAnimation<Color>(
+                                          AppTokens.brand),
                                 ),
                               ),
                             ],
                           ),
-                          const SizedBox(height: 5),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(6),
-                            child: LinearProgressIndicator(
-                              value: ratio,
-                              minHeight: 7,
-                              backgroundColor:
-                                  AppTokens.brand.withValues(alpha: 0.12),
-                              valueColor: const AlwaysStoppedAnimation<Color>(
-                                  AppTokens.brand),
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                     );
                   }),

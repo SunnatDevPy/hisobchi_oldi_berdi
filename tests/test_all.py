@@ -1470,6 +1470,7 @@ def test_mobile_apk_rest_api_and_group_posting(tmp_path: Path, monkeypatch):
         def __init__(self) -> None:
             self.sent_messages: list[tuple[int, str, bool]] = []
             self.edited_messages: list[tuple[int, int, str]] = []
+            self.sent_documents: list[tuple[int, str, str]] = []
 
         async def send_photo(self, chat_id: int, photo, caption: str, **kwargs):
             self.sent_messages.append((chat_id, caption, True))
@@ -1487,6 +1488,11 @@ def test_mobile_apk_rest_api_and_group_posting(tmp_path: Path, monkeypatch):
 
         async def edit_message_text(self, chat_id: int, message_id: int, text: str, **kwargs):
             self.edited_messages.append((chat_id, message_id, text))
+
+        async def send_document(self, chat_id: int, document, caption: str = "", **kwargs):
+            fname = getattr(document, "filename", "report.xlsx")
+            self.sent_documents.append((chat_id, fname, caption))
+            return SimpleNamespace(message_id=903)
 
     async def scenario():
         db_file = tmp_path / "test_apk_api.db"
@@ -1760,6 +1766,35 @@ def test_mobile_apk_rest_api_and_group_posting(tmp_path: Path, monkeypatch):
                 r_sup_list = await client.get("/settings/suppliers", headers=headers)
                 assert r_sup_list.status_code == 200
                 assert any(c["display_name"] == "Ummun" for c in r_sup_list.json()["configs"])
+
+                # 8f3. Supplier Profile & 1-tap Send Excel to Telegram
+                r_prof = await client.get(
+                    "/suppliers/profile",
+                    headers=headers,
+                    params={"supplier": "Coca Cola"},
+                )
+                assert r_prof.status_code == 200
+                prof = r_prof.json()
+                assert prof["supplier_name"] == "Coca Cola"
+                assert prof["total_count"] >= 1
+                assert len(prof["items"]) >= 1
+
+                r_tg_sess = await client.post(
+                    "/export/send-telegram",
+                    headers=headers,
+                    json={"report_type": "session"},
+                )
+                assert r_tg_sess.status_code == 200
+                assert r_tg_sess.json()["ok"] is True
+
+                r_tg_sverka = await client.post(
+                    "/export/send-telegram",
+                    headers=headers,
+                    json={"report_type": "sverka"},
+                )
+                assert r_tg_sverka.status_code == 200
+                assert r_tg_sverka.json()["ok"] is True
+                assert len(fake_bot.sent_documents) == 2
 
                 r_rm_set = await client.post(
                     "/settings/round-mode",

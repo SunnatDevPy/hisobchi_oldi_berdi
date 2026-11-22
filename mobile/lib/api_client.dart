@@ -892,6 +892,46 @@ class HisobchiApiClient {
     final data = _decodeJson(res);
     return (data['round_mode'] ?? roundMode).toString();
   }
+
+  Future<Map<String, dynamic>> getSupplierProfile(
+    String supplier, {
+    int limit = 40,
+  }) async {
+    final res = await _http
+        .get(
+          _uri('/suppliers/profile', {
+            'supplier': supplier.trim(),
+            'limit': '$limit',
+          }),
+          headers: _headers(),
+        )
+        .timeout(const Duration(seconds: 15));
+    return _decodeJson(res);
+  }
+
+  Future<String> sendExcelToTelegram({
+    required String reportType, // session | range | sverka
+    int? sessionId,
+    String? dateFrom,
+    String? dateTo,
+    String? month,
+  }) async {
+    final res = await _http
+        .post(
+          _uri('/export/send-telegram'),
+          headers: _headers(),
+          body: jsonEncode({
+            'report_type': reportType,
+            if (sessionId != null) 'session_id': sessionId,
+            if (dateFrom != null) 'date_from': dateFrom,
+            if (dateTo != null) 'date_to': dateTo,
+            if (month != null) 'month': month,
+          }),
+        )
+        .timeout(const Duration(seconds: 30));
+    final data = _decodeJson(res);
+    return (data['message'] ?? '📤 Telegram botga yuborildi!').toString();
+  }
 }
 
 class HistorySessionItem {

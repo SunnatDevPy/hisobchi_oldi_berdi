@@ -9,11 +9,12 @@ import io
 import mimetypes
 from typing import Optional
 
+from aiogram.types import BufferedInputFile
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 mimetypes.add_type("application/wasm", ".wasm")
 mimetypes.add_type("application/javascript", ".mjs")
@@ -46,6 +47,7 @@ from api.schemas import (
     CashUpdateRequest,
     DayCloseRequest,
     DayCloseResponse,
+    ExcelSendTelegramRequest,
     GroupConfigInfo,
     LoginRequest,
     LoginResponse,
@@ -514,6 +516,90 @@ def create_api_app() -> FastAPI:
             similar = await find_similar_suppliers(db, q.strip(), limit=4, cutoff=0.60)
         return {"query": q.strip(), "similar": similar}
 
+    @app.get("/suppliers/profile")
+    async def get_supplier_profile_endpoint(
+        supplier: str = Query(..., min_length=1),
+        limit: int = Query(default=40, ge=1, le=100),
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        async with async_session_maker() as db:
+            canonical, _ = await resolve_supplier_name(db, supplier.strip())
+            stmt = (
+                select(NakladnoyPayment, DailyCashSession)
+                .join(DailyCashSession, DailyCashSession.id == NakladnoyPayment.session_id)
+                .where(
+                    func.lower(NakladnoyPayment.supplier_name) == canonical.lower(),
+                    NakladnoyPayment.status == "confirmed",
+                )
+                .order_by(NakladnoyPayment.id.desc())
+            )
+            rows = (await db.execute(stmt)).all()
+            nasiya_rows = await get_supplier_debt_balances(db)
+
+        total_amount = 0.0
+        cash_amount = 0.0
+        cash_count = 0
+        card_amount = 0.0
+        card_count = 0
+        transfer_amount = 0.0
+        transfer_count = 0
+        unpaid_debt_amount = 0.0
+        unpaid_debt_count = 0
+        dates: list[str] = []
+
+        for pay, sess in rows:
+            amt = float(pay.amount or 0.0)
+            total_amount += amt
+            if getattr(sess, "report_date", None):
+                dates.append(str(sess.report_date))
+            if bool(getattr(pay, "is_debt", False)):
+                unpaid_debt_amount += amt
+                unpaid_debt_count += 1
+            else:
+                pm = normalize_payment_method(getattr(pay, "payment_method", "cash"))
+                if pm == "card":
+                    card_amount += amt
+                    card_count += 1
+                elif pm == "transfer":
+                    transfer_amount += amt
+                    transfer_count += 1
+                else:
+                    cash_amount += amt
+                    cash_count += 1
+
+        nasiya_balance = 0.0
+        for nb in nasiya_rows:
+            if str(nb.get("supplier") or "").strip().lower() == canonical.lower():
+                nasiya_balance = float(nb.get("balance") or 0.0)
+                break
+
+        items = [
+            _serialize_nakladnoy(
+                pay,
+                report_date=sess.report_date,
+                session_status=str(sess.status or "open"),
+            ).model_dump()
+            for pay, sess in rows[:limit]
+        ]
+
+        return {
+            "supplier_name": canonical,
+            "total_count": len(rows),
+            "total_amount": total_amount,
+            "cash_amount": cash_amount,
+            "cash_count": cash_count,
+            "card_amount": card_amount,
+            "card_count": card_count,
+            "transfer_amount": transfer_amount,
+            "transfer_count": transfer_count,
+            "unpaid_debt_amount": unpaid_debt_amount,
+            "unpaid_debt_count": unpaid_debt_count,
+            "nasiya_balance": nasiya_balance,
+            "first_date": min(dates) if dates else None,
+            "last_date": max(dates) if dates else None,
+            "items": items,
+        }
+
     @app.post("/ai/extract")
     async def ai_extract_nakladnoy(
         photo: UploadFile = File(...),
@@ -974,6 +1060,61 @@ def create_api_app() -> FastAPI:
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+
+    @app.post("/export/send-telegram")
+    async def send_excel_to_telegram_endpoint(
+        payload: ExcelSendTelegramRequest,
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        bot = get_bot()
+        if bot is None:
+            raise HTTPException(status_code=503, detail="Telegram bot ulanmagan")
+
+        if payload.report_type == "session":
+            async with async_session_maker() as db:
+                summary = await compute_session_summary(db, session_id=payload.session_id)
+            xlsx_bytes = await asyncio.to_thread(build_session_excel, summary)
+            filename = f"Hisobot_{summary.session.report_date}.xlsx"
+            caption = (
+                f"📊 <b>Kunlik Excel hisobot</b>\n"
+                f"📅 Sana: <b>{summary.session.report_date}</b> (Smena #{summary.session.id})"
+            )
+        elif payload.report_type == "range":
+            d_to = (payload.date_to or today_iso()).strip()
+            d_from = (payload.date_from or d_to).strip()
+            if d_from > d_to:
+                d_from, d_to = d_to, d_from
+            async with async_session_maker() as db:
+                data = await get_range_report_data(db, d_from, d_to)
+            xlsx_bytes = await asyncio.to_thread(build_range_excel, d_from, d_to, data)
+            filename = f"Hisobot_{d_from}_{d_to}.xlsx"
+            caption = f"📅 <b>Davr Excel hisoboti</b>\n🗓 {d_from} — {d_to}"
+        else:
+            target_month = (payload.month or today_iso()[:7]).strip()[:7]
+            async with async_session_maker() as db:
+                rows = await get_supplier_sverka(db, target_month)
+            xlsx_bytes = await asyncio.to_thread(build_sverka_excel, target_month, rows)
+            filename = f"Sverka_{target_month}.xlsx"
+            caption = f"🏢 <b>Postavshiklar Sverkasi</b>\n🗓 Oy: <b>{target_month}</b>"
+
+        try:
+            await bot.send_document(
+                chat_id=user.user_id,
+                document=BufferedInputFile(xlsx_bytes, filename=filename),
+                caption=caption,
+                parse_mode="HTML",
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Telegram botga yuborishda xatolik: {exc}",
+            ) from exc
+
+        return {
+            "ok": True,
+            "filename": filename,
+            "message": f"📤 {filename} Telegram botga yuborildi!",
+        }
 
     # -----------------------------------------------------------------------
     # Stage 1: History Sessions, Global Search & Session Reopen
