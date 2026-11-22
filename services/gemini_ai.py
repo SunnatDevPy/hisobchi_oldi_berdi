@@ -7,6 +7,7 @@ import base64
 import io
 import json
 import logging
+import math
 import re
 from typing import Any, Dict, Optional, Tuple
 
@@ -53,8 +54,31 @@ OCR_SCHEMA: Dict[str, Any] = {
         "amount": {"type": "NUMBER", "nullable": True},
         "is_clear": {"type": "BOOLEAN"},
         "notes": {"type": "STRING"},
+        "items_complete": {"type": "BOOLEAN"},
+        "has_adjustments": {"type": "BOOLEAN"},
+        "items": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "name": {"type": "STRING"},
+                    "qty": {"type": "NUMBER", "nullable": True},
+                    "unit_price": {"type": "NUMBER", "nullable": True},
+                    "line_total": {"type": "NUMBER", "nullable": True},
+                },
+                "required": ["name", "line_total"],
+            },
+        },
     },
-    "required": ["supplier_name", "amount", "is_clear", "notes"],
+    "required": [
+        "supplier_name",
+        "amount",
+        "is_clear",
+        "notes",
+        "items_complete",
+        "has_adjustments",
+        "items",
+    ],
 }
 
 AUDIO_SCHEMA: Dict[str, Any] = {
@@ -82,7 +106,19 @@ AUDIO_SCHEMA: Dict[str, Any] = {
 OCR_PROMPT = (
     "O'zbekiston do'koni nakladnoy/cheki. Oluvchi (masalan IFTIQOR 80) EMAS, yetkazib beruvchi "
     "postavshik nomini (supplier_name), yakuniy umumiy summani so'mda butun son qilib (amount), "
-    "ikkalasi aniq bo'lsa is_clear=true va qisqa mahsulot izohi (notes) qaytaring."
+    "ikkalasi aniq bo'lsa is_clear=true va qisqa mahsulot izohi (notes) qaytaring.\n"
+    "Qo'shimcha hisob-kitob tekshiruvi:\n"
+    "- Har bir mahsulot qatorini items ichiga kiriting: name (nomi), qty (soni/kg), "
+    "unit_price (dona narxi so'mda to'liq), line_total (qator summasi so'mda to'liq). "
+    "Agar qatorda quti/blok (упак/блок) bo'yicha alohida ko'paytiruvchi ustun bo'lsa, "
+    "qty=null, unit_price=null qo'yib, faqat line_total ni qaytaring.\n"
+    "- MUHIM: Jami/yakuniy/QQS/chegirma/qarz qatorlarini (Итого, Всего, Jami, К оплате, "
+    "НДС, Скидка, Долг, Возврат) items ro'yxatiga KIRITMANG.\n"
+    "- Agar BARCHA mahsulot qatorlari rasmda to'liq ko'rinsa va o'qilsa items_complete=true "
+    "(rasm kesilgan, xira, ko'p sahifali yoki 40 qatordan ko'p bo'lsa items=[], items_complete=false qoying, "
+    "lekin supplier_name va amount ni baribir qaytaring).\n"
+    "- Agar chegirma (скидка/chegirma), qaytarish (возврат), bonus, eski qarz (долг/остаток) "
+    "yoki oldindan to'lov (аванс/предоплата) yakuniy summaga ta'sir qilgan bo'lsa has_adjustments=true qiling."
 )
 
 AUDIO_PROMPT = (
@@ -192,7 +228,7 @@ def compress_image_for_ocr(
 
 
 def _extract_json_object(raw_text: str) -> Dict[str, Any]:
-    """Parse JSON safely from Gemini response text."""
+    """Parse JSON safely from Gemini response text, salvaging core OCR fields if truncated."""
     text = raw_text.strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)
@@ -210,6 +246,31 @@ def _extract_json_object(raw_text: str) -> Dict[str, Any]:
                     return data
             except json.JSONDecodeError:
                 pass
+
+    salvaged: Dict[str, Any] = {}
+    sup_m = re.search(r'"supplier_name"\s*:\s*(null|"(?:\\.|[^"\\])*")', text)
+    if sup_m:
+        try:
+            salvaged["supplier_name"] = json.loads(sup_m.group(1))
+        except Exception:
+            pass
+    amt_m = re.search(r'"amount"\s*:\s*(null|-?\d+(?:\.\d+)?)', text)
+    if amt_m:
+        raw_num = amt_m.group(1)
+        salvaged["amount"] = None if raw_num == "null" else float(raw_num)
+    clr_m = re.search(r'"is_clear"\s*:\s*(true|false)', text)
+    if clr_m:
+        salvaged["is_clear"] = clr_m.group(1) == "true"
+    notes_m = re.search(r'"notes"\s*:\s*"((?:\\.|[^"\\])*)"', text)
+    if notes_m:
+        try:
+            salvaged["notes"] = json.loads(f'"{notes_m.group(1)}"')
+        except Exception:
+            salvaged["notes"] = notes_m.group(1)
+    if salvaged:
+        salvaged.setdefault("items", [])
+        salvaged["items_complete"] = False
+        return salvaged
     return {}
 
 
@@ -221,7 +282,7 @@ def _get_http_client() -> httpx.AsyncClient:
     global _HTTP_CLIENT
     if _HTTP_CLIENT is None or _HTTP_CLIENT.is_closed:
         _HTTP_CLIENT = httpx.AsyncClient(
-            timeout=15.0,
+            timeout=25.0,
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
             transport=httpx.AsyncHTTPTransport(local_address="0.0.0.0"),
         )
@@ -260,9 +321,10 @@ async def _post_gemini_request(
         f"https://generativelanguage.googleapis.com/v1beta/models/"
         f"{model_name}:generateContent"
     )
+    max_tokens = 2048 if response_schema == OCR_SCHEMA else 256
     gen_cfg: Dict[str, Any] = {
         "temperature": 0.1,
-        "maxOutputTokens": 200,
+        "maxOutputTokens": max_tokens,
         "responseMimeType": "application/json",
         "thinkingConfig": {"thinkingBudget": 0},
     }
@@ -366,6 +428,216 @@ def parse_photo_caption(caption: Optional[str]) -> Tuple[Optional[str], Optional
     return cap_supplier, cap_amount
 
 
+_SUMMARY_ROW_RE = re.compile(
+    r"(?i)\b(?:итого|всего|jami|umumiy|к\s+оплате|to'?lov|tolov|ндс|qqs|vat|"
+    r"скидка|chegirma|долг|qarz|остаток|qoldiq|аванс|предоплата|возврат|qaytarish)\b"
+)
+
+
+def _empty_math_check(written_total: Optional[float] = None) -> Dict[str, Any]:
+    """Return a default skipped math_check payload."""
+    return {
+        "status": "skipped",
+        "items_count": 0,
+        "written_total": float(written_total) if written_total else None,
+        "calculated_total": None,
+        "difference": None,
+        "line_errors": [],
+        "warning_text": "",
+    }
+
+
+def _to_number(val: Any) -> Optional[float]:
+    """Convert raw JSON number or formatted numeric string into a finite float."""
+    if val is None or isinstance(val, bool):
+        return None
+    if isinstance(val, (int, float)):
+        fval = float(val)
+        return fval if math.isfinite(fval) else None
+    if isinstance(val, str):
+        parsed = parse_uzbek_amount(val)
+        if parsed is not None and math.isfinite(parsed):
+            return float(parsed)
+    return None
+
+
+def verify_nakladnoy_math(
+    written_total: Optional[float],
+    items: Optional[list[dict[str, Any]]],
+    items_complete: bool = False,
+    has_adjustments: bool = False,
+) -> Dict[str, Any]:
+    """Deterministically verify line-item arithmetic against the written invoice total."""
+    if not items or not isinstance(items, list):
+        return _empty_math_check(written_total=written_total)
+
+    clean_items: list[dict[str, Any]] = []
+    for raw in items:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or "").strip()
+        if name and _SUMMARY_ROW_RE.search(name):
+            continue
+        qty = _to_number(raw.get("qty"))
+        unit_price = _to_number(raw.get("unit_price"))
+        line_total = _to_number(raw.get("line_total"))
+        if (
+            (line_total is None or line_total <= 0)
+            and qty is not None
+            and qty > 0
+            and unit_price is not None
+            and unit_price >= 100
+        ):
+            line_total = round(qty * unit_price, 2)
+        if line_total is None or line_total <= 0:
+            continue
+        clean_items.append(
+            {
+                "name": name or "Mahsulot",
+                "qty": qty,
+                "unit_price": unit_price,
+                "line_total": float(line_total),
+            }
+        )
+
+    if written_total is not None and written_total > 0 and len(clean_items) >= 3:
+        last = clean_items[-1]
+        if (
+            last["qty"] is None
+            and last["unit_price"] is None
+            and abs(last["line_total"] - written_total) <= 100.0
+        ):
+            prev_sum = sum(x["line_total"] for x in clean_items[:-1])
+            prev_tol = max(100.0, (len(clean_items) - 1) * 10.0)
+            if abs(prev_sum - written_total) <= prev_tol:
+                clean_items = clean_items[:-1]
+
+    if not clean_items:
+        return _empty_math_check(written_total=written_total)
+
+    line_errors: list[dict[str, Any]] = []
+    row_effectives: list[float] = []
+    for item in clean_items:
+        qty = item["qty"]
+        up = item["unit_price"]
+        lt = item["line_total"]
+        row_eff = lt
+        if qty is not None and qty > 0 and up is not None and up >= 100 and lt >= 100:
+            expected = round(qty * up, 2)
+            shorthand = up < 1000 and abs(expected * 1000.0 - lt) <= max(100.0, lt * 0.01)
+            if not shorthand and abs(expected - lt) > max(100.0, expected * 0.005):
+                line_errors.append(
+                    {
+                        "name": item["name"],
+                        "qty": qty,
+                        "unit_price": up,
+                        "expected": expected,
+                        "written": lt,
+                        "difference": round(lt - expected, 2),
+                    }
+                )
+                row_eff = expected
+        row_effectives.append(row_eff)
+
+    n_rows = len(clean_items)
+    sum_line_total = round(sum(i["line_total"] for i in clean_items), 2)
+    sum_expected = round(sum(row_effectives), 2)
+    tol = max(100.0, n_rows * 10.0)
+
+    # Case 1: Written total missing -> compute from complete rows
+    if written_total is None or written_total <= 0:
+        if items_complete and sum_expected > 0:
+            return {
+                "status": "computed",
+                "items_count": n_rows,
+                "written_total": None,
+                "calculated_total": sum_expected,
+                "difference": None,
+                "line_errors": line_errors,
+                "warning_text": (
+                    f"Rasmda jami summa yozilmagan — {n_rows} ta qator yig'indisi "
+                    f"hisoblandi: {format_uzs(sum_expected)} so'm"
+                ),
+            }
+        return _empty_math_check(written_total=written_total)
+
+    # Case 2: Single-row or multi-row match (including OCR misread guard via qty * unit_price)
+    if items_complete and abs(written_total - sum_expected) <= tol:
+        return {
+            "status": "ok",
+            "items_count": n_rows,
+            "written_total": float(written_total),
+            "calculated_total": sum_expected,
+            "difference": 0.0,
+            "line_errors": [],
+            "warning_text": f"Tekshirildi: {n_rows} ta qator yig'indisi mos",
+        }
+    if items_complete and not line_errors and abs(written_total - sum_line_total) <= tol:
+        return {
+            "status": "ok",
+            "items_count": n_rows,
+            "written_total": float(written_total),
+            "calculated_total": sum_line_total,
+            "difference": 0.0,
+            "line_errors": [],
+            "warning_text": f"Tekshirildi: {n_rows} ta qator yig'indisi mos",
+        }
+
+    calc_ref = sum_expected if line_errors else sum_line_total
+
+    # Case 3: 12% VAT (QQS / НДС)
+    if items_complete and calc_ref > 0 and abs(written_total - calc_ref * 1.12) <= max(500.0, calc_ref * 0.003):
+        return {
+            "status": "vat_ok",
+            "items_count": n_rows,
+            "written_total": float(written_total),
+            "calculated_total": calc_ref,
+            "difference": round(float(written_total) - calc_ref, 2),
+            "line_errors": line_errors,
+            "warning_text": f"Tekshirildi: {n_rows} ta qator + 12% QQS (НДС) mos",
+        }
+
+    # Case 4: Bill explicitly has discounts, returns, prior debt or prepayments
+    if has_adjustments and items_complete and calc_ref > 0:
+        return {
+            "status": "adjusted",
+            "items_count": n_rows,
+            "written_total": float(written_total),
+            "calculated_total": calc_ref,
+            "difference": round(float(written_total) - calc_ref, 2),
+            "line_errors": line_errors,
+            "warning_text": (
+                f"Qatorlar yig'indisi: {format_uzs(calc_ref)} so'm "
+                "(chegirma/qaytarish/qoldiq hisobga olingan bo'lishi mumkin)"
+            ),
+        }
+
+    # Case 5: Real arithmetic mismatch
+    if (items_complete and n_rows >= 2 and abs(written_total - calc_ref) > tol) or (
+        n_rows == 1 and len(line_errors) == 1 and abs(written_total - sum_expected) > 100.0
+    ):
+        diff = round(float(written_total) - calc_ref, 2)
+        dir_txt = (
+            f"+{format_uzs(abs(diff))} so'm ortiqcha"
+            if diff > 0
+            else f"-{format_uzs(abs(diff))} so'm kam"
+        )
+        return {
+            "status": "mismatch",
+            "items_count": n_rows,
+            "written_total": float(written_total),
+            "calculated_total": calc_ref,
+            "difference": diff,
+            "line_errors": line_errors,
+            "warning_text": (
+                f"Hisob-kitobda xatolik! Yozilgan: {format_uzs(written_total)}, "
+                f"hisoblangan ({n_rows} ta qator): {format_uzs(calc_ref)} (farq: {dir_txt})"
+            ),
+        }
+
+    return _empty_math_check(written_total=written_total)
+
+
 async def extract_nakladnoy_from_image(
     image_bytes: bytes,
     mime_type: str = "image/jpeg",
@@ -382,6 +654,7 @@ async def extract_nakladnoy_from_image(
             "is_clear": True,
             "notes": "",
             "error_code": None,
+            "math_check": _empty_math_check(written_total=float(cap_amount)),
         }
 
     settings = get_settings()
@@ -392,6 +665,7 @@ async def extract_nakladnoy_from_image(
             "is_clear": False,
             "notes": "",
             "error_code": "no_key",
+            "math_check": _empty_math_check(written_total=cap_amount),
         }
 
     resized_bytes, out_mime = await asyncio.to_thread(
@@ -401,7 +675,7 @@ async def extract_nakladnoy_from_image(
     if cap_supplier:
         prompt += (
             f" Postavshik nomi aniq belgilangan: '{cap_supplier}'. "
-            "Rasmdan faqat yakuniy summani (amount) o'qing; summa aniq o'qilsa is_clear=true qaytaring."
+            "Yakuniy summani (amount) va mahsulot qatorlarini (items) o'qing; summa aniq o'qilsa is_clear=true qaytaring."
         )
     elif caption:
         prompt += f" Izoh: {caption}"
@@ -423,6 +697,7 @@ async def extract_nakladnoy_from_image(
             "is_clear": False,
             "notes": "",
             "error_code": "rate_limit",
+            "math_check": _empty_math_check(written_total=cap_amount),
         }
     except Exception as exc:
         logger.warning("Gemini OCR error: %s", exc)
@@ -432,6 +707,7 @@ async def extract_nakladnoy_from_image(
             "is_clear": False,
             "notes": "",
             "error_code": "api_error",
+            "math_check": _empty_math_check(written_total=cap_amount),
         }
 
     supplier = data.get("supplier_name")
@@ -453,9 +729,22 @@ async def extract_nakladnoy_from_image(
     if cap_amount is not None:
         amount = float(cap_amount)
 
-    if supplier is not None and amount is not None and amount > 0:
+    math_check = verify_nakladnoy_math(
+        written_total=amount,
+        items=data.get("items"),
+        items_complete=bool(data.get("items_complete")),
+        has_adjustments=bool(data.get("has_adjustments")),
+    )
+
+    if amount is None and math_check["status"] == "computed" and math_check["calculated_total"]:
+        amount = float(math_check["calculated_total"])
+        is_clear = False
+    elif supplier is not None and amount is not None and amount > 0:
         is_clear = True if cap_supplier else bool(data.get("is_clear"))
     else:
+        is_clear = False
+
+    if math_check["status"] == "mismatch":
         is_clear = False
 
     return {
@@ -464,6 +753,7 @@ async def extract_nakladnoy_from_image(
         "is_clear": is_clear,
         "notes": str(data.get("notes") or ""),
         "error_code": None,
+        "math_check": math_check,
     }
 
 

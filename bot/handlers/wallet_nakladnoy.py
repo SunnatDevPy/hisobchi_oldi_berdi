@@ -369,10 +369,68 @@ def _schedule_group_sync(
     return "📤 <b>Guruhdagi xabar ham avtomatik yangilanmoqda!</b>"
 
 
+def _format_math_check_html(math_check: Optional[dict]) -> str:
+    """Format line-item verification status for Telegram HTML messages."""
+    if not math_check:
+        return ""
+    status = math_check.get("status")
+    items_cnt = int(math_check.get("items_count") or 0)
+    calc = math_check.get("calculated_total")
+    written = math_check.get("written_total")
+    diff = math_check.get("difference")
+
+    if status == "mismatch":
+        lines = ["⚠️ <b>HISOB-KITOBDA XATOLIK!</b>"]
+        if written is not None:
+            lines.append(f"• Rasmda yozilgan: <b>{format_uzs(written)} so'm</b>")
+        if calc is not None:
+            lines.append(
+                f"• Hisoblangan ({items_cnt} ta qator): <b>{format_uzs(calc)} so'm</b>"
+            )
+        if diff is not None and abs(float(diff)) > 0:
+            dir_txt = (
+                f"+{format_uzs(abs(diff))} so'm ortiqcha yozilgan"
+                if float(diff) > 0
+                else f"-{format_uzs(abs(diff))} so'm kam yozilgan"
+            )
+            lines.append(f"• Farq: <b>{dir_txt}</b>")
+        line_errors = math_check.get("line_errors") or []
+        for le in line_errors[:4]:
+            nm = html.escape(str(le.get("name") or "Mahsulot"))
+            qty = le.get("qty")
+            qty_str = (
+                str(int(qty))
+                if qty is not None and float(qty).is_integer()
+                else f"{qty:g}" if qty is not None else "?"
+            )
+            up = format_uzs(le.get("unit_price") or 0)
+            exp = format_uzs(le.get("expected") or 0)
+            wr = format_uzs(le.get("written") or 0)
+            lines.append(f"  • <i>{nm}: {qty_str} × {up} = {exp} (yozilgan: {wr})</i>")
+        return "\n".join(lines)
+
+    if status == "computed" and calc is not None:
+        return (
+            f"🧮 <b>Summa qatorlardan hisoblandi ({items_cnt} ta qator): "
+            f"{format_uzs(calc)} so'm</b> <i>(rasmda jami yozilmagan)</i>"
+        )
+    if status == "ok":
+        return f"✅ <i>Tekshirildi: {items_cnt} ta qator yig'indisi mos</i>"
+    if status == "vat_ok":
+        return f"✅ <i>Tekshirildi: {items_cnt} ta qator + 12% QQS (НДС) mos</i>"
+    if status == "adjusted" and calc is not None:
+        return (
+            f"ℹ️ <i>Qatorlar yig'indisi: {format_uzs(calc)} so'm "
+            f"(chegirma/qaytarish/qoldiq bo'lishi mumkin)</i>"
+        )
+    return ""
+
+
 def _pending_card_text(
     payment: NakladnoyPayment,
     duplicate_warning: Optional[NakladnoyPayment] = None,
     suggested_supplier: Optional[str] = None,
+    math_check: Optional[dict] = None,
 ) -> str:
     warn_text = ""
     if duplicate_warning is not None:
@@ -388,12 +446,14 @@ def _pending_card_text(
     if payment.original_amount is not None and round(payment.original_amount) != round(payment.amount):
         orig_text = f"\n🔄 Asl summa: <i>{format_uzs(payment.original_amount)} so'm</i>"
     note_text = f"\n📝 Izoh: <i>{html.escape(payment.note)}</i>" if payment.note else ""
+    math_html = _format_math_check_html(math_check)
+    math_block = f"\n\n{math_html}" if math_html else ""
     return (
         f"🧾 <b>Nakladnoy tasdiqlash (#{payment.id})</b>\n"
         f"🏢 Postavshik: <b>{html.escape(payment.supplier_name or 'Noma\'lum')}</b>"
         f"{sug_text}\n"
         f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>"
-        f"{orig_text}{note_text}{warn_text}\n\n"
+        f"{orig_text}{note_text}{math_block}{warn_text}\n\n"
         "Hammasi to'g'rimi?"
     )
 
@@ -403,12 +463,23 @@ async def _send_pending_nakladnoy_card(
     payment: NakladnoyPayment,
     duplicate_warning: Optional[NakladnoyPayment] = None,
     suggested_supplier: Optional[str] = None,
+    math_check: Optional[dict] = None,
+    suggested_calc_amount: Optional[float] = None,
 ) -> None:
     """Render pending nakladnoy confirmation card."""
     await target_message.answer(
-        _pending_card_text(payment, duplicate_warning=duplicate_warning, suggested_supplier=suggested_supplier),
+        _pending_card_text(
+            payment,
+            duplicate_warning=duplicate_warning,
+            suggested_supplier=suggested_supplier,
+            math_check=math_check,
+        ),
         parse_mode="HTML",
-        reply_markup=nakladnoy_confirm_kb(payment.id, suggested_supplier=suggested_supplier),
+        reply_markup=nakladnoy_confirm_kb(
+            payment.id,
+            suggested_supplier=suggested_supplier,
+            suggested_calc_amount=suggested_calc_amount,
+        ),
     )
 
 
@@ -882,6 +953,7 @@ async def _process_ready_nakladnoy(
     prefix_html: str = "",
     photo_unique_id: Optional[str] = None,
     actor_id: Optional[int] = None,
+    math_check: Optional[dict] = None,
 ) -> None:
     """Normalize supplier, round amount, check duplicates, and auto-confirm or show card."""
     prev_state = await state.get_state()
@@ -891,12 +963,16 @@ async def _process_ready_nakladnoy(
         WalletStates.waiting_edit_nakladnoy_supplier.state,
     )
     uid = actor_id if actor_id is not None else (message.from_user.id if message.from_user else None)
+    math_status = (math_check or {}).get("status", "skipped")
+    suggested_calc: Optional[float] = None
 
     async with async_session_maker() as db:
         auto_confirm = (await get_app_setting(db, "auto_confirm", "on")) == "on"
         round_mode = await get_app_setting(db, "round_mode", "floor_1000")
         rounded_amt = round_nakladnoy_amount(raw_amount, round_mode)
         orig_amt = float(raw_amount) if round(rounded_amt) != round(raw_amount) else None
+        if math_status == "mismatch" and (math_check or {}).get("calculated_total"):
+            suggested_calc = round_nakladnoy_amount(float(math_check["calculated_total"]), round_mode)
 
         canonical_sup, suggested_sup = await resolve_supplier_name(db, supplier_name)
         sess = await get_or_create_open_session(db)
@@ -915,7 +991,13 @@ async def _process_ready_nakladnoy(
         )
         nak_group = await get_group_config(db, "nakladnoy")
 
-        can_auto = auto_confirm and is_confident and dup is None and suggested_sup is None
+        can_auto = (
+            auto_confirm
+            and is_confident
+            and dup is None
+            and suggested_sup is None
+            and math_status not in ("mismatch", "computed")
+        )
         session_seq: Optional[int] = None
         summary: Optional[SessionSummary] = None
         if can_auto:
@@ -939,12 +1021,18 @@ async def _process_ready_nakladnoy(
         round_line = ""
         if orig_amt is not None:
             round_line = f"🔄 Yaxlitlandi: <i>{format_uzs(orig_amt)} → {format_uzs(payment.amount)}</i>\n"
+        math_line = ""
+        if math_status in ("ok", "vat_ok", "adjusted"):
+            mc_html = _format_math_check_html(math_check)
+            if mc_html:
+                math_line = f"{mc_html}\n"
         await message.answer(
             f"{prefix_html}"
             f"⚡ <b>Avto-tasdiqlandi! ({num_lbl})</b>\n"
             f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
             f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>\n"
             f"{round_line}"
+            f"{math_line}"
             f"{group_notice}\n\n"
             f"{_format_balance_summary_block(summary)}",
             parse_mode="HTML",
@@ -955,7 +1043,12 @@ async def _process_ready_nakladnoy(
         return
 
     await _send_pending_nakladnoy_card(
-        message, payment, duplicate_warning=dup, suggested_supplier=suggested_sup
+        message,
+        payment,
+        duplicate_warning=dup,
+        suggested_supplier=suggested_sup,
+        math_check=math_check,
+        suggested_calc_amount=suggested_calc,
     )
     if used_cancel_reply_kb:
         await message.answer("👇 Tasdiqlang yoki tahrirlang:", reply_markup=main_menu_keyboard())
@@ -1014,6 +1107,7 @@ async def _process_nakladnoy_photo(
     notes = extracted.get("notes") or ""
     is_clear = bool(extracted.get("is_clear"))
     err_code = extracted.get("error_code")
+    math_check = extracted.get("math_check")
 
     try:
         await wait_msg.delete()
@@ -1030,6 +1124,7 @@ async def _process_nakladnoy_photo(
             photo_unique_id=full_photo.file_unique_id,
             notes=notes,
             is_confident=is_clear,
+            math_check=math_check,
         )
         return
 
@@ -1046,7 +1141,7 @@ async def _process_nakladnoy_photo(
         )
 
     await state.set_state(WalletStates.waiting_nakladnoy_clarify)
-    await state.update_data(payment_id=payment.id)
+    await state.update_data(payment_id=payment.id, math_check=math_check)
     if err_code == "rate_limit":
         lead = "⏳ AI hozir band. Iltimos, ma'lumotni yozib yuboring"
     elif err_code in ("api_error", "no_key"):
@@ -1059,10 +1154,13 @@ async def _process_nakladnoy_photo(
             missing_parts.append("summa")
         lead = f"🤔 Rasmda <b>{', '.join(missing_parts)}</b> aniq o'qilmadi"
 
+    math_html = _format_math_check_html(math_check)
+    math_block = f"\n\n{math_html}" if math_html else ""
     await message.answer(
         f"{lead}.\n"
         f"Topilgani: Postavshik=<code>{html.escape(supplier_name or '?')}</code>, "
-        f"Summa=<code>{format_uzs(amount) if amount else '?'}</code>\n\n"
+        f"Summa=<code>{format_uzs(amount) if amount else '?'}</code>"
+        f"{math_block}\n\n"
         "🎤 Ovozli xabar yoki matn yuboring (masalan: <i>«Non Oka 1 657 000»</i>):",
         parse_mode="HTML",
         reply_markup=cancel_reply_keyboard(),
@@ -1076,6 +1174,7 @@ async def process_nakladnoy_clarification(message: Message, state: FSMContext) -
         return
     data = await state.get_data()
     payment_id = data.get("payment_id")
+    stored_math_check = data.get("math_check")
     if not payment_id:
         await state.clear()
         return
@@ -1118,6 +1217,8 @@ async def process_nakladnoy_clarification(message: Message, state: FSMContext) -
         )
         return
 
+    mc_for_card = stored_math_check if isinstance(stored_math_check, dict) else None
+    suggested_calc: Optional[float] = None
     async with async_session_maker() as db:
         canon, sug = await resolve_supplier_name(db, new_sup)
         round_mode = await get_app_setting(db, "round_mode", "floor_1000")
@@ -1129,10 +1230,25 @@ async def process_nakladnoy_clarification(message: Message, state: FSMContext) -
         dup = await find_duplicate_confirmed_nakladnoy(
             db, updated.session_id, updated.supplier_name, updated.amount, exclude_id=updated.id
         )
+        if (
+            mc_for_card
+            and mc_for_card.get("status") == "mismatch"
+            and mc_for_card.get("calculated_total")
+        ):
+            calc_val = round_nakladnoy_amount(float(mc_for_card["calculated_total"]), round_mode)
+            if abs(float(updated.amount) - calc_val) <= 100.0:
+                mc_for_card = None
+            else:
+                suggested_calc = calc_val
 
     await state.clear()
     await _send_pending_nakladnoy_card(
-        message, updated, duplicate_warning=dup, suggested_supplier=sug
+        message,
+        updated,
+        duplicate_warning=dup,
+        suggested_supplier=sug,
+        math_check=mc_for_card,
+        suggested_calc_amount=suggested_calc,
     )
     await message.answer("👇 Tasdiqlang:", reply_markup=main_menu_keyboard())
 
@@ -1264,6 +1380,86 @@ async def cb_nakladnoy_confirm(cb: CallbackQuery, state: FSMContext) -> None:
     payment_id = int(cb.data.split(":")[-1])
     await _finalize_nakladnoy_confirmation(
         cb, payment_id, send_to_group=True, is_debt=False, state=state
+    )
+
+
+def _parse_calc_cb_args(data: Optional[str]) -> Optional[tuple[int, float]]:
+    parts = (data or "").split(":")
+    if len(parts) < 4 or not parts[2].isdigit():
+        return None
+    try:
+        calc_amt = float(parts[3])
+    except ValueError:
+        return None
+    if calc_amt <= 0:
+        return None
+    return int(parts[2]), calc_amt
+
+
+@router.callback_query(F.data.startswith("nak:use_calc:"))
+async def cb_nakladnoy_use_calculated(cb: CallbackQuery, state: FSMContext) -> None:
+    """Update pending nakladnoy amount to verified line-item sum and confirm to group."""
+    if await deny_if_unauthorized(cb, ("admin", "kassir")):
+        return
+    await state.clear()
+    parsed = _parse_calc_cb_args(cb.data)
+    if parsed is None:
+        await cb.answer("Noto'g'ri buyruq", show_alert=True)
+        return
+    payment_id, calc_amt = parsed
+    uid = cb.from_user.id if cb.from_user else None
+    async with async_session_maker() as db:
+        payment = await get_nakladnoy(db, payment_id)
+        if not payment or payment.status == "deleted":
+            await cb.answer("Nakladnoy topilmadi yoki o'chirilgan", show_alert=True)
+            return
+        await update_nakladnoy(
+            db,
+            payment_id,
+            amount=calc_amt,
+            original_amount=calc_amt,
+            user_id=uid,
+        )
+    await _finalize_nakladnoy_confirmation(
+        cb, payment_id, send_to_group=True, is_debt=False, state=state
+    )
+
+
+@router.callback_query(F.data.startswith("nak:set_calc:"))
+async def cb_nakladnoy_set_calculated(cb: CallbackQuery, state: FSMContext) -> None:
+    """Replace pending nakladnoy amount with verified line-item sum before choosing payment mode."""
+    if await deny_if_unauthorized(cb, ("admin", "kassir")):
+        return
+    await state.clear()
+    parsed = _parse_calc_cb_args(cb.data)
+    if parsed is None:
+        await cb.answer("Noto'g'ri buyruq", show_alert=True)
+        return
+    payment_id, calc_amt = parsed
+    uid = cb.from_user.id if cb.from_user else None
+    async with async_session_maker() as db:
+        payment = await get_nakladnoy(db, payment_id)
+        if not payment or payment.status == "deleted":
+            await cb.answer("Nakladnoy topilmadi yoki o'chirilgan", show_alert=True)
+            return
+        updated = await update_nakladnoy(
+            db,
+            payment_id,
+            amount=calc_amt,
+            original_amount=calc_amt,
+            user_id=uid,
+        )
+        _, sug = await resolve_supplier_name(db, updated.supplier_name)
+        dup = await find_duplicate_confirmed_nakladnoy(
+            db, updated.session_id, updated.supplier_name, updated.amount, exclude_id=updated.id
+        )
+    await asyncio.gather(
+        _safe_edit_text(
+            cb.message,
+            _pending_card_text(updated, duplicate_warning=dup, suggested_supplier=sug),
+            reply_markup=nakladnoy_confirm_kb(updated.id, suggested_supplier=sug),
+        ),
+        _safe_cb_answer(cb, "🧮 Summa yangilandi! Endi to'lov turini tanlang"),
     )
 
 

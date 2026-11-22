@@ -448,7 +448,9 @@ def create_api_app() -> FastAPI:
         similar_list: list[str] = []
         amounts: list[float] = []
         rounded: Optional[float] = None
+        r_mode = "floor_1000"
         async with async_session_maker() as db:
+            r_mode = await get_app_setting(db, "round_mode", "floor_1000")
             if supplier_raw:
                 canonical, suggestion = await resolve_supplier_name(db, str(supplier_raw))
                 similar_list = await find_similar_suppliers(
@@ -465,8 +467,28 @@ def create_api_app() -> FastAPI:
                         )
                     ]
             if amount_raw:
-                r_mode = await get_app_setting(db, "round_mode", "floor_1000")
                 rounded = round_nakladnoy_amount(float(amount_raw), r_mode)
+
+        raw_mc = res.get("math_check")
+        math_check: dict = (
+            dict(raw_mc)
+            if isinstance(raw_mc, dict)
+            else {
+                "status": "skipped",
+                "items_count": 0,
+                "written_total": float(amount_raw) if amount_raw else None,
+                "calculated_total": None,
+                "difference": None,
+                "line_errors": [],
+                "warning_text": "",
+            }
+        )
+        calc_tot = math_check.get("calculated_total")
+        math_check["rounded_calculated_total"] = (
+            round_nakladnoy_amount(float(calc_tot), r_mode)
+            if calc_tot is not None and float(calc_tot) > 0
+            else None
+        )
 
         messages = {
             "no_key": "AI kaliti sozlanmagan",
@@ -482,6 +504,7 @@ def create_api_app() -> FastAPI:
             "original_amount": float(amount_raw) if amount_raw else None,
             "is_clear": bool(res.get("is_clear")),
             "recent_amounts": amounts,
+            "math_check": math_check,
             "error_code": err,
             "message": messages.get(err or "", ""),
         }

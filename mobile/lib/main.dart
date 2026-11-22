@@ -2714,6 +2714,10 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
   double? _originalAmount;
   String? _supplierSuggestion;
   List<String> _aiSimilarSuppliers = [];
+  MathCheckResult? _mathCheck;
+  bool _appliedCalculatedAmount = false;
+  double? _writtenAmountBeforeFix;
+  double? _writtenOriginalAmountBeforeFix;
   bool _aiLoading = false;
   String? _aiBadgeText;
   bool _submitting = false;
@@ -2771,6 +2775,10 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
     setState(() {
       _aiLoading = true;
       _aiBadgeText = null;
+      _mathCheck = null;
+      _appliedCalculatedAmount = false;
+      _writtenAmountBeforeFix = null;
+      _writtenOriginalAmountBeforeFix = null;
       _error = null;
     });
     try {
@@ -2786,12 +2794,20 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
               res.amount!.round().toString());
         }
         _originalAmount = res.originalAmount;
+        _writtenAmountBeforeFix = res.amount;
+        _writtenOriginalAmountBeforeFix = res.originalAmount;
         _supplierSuggestion = res.supplierSuggestion;
         _aiSimilarSuppliers = res.similarSuppliers;
+        _mathCheck = res.mathCheck;
         if (res.recentAmounts.isNotEmpty) {
           _recentAmounts = res.recentAmounts;
         }
-        if (res.ok) {
+        if (_mathCheck != null && _mathCheck!.isMismatch) {
+          _aiBadgeText =
+              "⚠️ AI o'qidi, lekin nakladnoy summasida xatolik topildi!";
+        } else if (_mathCheck != null && _mathCheck!.isComputed) {
+          _aiBadgeText = "🧮 AI qatorlar yig'indisini hisoblab chiqdi!";
+        } else if (res.ok) {
           final roundedNote = (res.originalAmount != null &&
                   res.amount != null &&
                   res.originalAmount!.round() != res.amount!.round())
@@ -2873,6 +2889,302 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  String _formatQty(double? q) {
+    if (q == null) return '?';
+    if ((q - q.roundToDouble()).abs() < 1e-6) {
+      return q.round().toString();
+    }
+    return q.toStringAsFixed(2).replaceFirst(RegExp(r'\.?0+$'), '');
+  }
+
+  Widget _mathDetailRow(BuildContext context, String label, String val,
+      {Color? valueColor, bool bold = false}) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 2),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: textSecondaryOf(context),
+              ),
+            ),
+          ),
+          Text(
+            val,
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: bold ? FontWeight.w900 : FontWeight.w700,
+              color: valueColor,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget? _buildMathCheckCard(BuildContext context) {
+    final mc = _mathCheck;
+    if (mc == null || !mc.hasDisplay) return null;
+
+    if (mc.isMismatch) {
+      final targetCalc = mc.roundedCalculatedTotal ?? mc.calculatedTotal;
+      if (_appliedCalculatedAmount && targetCalc != null && targetCalc > 0) {
+        final (okFg, okBg, okBorder) =
+            AppTokens.semanticSurface(context, AppTokens.cashGreen);
+        return Container(
+          margin: const EdgeInsets.only(top: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: okBg,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: okBorder),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.check_circle_rounded, color: okFg, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  "To'g'ri summa qo'yildi (${formatUzs(targetCalc, withCurrency: true)})",
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
+                    color: okFg,
+                  ),
+                ),
+              ),
+              if (_writtenAmountBeforeFix != null &&
+                  _writtenAmountBeforeFix! > 0)
+                TextButton(
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _amtCtrl.text = UzsAmountInputFormatter.formatDigits(
+                          _writtenAmountBeforeFix!.round().toString());
+                      _originalAmount = _writtenOriginalAmountBeforeFix;
+                      _appliedCalculatedAmount = false;
+                    });
+                  },
+                  child: const Text('Aslini qaytarish',
+                      style: TextStyle(fontSize: 12)),
+                ),
+            ],
+          ),
+        );
+      }
+
+      final (fg, bg, border) =
+          AppTokens.semanticSurface(context, AppTokens.dangerRed);
+      final diff = mc.difference;
+      final diffText = (diff != null && diff.abs() > 0)
+          ? (diff > 0
+              ? "+${formatUzs(diff.abs())} so'm ortiqcha"
+              : "-${formatUzs(diff.abs())} so'm kam")
+          : null;
+      return Container(
+        margin: const EdgeInsets.only(top: 8),
+        padding: const EdgeInsets.all(11),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.warning_amber_rounded, color: fg, size: 19),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'HISOB-KITOBDA XATOLIK!',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w900,
+                      color: fg,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            if (mc.writtenTotal != null)
+              _mathDetailRow(
+                context,
+                'Rasmda yozilgan:',
+                formatUzs(mc.writtenTotal, withCurrency: true),
+              ),
+            if (mc.calculatedTotal != null)
+              _mathDetailRow(
+                context,
+                'Hisoblangan (${mc.itemsCount} ta qator):',
+                formatUzs(mc.calculatedTotal, withCurrency: true),
+                valueColor: fg,
+                bold: true,
+              ),
+            if (diffText != null)
+              _mathDetailRow(
+                context,
+                'Farq:',
+                diffText,
+                valueColor: fg,
+                bold: true,
+              ),
+            if (mc.lineErrors.isNotEmpty) ...[
+              const SizedBox(height: 5),
+              ...mc.lineErrors.take(4).map(
+                    (le) => Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        "• ${le.name}: ${_formatQty(le.qty)} × ${formatUzs(le.unitPrice)} = ${formatUzs(le.expected)} (yozilgan: ${formatUzs(le.written)})",
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          color: fg,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+            ],
+            if (targetCalc != null && targetCalc > 0) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppTokens.dangerRed,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size(80, 40),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 8),
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _amtCtrl.text = UzsAmountInputFormatter.formatDigits(
+                          targetCalc.round().toString());
+                      _originalAmount = mc.calculatedTotal;
+                      _appliedCalculatedAmount = true;
+                    });
+                  },
+                  icon: const Icon(Icons.calculate_rounded, size: 17),
+                  label: Text(
+                    "To'g'ri summani (${formatUzs(targetCalc)} so'm) qo'yish",
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    if (mc.isOk) {
+      final (fg, bg, border) =
+          AppTokens.semanticSurface(context, AppTokens.cashGreen);
+      final label = mc.status == 'vat_ok'
+          ? "Tekshirildi: ${mc.itemsCount} ta qator + 12% QQS (НДС) mos"
+          : "Tekshirildi: ${mc.itemsCount} ta qator yig'indisi mos (${formatUzs(mc.calculatedTotal, withCurrency: true)})";
+      return Container(
+        margin: const EdgeInsets.only(top: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: border),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.verified_rounded, color: fg, size: 17),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: fg,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (mc.isComputed) {
+      final (fg, bg, border) =
+          AppTokens.semanticSurface(context, AppTokens.brandViolet);
+      return Container(
+        margin: const EdgeInsets.only(top: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: border),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.calculate_rounded, color: fg, size: 17),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Text(
+                "Rasmda jami yozilmagan — ${mc.itemsCount} ta qator yig'indisi hisoblandi: ${formatUzs(mc.calculatedTotal, withCurrency: true)}",
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: fg,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (mc.isAdjusted) {
+      final (fg, bg, border) =
+          AppTokens.semanticSurface(context, AppTokens.debtAmber);
+      return Container(
+        margin: const EdgeInsets.only(top: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: border),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.info_outline_rounded, color: fg, size: 17),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Text(
+                "Qatorlar yig'indisi: ${formatUzs(mc.calculatedTotal, withCurrency: true)} (chegirma/qaytarish/qoldiq bo'lishi mumkin)",
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: fg,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return null;
   }
 
   @override
@@ -3060,6 +3372,10 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
                                   onPressed: () => setState(() {
                                     _photoFile = null;
                                     _aiBadgeText = null;
+                                    _mathCheck = null;
+                                    _appliedCalculatedAmount = false;
+                                    _writtenAmountBeforeFix = null;
+                                    _writtenOriginalAmountBeforeFix = null;
                                   }),
                                   icon:
                                       const Icon(Icons.close_rounded, size: 17),
@@ -3077,12 +3393,18 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
                         style: TextStyle(
                           fontSize: 12.5,
                           fontWeight: FontWeight.w800,
-                          color: _aiBadgeText!.startsWith('✨')
-                              ? AppTokens.cashGreen
-                              : AppTokens.debtAmber,
+                          color: (_mathCheck?.isMismatch == true)
+                              ? AppTokens.dangerRed
+                              : (_mathCheck?.isComputed == true)
+                                  ? AppTokens.brandViolet
+                                  : _aiBadgeText!.startsWith('✨')
+                                      ? AppTokens.cashGreen
+                                      : AppTokens.debtAmber,
                         ),
                       ),
                     ],
+                    if (_buildMathCheckCard(context) case final mathCard?)
+                      mathCard,
                   ],
                 ),
               ),

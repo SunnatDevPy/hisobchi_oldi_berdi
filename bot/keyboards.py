@@ -123,10 +123,31 @@ def more_menu_kb(role: str = ROLE_ADMIN) -> InlineKeyboardMarkup:
 
 
 def nakladnoy_confirm_kb(
-    payment_id: int, suggested_supplier: Optional[str] = None
+    payment_id: int,
+    suggested_supplier: Optional[str] = None,
+    suggested_calc_amount: Optional[float] = None,
 ) -> InlineKeyboardMarkup:
     """Confirmation inline keyboard for a pending nakladnoy payment."""
     rows: list[list[InlineKeyboardButton]] = []
+    if suggested_calc_amount is not None and suggested_calc_amount > 0:
+        calc_int = int(round(suggested_calc_amount))
+        calc_lbl = f"{calc_int:,}".replace(",", " ")
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"🧮 To'g'ri summa ({calc_lbl}) bilan tasdiqlash",
+                    callback_data=f"nak:use_calc:{payment_id}:{calc_int}",
+                )
+            ]
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"🔄 Summani {calc_lbl} ga almashtirish",
+                    callback_data=f"nak:set_calc:{payment_id}:{calc_int}",
+                )
+            ]
+        )
     if suggested_supplier:
         rows.append(
             [

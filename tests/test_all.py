@@ -1600,7 +1600,7 @@ def test_mobile_apk_rest_api_and_group_posting(tmp_path: Path, monkeypatch):
                 assert r_xlsx.status_code == 200
                 assert len(r_xlsx.content) > 1000
 
-                # 8b. AI photo extraction resolves canonical supplier & rounds amount
+                # 8b. AI photo extraction resolves canonical supplier, rounds amount & attaches math_check
                 async def fake_extract(raw, mime_type="image/jpeg", caption=None):
                     return {
                         "supplier_name": "coca cola",
@@ -1622,7 +1622,49 @@ def test_mobile_apk_rest_api_and_group_posting(tmp_path: Path, monkeypatch):
                 assert ai["supplier_name"] == "Coca Cola"
                 assert ai["amount"] == 192_000.0
                 assert ai["original_amount"] == 192_640.0
+                assert ai["math_check"]["status"] == "skipped"
                 assert 1_200_000.0 in ai["recent_amounts"]
+
+                async def fake_extract_mismatch(raw, mime_type="image/jpeg", caption=None):
+                    return {
+                        "supplier_name": "coca cola",
+                        "amount": 192_640.0,
+                        "is_clear": False,
+                        "notes": "",
+                        "error_code": None,
+                        "math_check": {
+                            "status": "mismatch",
+                            "items_count": 3,
+                            "written_total": 192_640.0,
+                            "calculated_total": 180_640.0,
+                            "difference": 12_000.0,
+                            "line_errors": [
+                                {
+                                    "name": "Cola 1.5L",
+                                    "qty": 10.0,
+                                    "unit_price": 10_000.0,
+                                    "expected": 100_000.0,
+                                    "written": 112_000.0,
+                                    "difference": 12_000.0,
+                                }
+                            ],
+                            "warning_text": "Hisob-kitobda xatolik!",
+                        },
+                    }
+
+                monkeypatch.setattr(api_app_mod, "extract_nakladnoy_from_image", fake_extract_mismatch)
+                r_ai_mm = await client.post(
+                    "/ai/extract",
+                    headers=headers,
+                    files={"photo": ("n2.jpg", b"\xff\xd8\xff\xe0fake2", "image/jpeg")},
+                )
+                assert r_ai_mm.status_code == 200
+                mm = r_ai_mm.json()["math_check"]
+                assert mm["status"] == "mismatch"
+                assert mm["difference"] == 12_000.0
+                assert mm["calculated_total"] == 180_640.0
+                assert mm["rounded_calculated_total"] == 180_000.0
+                assert len(mm["line_errors"]) == 1
 
                 # 8c. Round amount via PATCH (sync rounding helper)
                 r_edit = await client.patch(
@@ -1815,4 +1857,330 @@ def test_mobile_apk_rest_api_and_group_posting(tmp_path: Path, monkeypatch):
         asyncio.run(scenario())
     finally:
         get_settings.cache_clear()
+
+
+def test_verify_nakladnoy_math_and_json_salvage():
+    import services.gemini_ai as ai_mod
+
+    v = ai_mod.verify_nakladnoy_math
+
+    # 1. Exact match & <=100 so'm rounding tolerance -> ok
+    r_ok = v(
+        written_total=100_000,
+        items=[
+            {"name": "Un", "qty": 5, "unit_price": 12_000, "line_total": 60_000},
+            {"name": "Shakar", "qty": 2, "unit_price": 20_000, "line_total": 40_000},
+        ],
+        items_complete=True,
+    )
+    assert r_ok["status"] == "ok" and r_ok["difference"] == 0.0 and r_ok["line_errors"] == []
+
+    r_tol = v(
+        written_total=100_050,
+        items=[
+            {"name": "Un", "qty": 1, "unit_price": 60_000, "line_total": 60_000},
+            {"name": "Yog'", "qty": 1, "unit_price": 40_000, "line_total": 40_000},
+        ],
+        items_complete=True,
+    )
+    assert r_tol["status"] == "ok"
+
+    # 2. Overcharge (+20 000 ortiqcha) and undercharge (-20 000 kam)
+    r_over = v(
+        written_total=120_000,
+        items=[
+            {"name": "A", "qty": 2, "unit_price": 25_000, "line_total": 50_000},
+            {"name": "B", "qty": 2, "unit_price": 25_000, "line_total": 50_000},
+        ],
+        items_complete=True,
+    )
+    assert r_over["status"] == "mismatch"
+    assert r_over["difference"] == 20_000.0
+    assert r_over["calculated_total"] == 100_000.0
+    assert "ortiqcha" in r_over["warning_text"]
+
+    r_under = v(
+        written_total=80_000,
+        items=[
+            {"name": "A", "qty": 2, "unit_price": 25_000, "line_total": 50_000},
+            {"name": "B", "qty": 2, "unit_price": 25_000, "line_total": 50_000},
+        ],
+        items_complete=True,
+    )
+    assert r_under["status"] == "mismatch"
+    assert r_under["difference"] == -20_000.0
+    assert "kam" in r_under["warning_text"]
+
+    # 3. Row multiplication error (10 * 5000 = 55000) multi-row & single-row
+    r_row_err = v(
+        written_total=75_000,
+        items=[
+            {"name": "Sut", "qty": 10, "unit_price": 5_000, "line_total": 55_000},
+            {"name": "Qaymoq", "qty": 2, "unit_price": 10_000, "line_total": 20_000},
+        ],
+        items_complete=True,
+    )
+    assert r_row_err["status"] == "mismatch"
+    assert r_row_err["calculated_total"] == 70_000.0
+    assert r_row_err["difference"] == 5_000.0
+    assert len(r_row_err["line_errors"]) == 1
+    assert r_row_err["line_errors"][0]["expected"] == 50_000.0
+
+    r_single_err = v(
+        written_total=55_000,
+        items=[{"name": "Sut", "qty": 10, "unit_price": 5_000, "line_total": 55_000}],
+        items_complete=False,
+    )
+    assert r_single_err["status"] == "mismatch"
+    assert r_single_err["calculated_total"] == 50_000.0
+    assert len(r_single_err["line_errors"]) == 1
+
+    # 4. OCR-misread guard (sum_expected == written_total -> ok, no false alarm)
+    r_misread = v(
+        written_total=50_000,
+        items=[{"name": "Sut", "qty": 10, "unit_price": 5_000, "line_total": 55_000}],
+        items_complete=True,
+    )
+    assert r_misread["status"] == "ok" and r_misread["line_errors"] == []
+
+    # 5. Shorthand thousands guard (5 * 12 = 60000 -> ok)
+    r_short = v(
+        written_total=60_000,
+        items=[
+            {"name": "Choy", "qty": 5, "unit_price": 12, "line_total": 60_000},
+        ],
+        items_complete=True,
+    )
+    assert r_short["status"] == "ok" and r_short["line_errors"] == []
+
+    # 6. Summary row & duplicate total safeguard filtered cleanly
+    r_sum_filter = v(
+        written_total=100_000,
+        items=[
+            {"name": "Tovar 1", "qty": 2, "unit_price": 30_000, "line_total": 60_000},
+            {"name": "Tovar 2", "qty": 2, "unit_price": 20_000, "line_total": 40_000},
+            {"name": "Итого к оплате", "qty": None, "unit_price": None, "line_total": 100_000},
+            {"name": "Hammasi", "qty": None, "unit_price": None, "line_total": 100_000},
+        ],
+        items_complete=True,
+    )
+    assert r_sum_filter["status"] == "ok" and r_sum_filter["items_count"] == 2
+
+    # 7. 12% VAT (QQS) check
+    r_vat = v(
+        written_total=112_000,
+        items=[
+            {"name": "A", "qty": 1, "unit_price": 60_000, "line_total": 60_000},
+            {"name": "B", "qty": 1, "unit_price": 40_000, "line_total": 40_000},
+        ],
+        items_complete=True,
+    )
+    assert r_vat["status"] == "vat_ok"
+
+    # 8. Adjustments (discount/return/prior debt) -> adjusted
+    r_adj = v(
+        written_total=90_000,
+        items=[
+            {"name": "A", "qty": 1, "unit_price": 60_000, "line_total": 60_000},
+            {"name": "B", "qty": 1, "unit_price": 40_000, "line_total": 40_000},
+        ],
+        items_complete=True,
+        has_adjustments=True,
+    )
+    assert r_adj["status"] == "adjusted"
+
+    # 9. Cropped/incomplete multi-row photo -> skipped (no false alarm)
+    r_inc = v(
+        written_total=150_000,
+        items=[
+            {"name": "A", "qty": 1, "unit_price": 25_000, "line_total": 25_000},
+            {"name": "B", "qty": 1, "unit_price": 25_000, "line_total": 25_000},
+        ],
+        items_complete=False,
+    )
+    assert r_inc["status"] == "skipped"
+
+    # 10. Missing written_total -> computed from complete rows
+    r_comp = v(
+        written_total=None,
+        items=[
+            {"name": "A", "qty": 2, "unit_price": 15_000, "line_total": 30_000},
+            {"name": "B", "qty": 1, "unit_price": 20_000, "line_total": 20_000},
+        ],
+        items_complete=True,
+    )
+    assert r_comp["status"] == "computed" and r_comp["calculated_total"] == 50_000.0
+
+    # 11. Truncated JSON salvage preserves core OCR fields
+    trunc = (
+        '{"supplier_name": "Nafis", "amount": 250000, "is_clear": true, '
+        '"notes": "Mahsulotlar", "items": [{"name": "A", "qty": 1'
+    )
+    salv = ai_mod._extract_json_object(trunc)
+    assert salv["supplier_name"] == "Nafis"
+    assert salv["amount"] == 250000.0
+    assert salv["is_clear"] is True
+    assert salv["items_complete"] is False
+    assert salv["items"] == []
+
+
+def test_nakladnoy_math_mismatch_disables_autoconfirm_and_use_calc_button(tmp_path: Path, monkeypatch):
+    from types import SimpleNamespace
+    from bot.handlers import wallet_nakladnoy as wallet_mod
+    from bot.keyboards import nakladnoy_confirm_kb
+    from config import get_settings
+    from database.crud import get_nakladnoy, get_or_create_open_session, set_app_setting
+    import services.gemini_ai as ai_mod
+
+    monkeypatch.setenv("BOT_TOKEN", "test-token")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("ADMIN_IDS", "111")
+    get_settings.cache_clear()
+
+    # 1. Keyboard button verification
+    kb = nakladnoy_confirm_kb(42, suggested_calc_amount=100_000)
+    cbs = [b.callback_data for row in kb.inline_keyboard for b in row]
+    assert "nak:use_calc:42:100000" in cbs
+    assert "nak:set_calc:42:100000" in cbs
+
+    async def fake_gemini_mismatch(parts, response_schema=None):
+        return (
+            {
+                "supplier_name": "Nafis",
+                "amount": 120_000,
+                "is_clear": True,
+                "notes": "Sut va non",
+                "items_complete": True,
+                "has_adjustments": False,
+                "items": [
+                    {"name": "Sut", "qty": 5, "unit_price": 12_000, "line_total": 60_000},
+                    {"name": "Non", "qty": 10, "unit_price": 4_000, "line_total": 40_000},
+                ],
+            },
+            {"promptTokenCount": 10, "candidatesTokenCount": 50, "totalTokenCount": 60},
+            "gemini-flash-lite-latest",
+        )
+
+    monkeypatch.setattr(ai_mod, "_call_gemini", fake_gemini_mismatch)
+
+    class FakeState:
+        def __init__(self) -> None:
+            self.cur_state = None
+            self.data: dict = {}
+
+        async def get_state(self):
+            return self.cur_state
+
+        async def clear(self) -> None:
+            self.cur_state = None
+            self.data.clear()
+
+    class DummyBot:
+        async def get_me(self):
+            return SimpleNamespace(username="hisobchi_test_bot")
+
+        async def send_message(self, *args, **kwargs):
+            return SimpleNamespace(message_id=99)
+
+    sent_cards: list[tuple[str, object]] = []
+    edited_cards: list[tuple[str, object]] = []
+    cb_alerts: list[str] = []
+
+    async def scenario() -> None:
+        # 2. extract_nakladnoy_from_image forces is_clear=False on mismatch even if Gemini returned is_clear=True
+        extracted = await ai_mod.extract_nakladnoy_from_image(b"img")
+        assert extracted["math_check"]["status"] == "mismatch"
+        assert extracted["is_clear"] is False
+
+        db_file = tmp_path / "math_mismatch.db"
+        eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+        monkeypatch.setattr(wallet_mod, "async_session_maker", maker)
+        try:
+            await init_db(engine_override=eng, session_maker_override=maker)
+            async with maker() as db:
+                await set_app_setting(db, "auto_confirm", "on")
+                await set_app_setting(db, "round_mode", "floor_1000")
+                await get_or_create_open_session(db, report_date="2026-11-22")
+
+            user = SimpleNamespace(id=111, full_name="Admin")
+            chat = SimpleNamespace(id=111, type="private")
+            dummy_bot = DummyBot()
+
+            class FakeMsg:
+                def __init__(self) -> None:
+                    self.message_id = 10
+                    self.chat = chat
+                    self.from_user = user
+                    self.text = ""
+                    self.bot = dummy_bot
+
+                async def answer(self, text: str, reply_markup=None, **kwargs) -> None:
+                    sent_cards.append((text, reply_markup))
+
+                async def edit_text(self, text: str, reply_markup=None, **kwargs) -> None:
+                    edited_cards.append((text, reply_markup))
+
+            class FakeCb:
+                def __init__(self, data: str, msg: FakeMsg) -> None:
+                    self.data = data
+                    self.from_user = user
+                    self.message = msg
+                    self.bot = dummy_bot
+
+                async def answer(self, text: str = "", **kwargs) -> None:
+                    if text:
+                        cb_alerts.append(text)
+
+            state = FakeState()
+            msg = FakeMsg()
+            # 3. _process_ready_nakladnoy disables auto-confirm even if is_confident=True when math_check is mismatch
+            await wallet_mod._process_ready_nakladnoy(
+                message=msg,
+                state=state,
+                supplier_name="Nafis",
+                raw_amount=120_000,
+                photo_file_id=None,
+                notes="Sut va non",
+                is_confident=True,
+                math_check=extracted["math_check"],
+                actor_id=111,
+            )
+            assert len(sent_cards) == 1
+            card_text, card_kb = sent_cards[0]
+            assert "HISOB-KITOBDA XATOLIK" in card_text
+            card_cbs = [b.callback_data for row in card_kb.inline_keyboard for b in row]
+            use_cb = next(c for c in card_cbs if c.startswith("nak:use_calc:"))
+            set_cb = next(c for c in card_cbs if c.startswith("nak:set_calc:"))
+            payment_id = int(use_cb.split(":")[2])
+
+            async with maker() as db:
+                p_pending = await get_nakladnoy(db, payment_id)
+                assert p_pending is not None
+                assert p_pending.status == "pending"
+                assert float(p_pending.amount) == 120_000.0
+
+            # 4. Tap "Summani almashtirish" (nak:set_calc) updates pending amount without confirming
+            await wallet_mod.cb_nakladnoy_set_calculated(FakeCb(set_cb, msg), state)
+            async with maker() as db:
+                p_swapped = await get_nakladnoy(db, payment_id)
+                assert p_swapped.status == "pending"
+                assert float(p_swapped.amount) == 100_000.0
+
+            # 5. Reset back to 120_000 and tap "To'g'ri summa bilan tasdiqlash" (nak:use_calc)
+            from database.crud import update_nakladnoy as _upd_nak
+            async with maker() as db:
+                await _upd_nak(db, payment_id, amount=120_000.0)
+            await wallet_mod.cb_nakladnoy_use_calculated(FakeCb(use_cb, msg), state)
+            async with maker() as db:
+                p_done = await get_nakladnoy(db, payment_id)
+                assert p_done.status == "confirmed"
+                assert float(p_done.amount) == 100_000.0
+        finally:
+            await eng.dispose()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        get_settings.cache_clear()
+
 

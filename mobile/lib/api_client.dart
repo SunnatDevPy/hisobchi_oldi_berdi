@@ -932,6 +932,76 @@ class ApkVersionInfo {
       );
 }
 
+class MathLineError {
+  final String name;
+  final double? qty;
+  final double? unitPrice;
+  final double expected;
+  final double written;
+  final double difference;
+
+  const MathLineError({
+    required this.name,
+    this.qty,
+    this.unitPrice,
+    required this.expected,
+    required this.written,
+    required this.difference,
+  });
+
+  factory MathLineError.fromJson(Map<String, dynamic> j) => MathLineError(
+        name: (j['name'] ?? 'Mahsulot').toString(),
+        qty: (j['qty'] as num?)?.toDouble(),
+        unitPrice: (j['unit_price'] as num?)?.toDouble(),
+        expected: (j['expected'] as num?)?.toDouble() ?? 0.0,
+        written: (j['written'] as num?)?.toDouble() ?? 0.0,
+        difference: (j['difference'] as num?)?.toDouble() ?? 0.0,
+      );
+}
+
+class MathCheckResult {
+  final String status; // ok | vat_ok | computed | adjusted | mismatch | skipped
+  final int itemsCount;
+  final double? writtenTotal;
+  final double? calculatedTotal;
+  final double? roundedCalculatedTotal;
+  final double? difference;
+  final List<MathLineError> lineErrors;
+  final String warningText;
+
+  const MathCheckResult({
+    required this.status,
+    required this.itemsCount,
+    this.writtenTotal,
+    this.calculatedTotal,
+    this.roundedCalculatedTotal,
+    this.difference,
+    this.lineErrors = const [],
+    this.warningText = '',
+  });
+
+  bool get isMismatch => status == 'mismatch';
+  bool get isOk => status == 'ok' || status == 'vat_ok';
+  bool get isComputed => status == 'computed';
+  bool get isAdjusted => status == 'adjusted';
+  bool get hasDisplay => status != 'skipped' && itemsCount > 0;
+
+  factory MathCheckResult.fromJson(Map<String, dynamic> j) => MathCheckResult(
+        status: (j['status'] ?? 'skipped').toString(),
+        itemsCount: (j['items_count'] as num?)?.toInt() ?? 0,
+        writtenTotal: (j['written_total'] as num?)?.toDouble(),
+        calculatedTotal: (j['calculated_total'] as num?)?.toDouble(),
+        roundedCalculatedTotal:
+            (j['rounded_calculated_total'] as num?)?.toDouble(),
+        difference: (j['difference'] as num?)?.toDouble(),
+        lineErrors: ((j['line_errors'] as List?) ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(MathLineError.fromJson)
+            .toList(),
+        warningText: (j['warning_text'] ?? '').toString(),
+      );
+}
+
 class AiExtractResult {
   final bool ok;
   final String? supplierName;
@@ -941,6 +1011,7 @@ class AiExtractResult {
   final double? originalAmount;
   final bool isClear;
   final List<double> recentAmounts;
+  final MathCheckResult? mathCheck;
   final String? errorCode;
   final String message;
 
@@ -953,6 +1024,7 @@ class AiExtractResult {
     this.originalAmount,
     required this.isClear,
     required this.recentAmounts,
+    this.mathCheck,
     this.errorCode,
     required this.message,
   });
@@ -970,6 +1042,9 @@ class AiExtractResult {
         recentAmounts: ((j['recent_amounts'] as List?) ?? const [])
             .map((e) => (e as num).toDouble())
             .toList(),
+        mathCheck: j['math_check'] is Map<String, dynamic>
+            ? MathCheckResult.fromJson(j['math_check'] as Map<String, dynamic>)
+            : null,
         errorCode: j['error_code']?.toString(),
         message: (j['message'] ?? '').toString(),
       );
