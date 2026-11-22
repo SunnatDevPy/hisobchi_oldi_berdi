@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'api_client.dart';
 import 'theme.dart';
@@ -392,14 +393,22 @@ class _HeroActionBtn extends StatelessWidget {
 }
 
 /// Executive Dashboard Analytics Section:
-/// 1) 2x2 Payment Method Breakdown Cards with count, sum, and % progress bar
-/// 2) Top Suppliers Ranked Bar Chart
-/// 3) Full Cash & Kassa Oldi-Berdi Timeline List (with exact date/time, type, note, edit/delete)
-class DashboardAnalyticsSection extends StatelessWidget {
+/// 1) Dumaloq Statistika (Interactive Custom-Painted Donut Chart)
+/// 2) Chiziqli Statistika (Interactive Smooth Bezier Trend Line & Area Chart with Date Selector)
+/// 3) 2x2 Payment Method Breakdown Cards with count, sum, and % progress bar
+/// 4) Unified Chronological Timeline ("Qachon nima oldi va kimga pul berilgani")
+/// 5) Top Suppliers Ranked Bar Chart
+class DashboardAnalyticsSection extends StatefulWidget {
   final StatusSummary summary;
   final bool canWrite;
+  final List<Map<String, dynamic>> dailySeries;
+  final String periodLabel;
+  final String activePeriodKey; // '7d' | '14d' | '30d' | 'custom'
+  final ValueChanged<String> onSelectPeriodKey;
+  final VoidCallback onPickCustomDateRange;
   final ValueChanged<String> onTapPaymentFilter;
   final VoidCallback onOpenNakladnoyTab;
+  final ValueChanged<NakladnoyItem> onTapNakladnoy;
   final ValueChanged<CashTxItem> onEditCashTx;
   final ValueChanged<CashTxItem> onDeleteCashTx;
 
@@ -407,14 +416,30 @@ class DashboardAnalyticsSection extends StatelessWidget {
     super.key,
     required this.summary,
     required this.canWrite,
+    this.dailySeries = const [],
+    this.periodLabel = 'Oxirgi 7 kun',
+    this.activePeriodKey = '7d',
+    required this.onSelectPeriodKey,
+    required this.onPickCustomDateRange,
     required this.onTapPaymentFilter,
     required this.onOpenNakladnoyTab,
+    required this.onTapNakladnoy,
     required this.onEditCashTx,
     required this.onDeleteCashTx,
   });
 
   @override
+  State<DashboardAnalyticsSection> createState() =>
+      _DashboardAnalyticsSectionState();
+}
+
+class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
+  String _timelineFilter = 'all'; // all | in | out | debt
+  int? _selectedTrendIdx;
+
+  @override
   Widget build(BuildContext context) {
+    final summary = widget.summary;
     final naks = summary.nakladnoys;
     final cashCnt =
         naks.where((n) => !n.isDebt && n.paymentMethod == 'cash').length;
@@ -446,14 +471,47 @@ class DashboardAnalyticsSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // 1. Payment Methods Breakdown (2x2 Bento Grid)
+        // 1. DUMALOQ STATISTIKA (Interactive Donut Chart Card)
+        _DonutStatisticsCard(
+          cashAmount: summary.totalNakladnoySpent,
+          cardAmount: summary.totalCardSpent,
+          transferAmount: summary.totalTransferSpent,
+          debtAmount: summary.totalDebtNakladnoy,
+          cashCount: cashCnt,
+          cardCount: cardCnt,
+          transferCount: transferCnt,
+          debtCount: debtCnt,
+          reportDate: summary.reportDate,
+          onTapMode: widget.onTapPaymentFilter,
+        ),
+        const SizedBox(height: 16),
+
+        // 2. CHIZIQLI STATISTIKA (Smooth Bezier Line & Area Trend Chart with Date Range Selector)
+        _TrendLineStatisticsCard(
+          dailySeries: widget.dailySeries,
+          periodLabel: widget.periodLabel,
+          activePeriodKey: widget.activePeriodKey,
+          selectedIdx: _selectedTrendIdx,
+          onSelectIdx: (i) => setState(() => _selectedTrendIdx = i),
+          onSelectPeriodKey: (k) {
+            setState(() => _selectedTrendIdx = null);
+            widget.onSelectPeriodKey(k);
+          },
+          onPickCustomDateRange: () {
+            setState(() => _selectedTrendIdx = null);
+            widget.onPickCustomDateRange();
+          },
+        ),
+        const SizedBox(height: 18),
+
+        // 3. Payment Methods Breakdown (2x2 Bento Grid)
         Row(
           children: [
-            const Icon(Icons.pie_chart_rounded,
+            const Icon(Icons.grid_view_rounded,
                 size: 19, color: AppTokens.brand),
             const SizedBox(width: 7),
             Text(
-              "To'lov turlari bo'yicha (${naks.length} ta)",
+              "To'lov turlari kesimida (${naks.length} ta)",
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w900,
@@ -462,7 +520,7 @@ class DashboardAnalyticsSection extends StatelessWidget {
             ),
             const Spacer(),
             TextButton.icon(
-              onPressed: onOpenNakladnoyTab,
+              onPressed: widget.onOpenNakladnoyTab,
               icon: const Icon(Icons.receipt_long_rounded, size: 16),
               label: const Text('Ro\'yxat'),
             ),
@@ -481,7 +539,7 @@ class DashboardAnalyticsSection extends StatelessWidget {
                     : 0,
                 icon: Icons.payments_rounded,
                 color: AppTokens.cashGreen,
-                onTap: () => onTapPaymentFilter('cash'),
+                onTap: () => widget.onTapPaymentFilter('cash'),
               ),
             ),
             const SizedBox(width: 10),
@@ -494,7 +552,7 @@ class DashboardAnalyticsSection extends StatelessWidget {
                     grandTotal > 0 ? summary.totalCardSpent / grandTotal : 0,
                 icon: Icons.credit_card_rounded,
                 color: AppTokens.cardBlue,
-                onTap: () => onTapPaymentFilter('card'),
+                onTap: () => widget.onTapPaymentFilter('card'),
               ),
             ),
           ],
@@ -512,13 +570,13 @@ class DashboardAnalyticsSection extends StatelessWidget {
                     : 0,
                 icon: Icons.account_balance_rounded,
                 color: AppTokens.transferPurple,
-                onTap: () => onTapPaymentFilter('transfer'),
+                onTap: () => widget.onTapPaymentFilter('transfer'),
               ),
             ),
             const SizedBox(width: 10),
             Expanded(
               child: _PaymentKpiCard(
-                title: 'Qarzga (bugun)',
+                title: 'Qarzga (${summary.reportDate})',
                 amount: summary.totalDebtNakladnoy,
                 count: debtCnt,
                 share: grandTotal > 0
@@ -529,229 +587,18 @@ class DashboardAnalyticsSection extends StatelessWidget {
                 subtitle: summary.allUnpaidDebtCount > 0
                     ? 'Jami qarz: ${formatUzsCompact(summary.allUnpaidDebtTotal)}'
                     : null,
-                onTap: () => onTapPaymentFilter('debt'),
+                onTap: () => widget.onTapPaymentFilter('debt'),
               ),
             ),
           ],
         ),
         const SizedBox(height: 18),
 
-        // 2. Pul oldi-berdi va Kassa qarz / qaytarish tarixi (Full Timeline Card)
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: AppTokens.cashGreen.withValues(alpha: 0.14),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: const Icon(Icons.swap_vert_circle_rounded,
-                          color: AppTokens.cashGreen, size: 20),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Pul oldi-berdi va Kassa amallari',
-                            style: TextStyle(
-                              fontSize: 15.5,
-                              fontWeight: FontWeight.w900,
-                              color: textPrimaryOf(context),
-                            ),
-                          ),
-                          Text(
-                            'Bugungi kirim, kassadan qarz va qaytarishlar (${summary.cashTransactions.length} ta)',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: textSecondaryOf(context),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-
-                // Mini summary strip for Kassa
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .surfaceContainerHighest
-                        .withValues(alpha: 0.45),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: _MiniKassaCol(
-                          label: 'Pul olindi',
-                          value: '+${formatUzs(summary.mainCashIn)}',
-                          color: AppTokens.cashGreen,
-                        ),
-                      ),
-                      Expanded(
-                        child: _MiniKassaCol(
-                          label: 'Kassadan qarz',
-                          value: '+${formatUzs(summary.kassaDebtToday)}',
-                          color: AppTokens.cardBlue,
-                        ),
-                      ),
-                      Expanded(
-                        child: _MiniKassaCol(
-                          label: 'Qaytarildi',
-                          value: '-${formatUzs(summary.kassaRepayToday)}',
-                          color: AppTokens.debtAmber,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 10),
-
-                if (summary.cashTransactions.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    child: Text(
-                      "Bugun hali kassa amallari kiritilmagan. Yuqoridagi 'Pul oldim', 'Kassa qarz' yoki 'Qaytarish' tugmasidan qo'shing.",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        color: textSecondaryOf(context),
-                      ),
-                    ),
-                  )
-                else
-                  ...summary.cashTransactions.reversed.map((tx) {
-                    final spec = _txTypeSpec(context, tx.sourceType);
-                    return Container(
-                      margin: const EdgeInsets.only(top: 8),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 10),
-                      decoration: BoxDecoration(
-                        color: spec.bg,
-                        borderRadius: BorderRadius.circular(13),
-                        border: Border.all(color: spec.border),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(spec.icon, color: spec.fg, size: 20),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Text(
-                                      spec.title,
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 13.5,
-                                        color: textPrimaryOf(context),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: spec.fg.withValues(alpha: 0.15),
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      child: Text(
-                                        tx.timeHm,
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w800,
-                                          color: spec.fg,
-                                          fontFeatures: AppTokens.tabularNums,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                if (tx.note.isNotEmpty) ...[
-                                  const SizedBox(height: 3),
-                                  Text(
-                                    'Izoh: ${tx.note}',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                      color: textSecondaryOf(context),
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                          Text(
-                            '${spec.sign}${formatUzs(tx.amount)}',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w900,
-                              fontSize: 14.5,
-                              color: spec.fg,
-                              fontFeatures: AppTokens.tabularNums,
-                            ),
-                          ),
-                          if (canWrite) ...[
-                            const SizedBox(width: 4),
-                            PopupMenuButton<String>(
-                              icon: Icon(Icons.more_vert_rounded,
-                                  size: 18, color: textSecondaryOf(context)),
-                              onSelected: (v) {
-                                if (v == 'edit') onEditCashTx(tx);
-                                if (v == 'delete') onDeleteCashTx(tx);
-                              },
-                              itemBuilder: (_) => const [
-                                PopupMenuItem(
-                                  value: 'edit',
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.edit_rounded, size: 17),
-                                      SizedBox(width: 8),
-                                      Text('Tahrirlash'),
-                                    ],
-                                  ),
-                                ),
-                                PopupMenuItem(
-                                  value: 'delete',
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.delete_outline_rounded,
-                                          size: 17, color: AppTokens.dangerRed),
-                                      SizedBox(width: 8),
-                                      Text("O'chirish",
-                                          style: TextStyle(
-                                              color: AppTokens.dangerRed)),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ],
-                      ),
-                    );
-                  }),
-              ],
-            ),
-          ),
-        ),
+        // 4. QACHON NIMA OLDI VA KIMGA PUL BERILGANI (Unified Chronological Cash-Flow Journal)
+        _buildUnifiedTimelineCard(context, summary),
         const SizedBox(height: 16),
 
-        // 3. Top Postavshiklar (Ranked Visual Bars)
+        // 5. Top Postavshiklar (Ranked Visual Bars)
         if (topSuppliers.isNotEmpty)
           Card(
             child: Padding(
@@ -773,7 +620,7 @@ class DashboardAnalyticsSection extends StatelessWidget {
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'Bugungi Top Postavshiklar',
+                          'Top Postavshiklar (${summary.reportDate})',
                           style: TextStyle(
                             fontSize: 15.5,
                             fontWeight: FontWeight.w900,
@@ -782,7 +629,7 @@ class DashboardAnalyticsSection extends StatelessWidget {
                         ),
                       ),
                       TextButton(
-                        onPressed: onOpenNakladnoyTab,
+                        onPressed: widget.onOpenNakladnoyTab,
                         child: const Text('Barchasi'),
                       ),
                     ],
@@ -828,8 +675,8 @@ class DashboardAnalyticsSection extends StatelessWidget {
                             child: LinearProgressIndicator(
                               value: ratio,
                               minHeight: 7,
-                              backgroundColor: AppTokens.brand
-                                  .withValues(alpha: 0.12),
+                              backgroundColor:
+                                  AppTokens.brand.withValues(alpha: 0.12),
                               valueColor: const AlwaysStoppedAnimation<Color>(
                                   AppTokens.brand),
                             ),
@@ -846,8 +693,368 @@ class DashboardAnalyticsSection extends StatelessWidget {
     );
   }
 
+  Widget _buildUnifiedTimelineCard(
+      BuildContext context, StatusSummary summary) {
+    // Combine cashTransactions (Pul olindi / Kassa qarz / Qaytarildi) AND nakladnoys (Kimga pul berildi)
+    final events = <_TimelineEvent>[];
+
+    for (final tx in summary.cashTransactions) {
+      final spec = _txTypeSpec(context, tx.sourceType);
+      final isOut = tx.sourceType == 'kassa_repay';
+      events.add(
+        _TimelineEvent(
+          kind: isOut ? 'out' : 'in',
+          timeHm: tx.timeHm,
+          createdAt: tx.createdAt,
+          badgeText: spec.badge,
+          title: tx.note.isNotEmpty ? tx.note : spec.title,
+          subtitle: spec.title,
+          amount: tx.amount,
+          sign: spec.sign,
+          icon: spec.icon,
+          fg: spec.fg,
+          bg: spec.bg,
+          border: spec.border,
+          cashTx: tx,
+        ),
+      );
+    }
+
+    for (final nak in summary.nakladnoys) {
+      final spec = _nakTypeSpec(context, nak);
+      events.add(
+        _TimelineEvent(
+          kind: nak.isDebt ? 'debt' : 'out',
+          timeHm: nak.timeHm,
+          createdAt: nak.createdAt,
+          badgeText: '${spec.badge} • ${nak.displayNum}',
+          title: nak.supplierName,
+          subtitle: nak.note.isNotEmpty
+              ? '💬 ${nak.note}'
+              : "Postavshikka to'lov (${spec.methodLabel})",
+          amount: nak.amount,
+          sign: spec.sign,
+          icon: spec.icon,
+          fg: spec.fg,
+          bg: spec.bg,
+          border: spec.border,
+          nakladnoy: nak,
+        ),
+      );
+    }
+
+    // Sort newest first by createdAt / timeHm
+    events.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+    final inCount = events.where((e) => e.kind == 'in').length;
+    final outCount = events.where((e) => e.kind == 'out').length;
+    final debtCount = events.where((e) => e.kind == 'debt').length;
+
+    final filtered = events.where((e) {
+      if (_timelineFilter == 'all') return true;
+      return e.kind == _timelineFilter;
+    }).toList();
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    gradient: AppTokens.heroGradient,
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  child: const Icon(Icons.timeline_rounded,
+                      color: Colors.white, size: 20),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "Qachon nima olindi va Kimga pul berildi",
+                        style: TextStyle(
+                          fontSize: 15.5,
+                          fontWeight: FontWeight.w900,
+                          color: textPrimaryOf(context),
+                        ),
+                      ),
+                      Text(
+                        '${summary.reportDate} sanadagi barcha kirim va chiqimlar xronologiyasi (${events.length} ta)',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: textSecondaryOf(context),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+
+            // Mini Kassa Summary Strip
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: Theme.of(context)
+                    .colorScheme
+                    .surfaceContainerHighest
+                    .withValues(alpha: 0.45),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _MiniKassaCol(
+                      label: 'Pul olindi',
+                      value: '+${formatUzs(summary.mainCashIn)}',
+                      color: AppTokens.cashGreen,
+                    ),
+                  ),
+                  Expanded(
+                    child: _MiniKassaCol(
+                      label: 'Kassadan qarz',
+                      value: '+${formatUzs(summary.kassaDebtToday)}',
+                      color: AppTokens.cardBlue,
+                    ),
+                  ),
+                  Expanded(
+                    child: _MiniKassaCol(
+                      label: 'Kassaga qaytdi',
+                      value: '−${formatUzs(summary.kassaRepayToday)}',
+                      color: AppTokens.debtAmber,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            // Filter Pills: Barchasi | Pul olindi | Kimga berildi | Qarzga
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _timelineChip('all', '⚡ Barchasi (${events.length})'),
+                  const SizedBox(width: 6),
+                  _timelineChip('in', '🟢 Pul olindi ($inCount)'),
+                  const SizedBox(width: 6),
+                  _timelineChip('out', '🔴 Kimga berildi ($outCount)'),
+                  const SizedBox(width: 6),
+                  _timelineChip('debt', '📌 Qarzga ($debtCount)'),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            if (filtered.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 18),
+                child: Text(
+                  "Bu bo'limda hozircha amallar yo'q.",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: textSecondaryOf(context),
+                  ),
+                ),
+              )
+            else
+              ...filtered.map((ev) => _buildTimelineRow(context, ev)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _timelineChip(String key, String label) {
+    final sel = _timelineFilter == key;
+    return ChoiceChip(
+      label: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: sel ? FontWeight.w900 : FontWeight.w700,
+        ),
+      ),
+      selected: sel,
+      onSelected: (_) => setState(() => _timelineFilter = key),
+    );
+  }
+
+  Widget _buildTimelineRow(BuildContext context, _TimelineEvent ev) {
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      decoration: BoxDecoration(
+        color: ev.bg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: ev.border),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () {
+          if (ev.nakladnoy != null) {
+            widget.onTapNakladnoy(ev.nakladnoy!);
+          } else if (ev.cashTx != null && widget.canWrite) {
+            widget.onEditCashTx(ev.cashTx!);
+          }
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: ev.fg.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: Icon(ev.icon, color: ev.fg, size: 20),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: ev.fg.withValues(alpha: 0.16),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            '⏰ ${ev.timeHm}',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                              color: ev.fg,
+                              fontFeatures: AppTokens.tabularNums,
+                            ),
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: ev.fg.withValues(alpha: 0.11),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            ev.badgeText,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              color: ev.fg,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      ev.title,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 14.5,
+                        color: textPrimaryOf(context),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      ev.subtitle,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: textSecondaryOf(context),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '${ev.sign}${formatUzs(ev.amount)}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 15,
+                      color: ev.fg,
+                      fontFeatures: AppTokens.tabularNums,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    "so'm",
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: textSecondaryOf(context),
+                    ),
+                  ),
+                ],
+              ),
+              if (ev.cashTx != null && widget.canWrite) ...[
+                const SizedBox(width: 2),
+                PopupMenuButton<String>(
+                  icon: Icon(Icons.more_vert_rounded,
+                      size: 18, color: textSecondaryOf(context)),
+                  onSelected: (v) {
+                    if (v == 'edit') widget.onEditCashTx(ev.cashTx!);
+                    if (v == 'delete') widget.onDeleteCashTx(ev.cashTx!);
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(
+                      value: 'edit',
+                      child: Row(
+                        children: [
+                          Icon(Icons.edit_rounded, size: 17),
+                          SizedBox(width: 8),
+                          Text('Tahrirlash'),
+                        ],
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 'delete',
+                      child: Row(
+                        children: [
+                          Icon(Icons.delete_outline_rounded,
+                              size: 17, color: AppTokens.dangerRed),
+                          SizedBox(width: 8),
+                          Text("O'chirish",
+                              style: TextStyle(color: AppTokens.dangerRed)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   ({
     String title,
+    String badge,
     String sign,
     IconData icon,
     Color fg,
@@ -859,7 +1066,8 @@ class DashboardAnalyticsSection extends StatelessWidget {
         final (fg, bg, border) =
             AppTokens.semanticSurface(context, AppTokens.cardBlue);
         return (
-          title: 'Kassadan qarz olindi',
+          title: 'Kassadan vaqtincha qarz olindi',
+          badge: '🏦 KASSADAN QARZ',
           sign: '+',
           icon: Icons.account_balance_rounded,
           fg: fg,
@@ -870,7 +1078,8 @@ class DashboardAnalyticsSection extends StatelessWidget {
         final (fg, bg, border) =
             AppTokens.semanticSurface(context, AppTokens.debtAmber);
         return (
-          title: 'Kassaga qaytarildi',
+          title: 'Kassaga qarz qaytarildi',
+          badge: '↩️ KASSAGA QAYTARILDI',
           sign: '−',
           icon: Icons.assignment_return_rounded,
           fg: fg,
@@ -881,7 +1090,8 @@ class DashboardAnalyticsSection extends StatelessWidget {
         final (fg, bg, border) =
             AppTokens.semanticSurface(context, AppTokens.cashGreen);
         return (
-          title: 'Asosiy pul olindi',
+          title: 'Asosiy pul olindi (Kirim)',
+          badge: '🟢 PUL OLINDI',
           sign: '+',
           icon: Icons.add_card_rounded,
           fg: fg,
@@ -890,6 +1100,829 @@ class DashboardAnalyticsSection extends StatelessWidget {
         );
     }
   }
+
+  ({
+    String badge,
+    String methodLabel,
+    String sign,
+    IconData icon,
+    Color fg,
+    Color bg,
+    Color border
+  }) _nakTypeSpec(BuildContext context, NakladnoyItem nak) {
+    if (nak.isDebt) {
+      final (fg, bg, border) =
+          AppTokens.semanticSurface(context, AppTokens.debtAmber);
+      return (
+        badge: '📌 QARZGA YOZILDI',
+        methodLabel: 'Qarzga',
+        sign: '',
+        icon: Icons.push_pin_rounded,
+        fg: fg,
+        bg: bg,
+        border: border,
+      );
+    }
+    switch (nak.paymentMethod) {
+      case 'card':
+        final (fg, bg, border) =
+            AppTokens.semanticSurface(context, AppTokens.cardBlue);
+        return (
+          badge: '💳 KARTA BERILDI',
+          methodLabel: 'Karta orqali',
+          sign: '−',
+          icon: Icons.credit_card_rounded,
+          fg: fg,
+          bg: bg,
+          border: border,
+        );
+      case 'transfer':
+        final (fg, bg, border) =
+            AppTokens.semanticSurface(context, AppTokens.transferPurple);
+        return (
+          badge: "🏦 O'TKAZMA BERILDI",
+          methodLabel: 'Perechesleniya',
+          sign: '−',
+          icon: Icons.account_balance_rounded,
+          fg: fg,
+          bg: bg,
+          border: border,
+        );
+      default:
+        final (fg, bg, border) =
+            AppTokens.semanticSurface(context, AppTokens.dangerRed);
+        return (
+          badge: '💵 NAQD PUL BERILDI',
+          methodLabel: 'Naqd pulda',
+          sign: '−',
+          icon: Icons.north_east_rounded,
+          fg: fg,
+          bg: bg,
+          border: border,
+        );
+    }
+  }
+}
+
+class _TimelineEvent {
+  final String kind; // in | out | debt
+  final String timeHm;
+  final String createdAt;
+  final String badgeText;
+  final String title;
+  final String subtitle;
+  final double amount;
+  final String sign;
+  final IconData icon;
+  final Color fg;
+  final Color bg;
+  final Color border;
+  final CashTxItem? cashTx;
+  final NakladnoyItem? nakladnoy;
+
+  const _TimelineEvent({
+    required this.kind,
+    required this.timeHm,
+    required this.createdAt,
+    required this.badgeText,
+    required this.title,
+    required this.subtitle,
+    required this.amount,
+    required this.sign,
+    required this.icon,
+    required this.fg,
+    required this.bg,
+    required this.border,
+    this.cashTx,
+    this.nakladnoy,
+  });
+}
+
+// ============================================================================
+// DUMALOQ STATISTIKA (Custom-Painted Multi-Segment Donut Chart)
+// ============================================================================
+
+class _DonutStatisticsCard extends StatelessWidget {
+  final double cashAmount;
+  final double cardAmount;
+  final double transferAmount;
+  final double debtAmount;
+  final int cashCount;
+  final int cardCount;
+  final int transferCount;
+  final int debtCount;
+  final String reportDate;
+  final ValueChanged<String> onTapMode;
+
+  const _DonutStatisticsCard({
+    required this.cashAmount,
+    required this.cardAmount,
+    required this.transferAmount,
+    required this.debtAmount,
+    required this.cashCount,
+    required this.cardCount,
+    required this.transferCount,
+    required this.debtCount,
+    required this.reportDate,
+    required this.onTapMode,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final total = cashAmount + cardAmount + transferAmount + debtAmount;
+    final totalCount = cashCount + cardCount + transferCount + debtCount;
+
+    final segments = <_DonutSeg>[
+      _DonutSeg('cash', "Naqd to'lov", cashAmount, cashCount,
+          AppTokens.cashGreen),
+      _DonutSeg(
+          'card', 'Karta orqali', cardAmount, cardCount, AppTokens.cardBlue),
+      _DonutSeg('transfer', "O'tkazma", transferAmount, transferCount,
+          AppTokens.transferPurple),
+      _DonutSeg(
+          'debt', 'Qarzga', debtAmount, debtCount, AppTokens.debtAmber),
+    ];
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppTokens.brand.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.donut_large_rounded,
+                      color: AppTokens.brand, size: 20),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Dumaloq Statistika (Xarajatlar ulushi)',
+                        style: TextStyle(
+                          fontSize: 15.5,
+                          fontWeight: FontWeight.w900,
+                          color: textPrimaryOf(context),
+                        ),
+                      ),
+                      Text(
+                        '$reportDate sanadagi nakladnoylar taqsimoti',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: textSecondaryOf(context),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                SizedBox(
+                  width: 142,
+                  height: 142,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      CustomPaint(
+                        size: const Size(142, 142),
+                        painter: _DonutRingPainter(
+                          segments: segments,
+                          total: total,
+                          trackColor: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest,
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.all(22),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'JAMI',
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.7,
+                                color: textSecondaryOf(context),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                formatUzsCompact(total),
+                                style: TextStyle(
+                                  fontSize: 16.5,
+                                  fontWeight: FontWeight.w900,
+                                  color: textPrimaryOf(context),
+                                  fontFeatures: AppTokens.tabularNums,
+                                ),
+                              ),
+                            ),
+                            Text(
+                              '$totalCount ta chek',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: textSecondaryOf(context),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    children: segments.map((s) {
+                      final pct = total > 0
+                          ? ((s.value / total) * 100).round()
+                          : 0;
+                      final (fg, bg, _) =
+                          AppTokens.semanticSurface(context, s.color);
+                      return InkWell(
+                        borderRadius: BorderRadius.circular(10),
+                        onTap: () => onTapMode(s.key),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 5, horizontal: 4),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 11,
+                                height: 11,
+                                decoration: BoxDecoration(
+                                  color: s.color,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            s.label,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              fontSize: 12.5,
+                                              fontWeight: FontWeight.w800,
+                                              color: textPrimaryOf(context),
+                                            ),
+                                          ),
+                                        ),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 6, vertical: 1.5),
+                                          decoration: BoxDecoration(
+                                            color: bg,
+                                            borderRadius:
+                                                BorderRadius.circular(6),
+                                          ),
+                                          child: Text(
+                                            '$pct%',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w900,
+                                              color: fg,
+                                              fontFeatures:
+                                                  AppTokens.tabularNums,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    Text(
+                                      '${formatUzs(s.value)} (${s.count} ta)',
+                                      style: TextStyle(
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.w600,
+                                        color: textSecondaryOf(context),
+                                        fontFeatures: AppTokens.tabularNums,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DonutSeg {
+  final String key;
+  final String label;
+  final double value;
+  final int count;
+  final Color color;
+
+  const _DonutSeg(this.key, this.label, this.value, this.count, this.color);
+}
+
+class _DonutRingPainter extends CustomPainter {
+  final List<_DonutSeg> segments;
+  final double total;
+  final Color trackColor;
+
+  const _DonutRingPainter({
+    required this.segments,
+    required this.total,
+    required this.trackColor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const strokeWidth = 17.0;
+    final rect = Offset(strokeWidth / 2, strokeWidth / 2) &
+        Size(size.width - strokeWidth, size.height - strokeWidth);
+
+    final trackPaint = Paint()
+      ..color = trackColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth;
+    canvas.drawArc(rect, 0, math.pi * 2, false, trackPaint);
+
+    if (total <= 0) return;
+
+    final nonZero = segments.where((s) => s.value > 0).toList();
+    final gap = nonZero.length > 1 ? 0.08 : 0.0;
+    var startAngle = -math.pi / 2;
+
+    for (final s in nonZero) {
+      final sweep = (s.value / total) * (math.pi * 2 - gap * nonZero.length);
+      final paint = Paint()
+        ..color = s.color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth
+        ..strokeCap = StrokeCap.round;
+      canvas.drawArc(rect, startAngle, math.max(sweep, 0.04), false, paint);
+      startAngle += sweep + gap;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DonutRingPainter oldDelegate) =>
+      oldDelegate.total != total || oldDelegate.segments != segments;
+}
+
+// ============================================================================
+// CHIZIQLI STATISTIKA (Custom-Painted Smooth Bezier Line & Area Trend Chart)
+// ============================================================================
+
+class _TrendLineStatisticsCard extends StatelessWidget {
+  final List<Map<String, dynamic>> dailySeries;
+  final String periodLabel;
+  final String activePeriodKey;
+  final int? selectedIdx;
+  final ValueChanged<int> onSelectIdx;
+  final ValueChanged<String> onSelectPeriodKey;
+  final VoidCallback onPickCustomDateRange;
+
+  const _TrendLineStatisticsCard({
+    required this.dailySeries,
+    required this.periodLabel,
+    required this.activePeriodKey,
+    required this.selectedIdx,
+    required this.onSelectIdx,
+    required this.onSelectPeriodKey,
+    required this.onPickCustomDateRange,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final pts = dailySeries;
+    final activeIdx = (selectedIdx != null &&
+            selectedIdx! >= 0 &&
+            selectedIdx! < pts.length)
+        ? selectedIdx!
+        : (pts.isNotEmpty ? pts.length - 1 : null);
+    final selectedPt = activeIdx != null ? pts[activeIdx] : null;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppTokens.brandViolet.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.show_chart_rounded,
+                      color: AppTokens.brandViolet, size: 20),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Chiziqli Statistika (Kunlik dinamika)',
+                        style: TextStyle(
+                          fontSize: 15.5,
+                          fontWeight: FontWeight.w900,
+                          color: textPrimaryOf(context),
+                        ),
+                      ),
+                      Text(
+                        periodLabel,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: textSecondaryOf(context),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+
+            // Period Selector Pills (7 kun | 14 kun | 30 kun | 📆 Sana..Sana)
+            Row(
+              children: [
+                _periodBtn(context, '7d', '7 kun'),
+                const SizedBox(width: 6),
+                _periodBtn(context, '14d', '14 kun'),
+                const SizedBox(width: 6),
+                _periodBtn(context, '30d', '30 kun'),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: activePeriodKey == 'custom'
+                      ? FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 8),
+                            minimumSize: const Size(60, 36),
+                          ),
+                          onPressed: onPickCustomDateRange,
+                          icon: const Icon(Icons.date_range_rounded, size: 15),
+                          label: const Text('Sana',
+                              style: TextStyle(fontSize: 12)),
+                        )
+                      : OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 8),
+                            minimumSize: const Size(60, 36),
+                          ),
+                          onPressed: onPickCustomDateRange,
+                          icon: const Icon(Icons.date_range_rounded, size: 15),
+                          label: const Text('Sana',
+                              style: TextStyle(fontSize: 12)),
+                        ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+
+            if (selectedPt != null)
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                decoration: BoxDecoration(
+                  color: AppTokens.brand.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.calendar_today_rounded,
+                        size: 14, color: AppTokens.brand),
+                    const SizedBox(width: 6),
+                    Text(
+                      selectedPt['date'].toString(),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 12.5,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      "Rasxod: ${formatUzs(selectedPt['spent'] as num?)} (${selectedPt['count']} ta)",
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 12.5,
+                        color: AppTokens.brand,
+                        fontFeatures: AppTokens.tabularNums,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 12),
+
+            if (pts.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 28),
+                child: Text(
+                  "Tanlangan sanalar oralig'ida ma'lumot topilmadi",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: textSecondaryOf(context)),
+                ),
+              )
+            else
+              SizedBox(
+                height: 165,
+                child: LayoutBuilder(
+                  builder: (ctx, constraints) {
+                    return GestureDetector(
+                      onTapDown: (details) {
+                        if (pts.length <= 1) {
+                          onSelectIdx(0);
+                          return;
+                        }
+                        final step = constraints.maxWidth / (pts.length - 1);
+                        final idx = (details.localPosition.dx / step)
+                            .round()
+                            .clamp(0, pts.length - 1);
+                        onSelectIdx(idx);
+                      },
+                      child: CustomPaint(
+                        size: Size(constraints.maxWidth, 165),
+                        painter: _SmoothLineChartPainter(
+                          points: pts,
+                          selectedIdx: activeIdx ?? 0,
+                          lineColor: AppTokens.brand,
+                          inflowColor: AppTokens.cashGreen,
+                          gridColor:
+                              textSecondaryOf(context).withValues(alpha: 0.18),
+                          labelColor: textSecondaryOf(context),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: const BoxDecoration(
+                    color: AppTokens.brand,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 5),
+                Text(
+                  'Kunlik nakladnoy rasxod',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    color: textSecondaryOf(context),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: const BoxDecoration(
+                    color: AppTokens.cashGreen,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 5),
+                Text(
+                  'Olingan pul (Kirim)',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    color: textSecondaryOf(context),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _periodBtn(BuildContext context, String key, String label) {
+    final sel = activePeriodKey == key;
+    return Expanded(
+      child: sel
+          ? FilledButton(
+              style: FilledButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                minimumSize: const Size(50, 36),
+              ),
+              onPressed: () {},
+              child: Text(label, style: const TextStyle(fontSize: 12)),
+            )
+          : OutlinedButton(
+              style: OutlinedButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                minimumSize: const Size(50, 36),
+              ),
+              onPressed: () => onSelectPeriodKey(key),
+              child: Text(label, style: const TextStyle(fontSize: 12)),
+            ),
+    );
+  }
+}
+
+class _SmoothLineChartPainter extends CustomPainter {
+  final List<Map<String, dynamic>> points;
+  final int selectedIdx;
+  final Color lineColor;
+  final Color inflowColor;
+  final Color gridColor;
+  final Color labelColor;
+
+  const _SmoothLineChartPainter({
+    required this.points,
+    required this.selectedIdx,
+    required this.lineColor,
+    required this.inflowColor,
+    required this.gridColor,
+    required this.labelColor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const topPad = 14.0;
+    const bottomPad = 24.0;
+    const hPad = 14.0;
+    final chartH = size.height - topPad - bottomPad;
+    final chartW = size.width - hPad * 2;
+
+    // Horizontal grid lines
+    final gridPaint = Paint()
+      ..color = gridColor
+      ..strokeWidth = 1;
+    for (var i = 0; i <= 3; i++) {
+      final y = topPad + (chartH / 3) * i;
+      canvas.drawLine(Offset(hPad, y), Offset(size.width - hPad, y), gridPaint);
+    }
+
+    double maxVal = 1.0;
+    for (final p in points) {
+      final s = ((p['spent'] as num?) ?? 0).toDouble();
+      final c = ((p['cash_in'] as num?) ?? 0).toDouble();
+      if (s > maxVal) maxVal = s;
+      if (c > maxVal) maxVal = c;
+    }
+
+    Offset ptFor(int idx, double val) {
+      final x = points.length <= 1
+          ? size.width / 2
+          : hPad + (chartW * idx / (points.length - 1));
+      final ratio = (val / maxVal).clamp(0.0, 1.0);
+      final y = topPad + chartH * (1.0 - ratio);
+      return Offset(x, y);
+    }
+
+    final spentOffsets = <Offset>[];
+    final inflowOffsets = <Offset>[];
+    for (var i = 0; i < points.length; i++) {
+      spentOffsets
+          .add(ptFor(i, ((points[i]['spent'] as num?) ?? 0).toDouble()));
+      inflowOffsets
+          .add(ptFor(i, ((points[i]['cash_in'] as num?) ?? 0).toDouble()));
+    }
+
+    // Draw inflow dashed/secondary curve
+    if (inflowOffsets.length >= 2) {
+      final inPath = _buildSmoothPath(inflowOffsets);
+      final inPaint = Paint()
+        ..color = inflowColor.withValues(alpha: 0.65)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.0;
+      canvas.drawPath(inPath, inPaint);
+    }
+
+    // Draw spent smooth curve + gradient area
+    if (spentOffsets.isNotEmpty) {
+      final linePath = _buildSmoothPath(spentOffsets);
+      if (spentOffsets.length >= 2) {
+        final areaPath = Path.from(linePath)
+          ..lineTo(spentOffsets.last.dx, topPad + chartH)
+          ..lineTo(spentOffsets.first.dx, topPad + chartH)
+          ..close();
+        final areaPaint = Paint()
+          ..shader = LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              lineColor.withValues(alpha: 0.30),
+              lineColor.withValues(alpha: 0.02),
+            ],
+          ).createShader(Rect.fromLTWH(0, topPad, size.width, chartH));
+        canvas.drawPath(areaPath, areaPaint);
+      }
+
+      final strokePaint = Paint()
+        ..color = lineColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3.0
+        ..strokeCap = StrokeCap.round;
+      canvas.drawPath(linePath, strokePaint);
+
+      for (var i = 0; i < spentOffsets.length; i++) {
+        final o = spentOffsets[i];
+        final isSel = i == selectedIdx;
+        canvas.drawCircle(
+          o,
+          isSel ? 6.0 : 3.8,
+          Paint()..color = isSel ? lineColor : Colors.white,
+        );
+        canvas.drawCircle(
+          o,
+          isSel ? 6.0 : 3.8,
+          Paint()
+            ..color = lineColor
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = isSel ? 2.5 : 2.0,
+        );
+
+        // Date label on X-axis (show up to 6 labels evenly spaced)
+        final step = math.max(1, (points.length / 5).ceil());
+        if (i % step == 0 || i == points.length - 1) {
+          final rawDate = points[i]['date'].toString();
+          final shortDate =
+              rawDate.length >= 10 ? rawDate.substring(5, 10) : rawDate;
+          final tp = TextPainter(
+            text: TextSpan(
+              text: shortDate,
+              style: TextStyle(
+                color: labelColor,
+                fontSize: 10,
+                fontWeight: isSel ? FontWeight.w900 : FontWeight.w600,
+              ),
+            ),
+            textDirection: TextDirection.ltr,
+          )..layout();
+          tp.paint(
+            canvas,
+            Offset(
+              (o.dx - tp.width / 2).clamp(0.0, size.width - tp.width),
+              topPad + chartH + 6,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  Path _buildSmoothPath(List<Offset> pts) {
+    final path = Path();
+    if (pts.isEmpty) return path;
+    path.moveTo(pts.first.dx, pts.first.dy);
+    if (pts.length == 1) {
+      path.lineTo(pts.first.dx + 1, pts.first.dy);
+      return path;
+    }
+    for (var i = 0; i < pts.length - 1; i++) {
+      final p0 = pts[i];
+      final p1 = pts[i + 1];
+      final midX = (p0.dx + p1.dx) / 2;
+      path.cubicTo(midX, p0.dy, midX, p1.dy, p1.dx, p1.dy);
+    }
+    return path;
+  }
+
+  @override
+  bool shouldRepaint(covariant _SmoothLineChartPainter oldDelegate) =>
+      oldDelegate.points != points || oldDelegate.selectedIdx != selectedIdx;
 }
 
 class _MiniKassaCol extends StatelessWidget {

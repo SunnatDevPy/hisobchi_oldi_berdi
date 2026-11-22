@@ -1591,6 +1591,8 @@ async def get_period_statistics(db: AsyncSession, date_from: str, date_to: str) 
     pm_totals = {"cash": 0.0, "card": 0.0, "transfer": 0.0}
     pm_counts = {"cash": 0, "card": 0, "transfer": 0}
     by_day: Dict[str, float] = {}
+    by_day_count: Dict[str, int] = {}
+    by_day_cash_in: Dict[str, float] = {}
     by_sup: Dict[str, list] = {}
 
     for pay, r_date in nak_rows:
@@ -1598,11 +1600,27 @@ async def get_period_statistics(db: AsyncSession, date_from: str, date_to: str) 
         pm_totals[pm] += float(pay.amount)
         pm_counts[pm] += 1
         by_day[r_date] = by_day.get(r_date, 0.0) + float(pay.amount)
+        by_day_count[r_date] = by_day_count.get(r_date, 0) + 1
         raw_name = " ".join(pay.supplier_name.strip().split())
         canon = alias_map.get(raw_name.lower(), raw_name)
         entry = by_sup.setdefault(canon.lower(), [canon, 0, 0.0])
         entry[1] += 1
         entry[2] += float(pay.amount)
+
+    for tx, r_date in cash_rows:
+        if tx.source_type == "main":
+            by_day_cash_in[r_date] = by_day_cash_in.get(r_date, 0.0) + float(tx.amount)
+
+    all_day_keys = sorted(set(by_day.keys()) | set(by_day_cash_in.keys()))
+    daily_series = [
+        {
+            "date": d,
+            "spent": float(by_day.get(d, 0.0)),
+            "cash_in": float(by_day_cash_in.get(d, 0.0)),
+            "count": int(by_day_count.get(d, 0)),
+        }
+        for d in all_day_keys
+    ]
 
     active_days = len(by_day)
     avg_daily = (total_spent / active_days) if active_days else 0.0
@@ -1633,6 +1651,7 @@ async def get_period_statistics(db: AsyncSession, date_from: str, date_to: str) 
         "kassa_repaid": sum(float(t.amount) for t, _ in cash_rows if t.source_type == "kassa_repay"),
         "top_suppliers": top_suppliers,
         "busiest_day": busiest_day,
+        "daily_series": daily_series,
     }
 
 

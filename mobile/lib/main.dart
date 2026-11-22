@@ -440,51 +440,17 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  late final TextEditingController _urlCtrl;
   final TextEditingController _codeCtrl = TextEditingController();
   final TextEditingController _deviceCtrl =
       TextEditingController(text: 'Android APK');
   bool _loading = false;
-  bool _testingUrl = false;
   String? _error;
-  String? _urlOkMessage;
-
-  @override
-  void initState() {
-    super.initState();
-    _urlCtrl = TextEditingController(text: widget.api.baseUrl);
-  }
 
   @override
   void dispose() {
-    _urlCtrl.dispose();
     _codeCtrl.dispose();
     _deviceCtrl.dispose();
     super.dispose();
-  }
-
-  Future<void> _testConnection() async {
-    setState(() {
-      _testingUrl = true;
-      _error = null;
-      _urlOkMessage = null;
-    });
-    try {
-      final ok = await widget.api.checkHealth(_urlCtrl.text);
-      if (mounted) {
-        setState(() {
-          _urlOkMessage = ok
-              ? 'Server bilan aloqa muvaffaqiyatli!'
-              : 'Server javob bermadi';
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _error = 'Serverga ulanib bo\'lmadi: $e');
-      }
-    } finally {
-      if (mounted) setState(() => _testingUrl = false);
-    }
   }
 
   Future<void> _submitLogin() async {
@@ -500,7 +466,7 @@ class _LoginScreenState extends State<LoginScreen> {
     });
     try {
       await widget.api.login(
-        serverUrl: _urlCtrl.text,
+        serverUrl: widget.api.baseUrl,
         code: code,
         deviceName: _deviceCtrl.text,
       );
@@ -619,51 +585,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          const Text(
-                            'Server manzili (Domen / HTTPS)',
-                            style: TextStyle(
-                                fontWeight: FontWeight.w700, fontSize: 13),
-                          ),
-                          const SizedBox(height: 6),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: TextField(
-                                  controller: _urlCtrl,
-                                  keyboardType: TextInputType.url,
-                                  decoration: const InputDecoration(
-                                    hintText: 'https://hisobchi.okaposai.uz',
-                                    prefixIcon: Icon(Icons.dns_rounded),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              OutlinedButton(
-                                onPressed:
-                                    _testingUrl ? null : _testConnection,
-                                child: _testingUrl
-                                    ? const SizedBox(
-                                        width: 18,
-                                        height: 18,
-                                        child: CircularProgressIndicator(
-                                            strokeWidth: 2),
-                                      )
-                                    : const Text('Tekshirish'),
-                              ),
-                            ],
-                          ),
-                          if (_urlOkMessage != null) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              '✅ $_urlOkMessage',
-                              style: const TextStyle(
-                                color: AppTokens.cashGreen,
-                                fontWeight: FontWeight.w700,
-                                fontSize: 12.5,
-                              ),
-                            ),
-                          ],
-                          const SizedBox(height: 14),
                           const Text(
                             '8 xonali kirish kodi (/apk)',
                             style: TextStyle(
@@ -819,6 +740,14 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   String _debtSupplierFilter = 'all';
   String _debtSubTab = 'nakladnoy';
 
+  // Dashboard Date / Session switcher & Trend Line Chart state
+  List<HistorySessionItem> _historySessions = [];
+  StatusSummary? _viewedSessionSummary;
+  bool _switchingSession = false;
+  List<Map<String, dynamic>> _dailySeries = [];
+  String _activePeriodKey = '7d';
+  String _periodLabel = 'Oxirgi 7 kunlik dinamika';
+
   ApkVersionInfo? _remoteVersion;
   bool _updatingApk = false;
 
@@ -842,10 +771,36 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
       try {
         ver = await widget.api.checkApkVersion();
       } catch (_) {}
+      List<HistorySessionItem> hist = _historySessions;
+      try {
+        hist = await widget.api.getHistorySessions(limit: 30);
+      } catch (_) {}
+      List<Map<String, dynamic>> series = _dailySeries;
+      try {
+        final days = _activePeriodKey == '14d'
+            ? 14
+            : (_activePeriodKey == '30d' ? 30 : 7);
+        final p = await widget.api.getPeriodStats(days: days);
+        series = ((p['daily_series'] as List?) ?? const [])
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
+      } catch (_) {}
+      StatusSummary? refreshedViewed;
+      if (_viewedSessionSummary != null) {
+        try {
+          refreshedViewed = await widget.api
+              .getHistorySessionDetail(_viewedSessionSummary!.sessionId);
+        } catch (_) {}
+      }
       if (mounted) {
         setState(() {
           _summary = results[0] as StatusSummary;
           _allDebts = results[1] as List<NakladnoyItem>;
+          _historySessions = hist;
+          _dailySeries = series;
+          if (_viewedSessionSummary != null) {
+            _viewedSessionSummary = refreshedViewed;
+          }
           if (ver != null) _remoteVersion = ver;
           _loading = false;
         });
@@ -869,6 +824,80 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
           _loading = false;
         });
       }
+    }
+  }
+
+  Future<void> _selectDashboardSession(int? sessionId) async {
+    if (sessionId == null || sessionId == _summary?.sessionId) {
+      setState(() => _viewedSessionSummary = null);
+      return;
+    }
+    setState(() => _switchingSession = true);
+    try {
+      final detail = await widget.api.getHistorySessionDetail(sessionId);
+      if (mounted) {
+        setState(() => _viewedSessionSummary = detail);
+      }
+    } catch (e) {
+      _showSnack(e.toString(), isError: true);
+    } finally {
+      if (mounted) setState(() => _switchingSession = false);
+    }
+  }
+
+  Future<void> _selectTrendPeriodKey(String key) async {
+    final days = key == '14d' ? 14 : (key == '30d' ? 30 : 7);
+    final label = key == '14d'
+        ? 'Oxirgi 14 kunlik dinamika'
+        : (key == '30d'
+            ? 'Oxirgi 30 kunlik dinamika'
+            : 'Oxirgi 7 kunlik dinamika');
+    setState(() {
+      _activePeriodKey = key;
+      _periodLabel = label;
+    });
+    try {
+      final p = await widget.api.getPeriodStats(days: days);
+      if (mounted) {
+        setState(() {
+          _dailySeries = ((p['daily_series'] as List?) ?? const [])
+              .map((e) => Map<String, dynamic>.from(e as Map))
+              .toList();
+        });
+      }
+    } catch (e) {
+      _showSnack(e.toString(), isError: true);
+    }
+  }
+
+  Future<void> _pickCustomTrendDateRange() async {
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2024, 1, 1),
+      lastDate: DateTime.now().add(const Duration(days: 1)),
+    );
+    if (picked == null) return;
+    final dFrom = DateFormat('yyyy-MM-dd').format(picked.start);
+    final dTo = DateFormat('yyyy-MM-dd').format(picked.end);
+    setState(() {
+      _activePeriodKey = 'custom';
+      _periodLabel = '$dFrom — $dTo dinamikasi';
+    });
+    try {
+      final p = await widget.api.getPeriodStats(
+        days: 30,
+        dateFrom: dFrom,
+        dateTo: dTo,
+      );
+      if (mounted) {
+        setState(() {
+          _dailySeries = ((p['daily_series'] as List?) ?? const [])
+              .map((e) => Map<String, dynamic>.from(e as Map))
+              .toList();
+        });
+      }
+    } catch (e) {
+      _showSnack(e.toString(), isError: true);
     }
   }
 
@@ -1390,20 +1419,26 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   // --------------------------------------------------------------------------
 
   Widget _buildDashboardTab() {
-    final s = _summary!;
+    final s = _viewedSessionSummary ?? _summary!;
+    final isViewingPast = _viewedSessionSummary != null &&
+        _viewedSessionSummary!.sessionId != _summary!.sessionId;
+
     return RefreshIndicator(
       onRefresh: _refreshAll,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 110),
         children: [
+          _buildDashboardDateSwitcherBar(s, isViewingPast),
+          const SizedBox(height: 10),
           HeroBalanceCard(
             summary: s,
-            onAddCash:
-                widget.api.canWrite ? () => _openCashDialog('main') : null,
-            onKassaDebt: widget.api.canWrite
+            onAddCash: (!isViewingPast && widget.api.canWrite)
+                ? () => _openCashDialog('main')
+                : null,
+            onKassaDebt: (!isViewingPast && widget.api.canWrite)
                 ? () => _openCashDialog('kassa_debt')
                 : null,
-            onKassaRepay: widget.api.canWrite
+            onKassaRepay: (!isViewingPast && widget.api.canWrite)
                 ? () => _openCashDialog('kassa_repay')
                 : null,
           ),
@@ -1431,7 +1466,12 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
           const SizedBox(height: 14),
           DashboardAnalyticsSection(
             summary: s,
-            canWrite: widget.api.canWrite,
+            canWrite: !isViewingPast && widget.api.canWrite,
+            dailySeries: _dailySeries,
+            periodLabel: _periodLabel,
+            activePeriodKey: _activePeriodKey,
+            onSelectPeriodKey: _selectTrendPeriodKey,
+            onPickCustomDateRange: _pickCustomTrendDateRange,
             onTapPaymentFilter: (mode) {
               setState(() {
                 _filterMode = mode;
@@ -1439,6 +1479,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
               });
             },
             onOpenNakladnoyTab: () => setState(() => _tabIndex = 1),
+            onTapNakladnoy: _openNakladnoyDetail,
             onEditCashTx: (tx) =>
                 _openCashDialog(tx.sourceType, existing: tx),
             onDeleteCashTx: (tx) async {
@@ -1448,6 +1489,105 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
             },
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildDashboardDateSwitcherBar(
+      StatusSummary activeSummary, bool isViewingPast) {
+    final sessions = _historySessions;
+    final currentId = activeSummary.sessionId;
+    final curIdx = sessions.indexWhere((e) => e.id == currentId);
+    final hasPrev = curIdx >= 0 && curIdx + 1 < sessions.length;
+    final hasNext = curIdx > 0;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                IconButton(
+                  tooltip: 'Oldingi smena / sana',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: (_switchingSession || !hasPrev)
+                      ? null
+                      : () =>
+                          _selectDashboardSession(sessions[curIdx + 1].id),
+                  icon: const Icon(Icons.chevron_left_rounded),
+                ),
+                Expanded(
+                  child: sessions.isEmpty
+                      ? Text(
+                          '📅 ${activeSummary.reportDate} (Smena #${activeSummary.sessionId})',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 13.5,
+                          ),
+                        )
+                      : DropdownButtonHideUnderline(
+                          child: DropdownButton<int>(
+                            value: sessions.any((e) => e.id == currentId)
+                                ? currentId
+                                : sessions.first.id,
+                            isExpanded: true,
+                            isDense: true,
+                            icon: const Icon(
+                                Icons.keyboard_arrow_down_rounded),
+                            items: sessions.map((s) {
+                              final isCurOpen =
+                                  s.id == _summary?.sessionId;
+                              return DropdownMenuItem<int>(
+                                value: s.id,
+                                child: Text(
+                                  '${isCurOpen ? "🟢 " : "📅 "}${s.reportDate} • Smena #${s.id}${isCurOpen ? " (Faol)" : ""}',
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontWeight: isCurOpen
+                                        ? FontWeight.w900
+                                        : FontWeight.w700,
+                                    fontSize: 13.5,
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                            onChanged: _switchingSession
+                                ? null
+                                : (val) => _selectDashboardSession(val),
+                          ),
+                        ),
+                ),
+                IconButton(
+                  tooltip: 'Keyingi smena / sana',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: (_switchingSession || !hasNext)
+                      ? null
+                      : () =>
+                          _selectDashboardSession(sessions[curIdx - 1].id),
+                  icon: const Icon(Icons.chevron_right_rounded),
+                ),
+              ],
+            ),
+            if (isViewingPast) ...[
+              const SizedBox(height: 6),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.tonalIcon(
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(80, 36),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                  ),
+                  onPressed: () => _selectDashboardSession(null),
+                  icon: const Icon(Icons.today_rounded, size: 16),
+                  label: Text(
+                      "🟢 Bugungi faol smenaga qaytish (${_summary!.reportDate})"),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -2263,7 +2403,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                       : '🔕 O\'chirilgan (/apk)',
                 ),
                 const SizedBox(height: 6),
-                _infoRow('Server:', widget.api.baseUrl),
+                _infoRow('Aloqa holati:', '🟢 Himoyalangan sinxron ulanish'),
                 const SizedBox(height: 6),
                 _infoRow('Ilova versiyasi:', 'v$kAppVersion (build #$kAppBuildNumber)'),
                 const SizedBox(height: 6),

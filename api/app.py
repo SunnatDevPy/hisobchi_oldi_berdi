@@ -918,6 +918,7 @@ def create_api_app() -> FastAPI:
             "busiest_day_date": busiest[0] if busiest else None,
             "busiest_day_total": float(busiest[1]) if busiest else 0.0,
             "top_suppliers": top_sups,
+            "daily_series": st.get("daily_series", []),
         }
 
     @app.get("/sverka")
