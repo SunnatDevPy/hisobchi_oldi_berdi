@@ -785,6 +785,78 @@ class HisobchiApiClient {
         .timeout(const Duration(seconds: 20));
     return _decodeJson(res);
   }
+
+  Future<Map<String, dynamic>> createPrixodFromFile({
+    required File file,
+    bool publishToGroup = false,
+  }) async {
+    final req = http.MultipartRequest('POST', _uri('/prixod/file'));
+    if (accessToken != null) {
+      req.headers['Authorization'] = 'Bearer $accessToken';
+    }
+    req.fields['publish_to_group'] = publishToGroup ? 'true' : 'false';
+    req.files.add(await http.MultipartFile.fromPath('file', file.path));
+    final streamed = await _http.send(req).timeout(const Duration(seconds: 30));
+    final res = await http.Response.fromStream(streamed);
+    return _decodeJson(res);
+  }
+
+  // Supplier Configs & AI Rounding Settings
+  Future<List<Map<String, dynamic>>> getSupplierConfigs() async {
+    final res = await _http
+        .get(_uri('/settings/suppliers'), headers: _headers())
+        .timeout(const Duration(seconds: 12));
+    final data = _decodeJson(res);
+    return ((data['configs'] as List?) ?? const [])
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> saveSupplierConfig({
+    required String displayName,
+    required String aliases,
+    String defaultCategory = 'qarz',
+  }) async {
+    final res = await _http
+        .post(
+          _uri('/settings/suppliers'),
+          headers: _headers(),
+          body: jsonEncode({
+            'display_name': displayName.trim(),
+            'aliases': aliases.trim(),
+            'default_category': defaultCategory,
+          }),
+        )
+        .timeout(const Duration(seconds: 12));
+    return _decodeJson(res);
+  }
+
+  Future<void> deleteSupplierConfig(int supplierId) async {
+    final res = await _http
+        .delete(_uri('/settings/suppliers/$supplierId'), headers: _headers())
+        .timeout(const Duration(seconds: 12));
+    _decodeJson(res);
+  }
+
+  Future<String> getRoundMode() async {
+    final res = await _http
+        .get(_uri('/settings/round-mode'), headers: _headers())
+        .timeout(const Duration(seconds: 10));
+    final data = _decodeJson(res);
+    return (data['round_mode'] ?? 'floor_1000').toString();
+  }
+
+  Future<String> setRoundMode(String roundMode) async {
+    final res = await _http
+        .post(
+          _uri('/settings/round-mode'),
+          headers: _headers(),
+          body: jsonEncode({'round_mode': roundMode}),
+        )
+        .timeout(const Duration(seconds: 10));
+    final data = _decodeJson(res);
+    return (data['round_mode'] ?? roundMode).toString();
+  }
 }
 
 class HistorySessionItem {

@@ -1,58 +1,127 @@
 package uz.hisobchi.hisobchi_app
 
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.provider.OpenableColumns
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import java.io.FileOutputStream
 
 class MainActivity : FlutterActivity() {
     private val channelName = "uz.hisobchi.hisobchi_app/installer"
     private var pendingApkPath: String? = null
+    private var pendingDocResult: MethodChannel.Result? = null
+    private val pickDocRequestCode = 4201
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
             .setMethodCallHandler { call, result ->
-                if (call.method == "installApk") {
-                    val path = call.argument<String>("path")
-                    if (path.isNullOrBlank()) {
-                        result.error("INVALID_PATH", "APK fayl manzili bo'sh", null)
-                        return@setMethodCallHandler
-                    }
-                    val file = File(path)
-                    if (!file.exists()) {
-                        result.error("NOT_FOUND", "APK fayl topilmadi: $path", null)
-                        return@setMethodCallHandler
-                    }
-                    try {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-                            !packageManager.canRequestPackageInstalls()
-                        ) {
-                            pendingApkPath = path
-                            val permIntent = Intent(
-                                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                                Uri.parse("package:$packageName")
-                            ).apply {
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            startActivity(permIntent)
-                            result.success("PERMISSION_REQUESTED")
-                        } else {
-                            launchPackageInstaller(file)
-                            result.success("INSTALLER_LAUNCHED")
+                when (call.method) {
+                    "installApk" -> {
+                        val path = call.argument<String>("path")
+                        if (path.isNullOrBlank()) {
+                            result.error("INVALID_PATH", "APK fayl manzili bo'sh", null)
+                            return@setMethodCallHandler
                         }
-                    } catch (e: Exception) {
-                        result.error("INSTALL_ERROR", e.localizedMessage ?: e.toString(), null)
+                        val file = File(path)
+                        if (!file.exists()) {
+                            result.error("NOT_FOUND", "APK fayl topilmadi: $path", null)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                                !packageManager.canRequestPackageInstalls()
+                            ) {
+                                pendingApkPath = path
+                                val permIntent = Intent(
+                                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                    Uri.parse("package:$packageName")
+                                ).apply {
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                startActivity(permIntent)
+                                result.success("PERMISSION_REQUESTED")
+                            } else {
+                                launchPackageInstaller(file)
+                                result.success("INSTALLER_LAUNCHED")
+                            }
+                        } catch (e: Exception) {
+                            result.error("INSTALL_ERROR", e.localizedMessage ?: e.toString(), null)
+                        }
                     }
-                } else {
-                    result.notImplemented()
+                    "pickDocument" -> {
+                        if (pendingDocResult != null) {
+                            result.error("BUSY", "Fayl tanlash oynasi allaqachon ochiq", null)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            pendingDocResult = result
+                            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                                addCategory(Intent.CATEGORY_OPENABLE)
+                                type = "*/*"
+                            }
+                            @Suppress("DEPRECATION")
+                            startActivityForResult(intent, pickDocRequestCode)
+                        } catch (e: Exception) {
+                            pendingDocResult = null
+                            result.error("PICK_ERROR", e.localizedMessage ?: e.toString(), null)
+                        }
+                    }
+                    else -> result.notImplemented()
                 }
             }
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == pickDocRequestCode) {
+            val res = pendingDocResult
+            pendingDocResult = null
+            if (res == null) return
+            val uri = data?.data
+            if (resultCode != Activity.RESULT_OK || uri == null) {
+                res.success(null)
+                return
+            }
+            try {
+                var displayName = "yespos.xlsx"
+                contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (nameIdx >= 0 && cursor.moveToFirst()) {
+                        val candidate = cursor.getString(nameIdx)
+                        if (!candidate.isNullOrBlank()) {
+                            displayName = candidate
+                        }
+                    }
+                }
+                val safeName = displayName.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                val outFile = File(cacheDir, safeName)
+                contentResolver.openInputStream(uri)?.use { input ->
+                    FileOutputStream(outFile).use { output ->
+                        input.copyTo(output)
+                    }
+                } ?: run {
+                    res.error("READ_ERROR", "Faylni o'qib bo'lmadi", null)
+                    return
+                }
+                res.success(
+                    mapOf(
+                        "path" to outFile.absolutePath,
+                        "name" to displayName
+                    )
+                )
+            } catch (e: Exception) {
+                res.error("COPY_ERROR", e.localizedMessage ?: e.toString(), null)
+            }
+        }
     }
 
     override fun onResume() {

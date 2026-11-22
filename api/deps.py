@@ -104,6 +104,7 @@ async def post_nakladnoy_to_telegram_group(
     payment_id: int,
     photo_bytes: Optional[bytes] = None,
     force: bool = False,
+    replace_photo: bool = False,
 ) -> tuple[bool, str]:
     """Send a confirmed nakladnoy from APK to the bound Telegram Nakladnoy group.
 
@@ -128,12 +129,21 @@ async def post_nakladnoy_to_telegram_group(
     if bot is None:
         return False, "Telegram bot ulanmagan"
 
-    # If already posted to group and not forced as new, update existing message
+    # If already posted to group and not replacing photo, update existing message caption/text
     if payment.group_chat_id and payment.group_message_id:
-        ok, msg = await _sync_nakladnoy_group_message(
-            bot, payment, tag="", session_seq=session_seq
-        )
-        return ok, msg
+        if replace_photo:
+            try:
+                await bot.delete_message(
+                    chat_id=payment.group_chat_id,
+                    message_id=payment.group_message_id,
+                )
+            except Exception:
+                pass
+        else:
+            ok, msg = await _sync_nakladnoy_group_message(
+                bot, payment, tag="", session_seq=session_seq
+            )
+            return ok, msg
 
     if photo_bytes is None and has_local_photo(payment_id):
         try:
@@ -190,7 +200,7 @@ async def post_nakladnoy_to_telegram_group(
             if row is not None:
                 row.group_chat_id = grp.chat_id
                 row.group_message_id = sent.message_id
-                if tg_file_id and not row.photo_file_id:
+                if tg_file_id and (replace_photo or not row.photo_file_id):
                     row.photo_file_id = tg_file_id
                 await db.commit()
         return True, f"Guruhga yuborildi ({grp.title or grp.chat_id})"

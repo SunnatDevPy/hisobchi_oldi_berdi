@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import difflib
 import re
 from typing import Dict, List, Optional, Tuple
@@ -1611,7 +1611,17 @@ async def get_period_statistics(db: AsyncSession, date_from: str, date_to: str) 
         if tx.source_type == "main":
             by_day_cash_in[r_date] = by_day_cash_in.get(r_date, 0.0) + float(tx.amount)
 
-    all_day_keys = sorted(set(by_day.keys()) | set(by_day_cash_in.keys()))
+    cal_keys: set[str] = set(by_day.keys()) | set(by_day_cash_in.keys())
+    try:
+        d_start = datetime.strptime(date_from, "%Y-%m-%d").date()
+        d_end = datetime.strptime(date_to, "%Y-%m-%d").date()
+        span = (d_end - d_start).days
+        if 0 <= span <= 90:
+            for offset in range(span + 1):
+                cal_keys.add((d_start + timedelta(days=offset)).strftime("%Y-%m-%d"))
+    except Exception:
+        pass
+    all_day_keys = sorted(cal_keys)
     daily_series = [
         {
             "date": d,

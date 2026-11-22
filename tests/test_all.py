@@ -1682,6 +1682,28 @@ def test_mobile_apk_rest_api_and_group_posting(tmp_path: Path, monkeypatch):
                 r_pstats = await client.get("/stats/period?days=7", headers=headers)
                 assert r_pstats.status_code == 200
                 assert r_pstats.json()["total_spent"] > 0
+                assert len(r_pstats.json()["daily_series"]) >= 7
+
+                # 8f2. Supplier configs & round-mode settings
+                r_sup_save = await client.post(
+                    "/settings/suppliers",
+                    headers=headers,
+                    json={"display_name": "Ummun", "aliases": "UMMUN,ITTIN,ИТТИН"},
+                )
+                assert r_sup_save.status_code == 200
+                r_sup_list = await client.get("/settings/suppliers", headers=headers)
+                assert r_sup_list.status_code == 200
+                assert any(c["display_name"] == "Ummun" for c in r_sup_list.json()["configs"])
+
+                r_rm_set = await client.post(
+                    "/settings/round-mode",
+                    headers=headers,
+                    json={"round_mode": "floor_1000"},
+                )
+                assert r_rm_set.status_code == 200
+                r_rm_get = await client.get("/settings/round-mode", headers=headers)
+                assert r_rm_get.status_code == 200
+                assert r_rm_get.json()["round_mode"] == "floor_1000"
 
                 r_sv = await client.get("/sverka", headers=headers)
                 assert r_sv.status_code == 200

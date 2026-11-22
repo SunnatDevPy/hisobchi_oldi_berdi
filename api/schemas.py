@@ -134,3 +134,14 @@ class PrixodTextCreateRequest(BaseModel):
     text: str = Field(..., min_length=3)
     publish_to_group: bool = False
 
+
+class SupplierConfigCreateRequest(BaseModel):
+    display_name: str = Field(..., min_length=1, max_length=255)
+    aliases: str = Field(default="", max_length=1000)
+    default_category: str = Field(default="qarz", max_length=32)
+
+
+class RoundModeUpdateRequest(BaseModel):
+    round_mode: str = Field(..., pattern="^(floor_1000|nearest_1000|none)$")
+
+

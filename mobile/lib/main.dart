@@ -1426,6 +1426,19 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     );
   }
 
+  Future<void> _openSupplierSettingsSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (ctx) => SupplierAndRoundingSettingsSheet(
+        api: widget.api,
+        showSnack: _showSnack,
+      ),
+    );
+    await _refreshAll();
+  }
+
   // --------------------------------------------------------------------------
   // TAB 1: HAQIQIY ANALITIK DASHBOARD & PUL OLDI-BERDI TARIXI
   // --------------------------------------------------------------------------
@@ -1609,7 +1622,9 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   // --------------------------------------------------------------------------
 
   Widget _buildNakladnoylarTab() {
-    final s = _summary!;
+    final s = _viewedSessionSummary ?? _summary!;
+    final isViewingPast = _viewedSessionSummary != null &&
+        _viewedSessionSummary!.sessionId != _summary!.sessionId;
     final filtered = s.nakladnoys.where((n) {
       if (_filterMode == 'cash' && (n.isDebt || n.paymentMethod != 'cash')) {
         return false;
@@ -1648,8 +1663,10 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     return RefreshIndicator(
       onRefresh: _refreshAll,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 110),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 110),
         children: [
+          _buildDashboardDateSwitcherBar(s, isViewingPast),
+          const SizedBox(height: 10),
           // Header strip
           Row(
             children: [
@@ -2012,6 +2029,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
       onOpenHistorySessions: _openHistorySessionsSheet,
       onOpenLiveSverka: _openLiveSverkaSheet,
       onOpenPrixod: _openPrixodSheet,
+      onOpenSupplierSettings: _openSupplierSettingsSheet,
       onCheckUpdate: () => _downloadAndShareApkUpdate(manualCheck: true),
     );
   }
@@ -2026,6 +2044,7 @@ class _SmenaAndReportsView extends StatefulWidget {
   final VoidCallback onOpenHistorySessions;
   final VoidCallback onOpenLiveSverka;
   final VoidCallback onOpenPrixod;
+  final VoidCallback onOpenSupplierSettings;
   final VoidCallback onCheckUpdate;
 
   const _SmenaAndReportsView({
@@ -2037,6 +2056,7 @@ class _SmenaAndReportsView extends StatefulWidget {
     required this.onOpenHistorySessions,
     required this.onOpenLiveSverka,
     required this.onOpenPrixod,
+    required this.onOpenSupplierSettings,
     required this.onCheckUpdate,
   });
 
@@ -2378,6 +2398,12 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                   onPressed: widget.onOpenPrixod,
                   icon: const Icon(Icons.workspace_premium_rounded),
                   label: const Text("👑 Prixod (ITOG) hisobotlari"),
+                ),
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: widget.onOpenSupplierSettings,
+                  icon: const Icon(Icons.tune_rounded),
+                  label: const Text("🏢 Postavshiklar, Taxalluslar va Yaxlitlash"),
                 ),
               ],
             ),
@@ -3196,6 +3222,7 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
   late NakladnoyItem _cur;
   late TextEditingController _supCtrl;
   late TextEditingController _amtCtrl;
+  late TextEditingController _noteCtrl;
   final ImagePicker _picker = ImagePicker();
   List<String> _suppliers = [];
   bool _busy = false;
@@ -3211,6 +3238,7 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
       text: UzsAmountInputFormatter.formatDigits(
           _cur.amount.round().toString()),
     );
+    _noteCtrl = TextEditingController(text: _cur.note);
     _loadSuppliers();
   }
 
@@ -3218,6 +3246,7 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
   void dispose() {
     _supCtrl.dispose();
     _amtCtrl.dispose();
+    _noteCtrl.dispose();
     super.dispose();
   }
 
@@ -3327,6 +3356,7 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
   Future<void> _applyUpdate({
     String? supplier,
     double? amount,
+    String? note,
     bool roundAmount = false,
   }) async {
     setState(() => _busy = true);
@@ -3335,6 +3365,7 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
         paymentId: _cur.id,
         supplierName: supplier,
         amount: amount,
+        note: note,
         roundAmount: roundAmount,
       );
       if (mounted) {
@@ -3343,6 +3374,7 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
           _supCtrl.text = updated.supplierName;
           _amtCtrl.text = UzsAmountInputFormatter.formatDigits(
               updated.amount.round().toString());
+          _noteCtrl.text = updated.note;
           _changed = true;
         });
       }
@@ -3588,6 +3620,31 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                               _applyUpdate(amount: parsed);
                             }
                           },
+                    child: const Text('Saqlash'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+
+              // Note field (Izoh) + Saqlash
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _noteCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Izoh (ixtiyoriy)',
+                        prefixIcon: Icon(Icons.notes_rounded),
+                        isDense: true,
+                      ),
+                      onSubmitted: (v) => _applyUpdate(note: v.trim()),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.tonal(
+                    onPressed: _busy
+                        ? null
+                        : () => _applyUpdate(note: _noteCtrl.text.trim()),
                     child: const Text('Saqlash'),
                   ),
                 ],
@@ -4117,10 +4174,14 @@ class LiveSverkaAndStatsSheet extends StatefulWidget {
 
 class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
   String _mode = 'sverka'; // sverka | 7d | 30d
+  DateTime _selectedMonth = DateTime(DateTime.now().year, DateTime.now().month);
   Map<String, dynamic>? _sverkaData;
   Map<String, dynamic>? _periodData;
   bool _loading = true;
+  bool _downloadingExcel = false;
   String? _error;
+
+  String get _monthStr => DateFormat('yyyy-MM').format(_selectedMonth);
 
   @override
   void initState() {
@@ -4135,7 +4196,7 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
     });
     try {
       if (_mode == 'sverka') {
-        final d = await widget.api.getLiveSverka();
+        final d = await widget.api.getLiveSverka(month: _monthStr);
         if (mounted) setState(() => _sverkaData = d);
       } else {
         final days = _mode == '7d' ? 7 : 30;
@@ -4146,6 +4207,26 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
       if (mounted) setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _downloadSverkaExcel() async {
+    if (_downloadingExcel) return;
+    setState(() => _downloadingExcel = true);
+    try {
+      final bytes = await widget.api.downloadExcelBytes(
+        '/export/sverka',
+        query: {'month': _monthStr},
+      );
+      final dir = await getTemporaryDirectory();
+      final filename = 'Sverka_$_monthStr.xlsx';
+      final file = File('${dir.path}/$filename');
+      await file.writeAsBytes(bytes, flush: true);
+      await Share.shareXFiles([XFile(file.path)], text: filename);
+    } catch (e) {
+      widget.showSnack('Excel yuklashda xatolik: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => _downloadingExcel = false);
     }
   }
 
@@ -4235,24 +4316,85 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
         .map((e) => Map<String, dynamic>.from(e as Map))
         .toList();
     final grandTotal = ((d['grand_total'] as num?) ?? 0).toDouble();
+    final now = DateTime.now();
+    final canGoNext = _selectedMonth.year < now.year ||
+        (_selectedMonth.year == now.year && _selectedMonth.month < now.month);
     return ListView(
       children: [
         Card(
           child: Padding(
             padding: const EdgeInsets.all(14),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  "Oy: ${d['month']} (${sups.length} ta postavshik)",
-                  style: const TextStyle(fontWeight: FontWeight.w800),
+                Row(
+                  children: [
+                    IconButton(
+                      tooltip: 'Oldingi oy',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () {
+                        setState(() {
+                          _selectedMonth = DateTime(
+                            _selectedMonth.year,
+                            _selectedMonth.month - 1,
+                          );
+                        });
+                        _loadData();
+                      },
+                      icon: const Icon(Icons.chevron_left_rounded),
+                    ),
+                    Expanded(
+                      child: Text(
+                        "🗓 $_monthStr (${sups.length} ta postavshik)",
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w900, fontSize: 15),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Keyingi oy',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: canGoNext
+                          ? () {
+                              setState(() {
+                                _selectedMonth = DateTime(
+                                  _selectedMonth.year,
+                                  _selectedMonth.month + 1,
+                                );
+                              });
+                              _loadData();
+                            }
+                          : null,
+                      icon: const Icon(Icons.chevron_right_rounded),
+                    ),
+                  ],
                 ),
-                Text(
-                  formatUzs(grandTotal, withCurrency: true),
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 16,
-                    color: AppTokens.brand,
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      "Oylik jami to'lov:",
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    Text(
+                      formatUzs(grandTotal, withCurrency: true),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                        color: AppTokens.brand,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                FilledButton.tonalIcon(
+                  onPressed: _downloadingExcel ? null : _downloadSverkaExcel,
+                  icon: const Icon(Icons.table_view_rounded, size: 17),
+                  label: Text(
+                    _downloadingExcel
+                        ? 'Tayyorlanmoqda...'
+                        : '📥 $_monthStr Sverka Excel (.xlsx) yuklash',
                   ),
                 ),
               ],
@@ -4736,6 +4878,9 @@ class _PrixodItogSheetState extends State<PrixodItogSheet> {
     }
   }
 
+  static const MethodChannel _docChannel =
+      MethodChannel('uz.hisobchi.hisobchi_app/installer');
+
   Future<void> _createFromText() async {
     if (_txtCtrl.text.trim().isEmpty) return;
     setState(() => _submitting = true);
@@ -4746,6 +4891,34 @@ class _PrixodItogSheetState extends State<PrixodItogSheet> {
       );
       _txtCtrl.clear();
       widget.showSnack(res['message']?.toString() ?? 'ITOG 👑 yaratildi!');
+      await _load();
+    } catch (e) {
+      widget.showSnack(e.toString(), isError: true);
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  Future<void> _pickAndUploadYesPosFile() async {
+    setState(() => _submitting = true);
+    try {
+      final picked = await _docChannel.invokeMethod<dynamic>('pickDocument');
+      if (picked == null || picked is! Map) {
+        if (mounted) setState(() => _submitting = false);
+        return;
+      }
+      final path = (picked['path'] ?? '').toString();
+      if (path.isEmpty) {
+        if (mounted) setState(() => _submitting = false);
+        return;
+      }
+      final res = await widget.api.createPrixodFromFile(
+        file: File(path),
+        publishToGroup: _publishToGroup,
+      );
+      widget.showSnack(
+        res['message']?.toString() ?? 'Fayldan ITOG 👑 yaratildi!',
+      );
       await _load();
     } catch (e) {
       widget.showSnack(e.toString(), isError: true);
@@ -4809,6 +4982,12 @@ class _PrixodItogSheetState extends State<PrixodItogSheet> {
                   icon: const Icon(Icons.auto_awesome_rounded, size: 18),
                   label: Text(
                       _submitting ? 'Yaratilmoqda...' : 'ITOG 👑 hisobot tuzish'),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: _submitting ? null : _pickAndUploadYesPosFile,
+                  icon: const Icon(Icons.upload_file_rounded, size: 18),
+                  label: const Text("📂 YesPOS fayl (.xlsx / .csv) yuklash"),
                 ),
                 const Divider(height: 20),
               ],
@@ -5151,6 +5330,332 @@ class _InAppUpdateProgressDialogState
             child: const Text('Yopish'),
           ),
       ],
+    );
+  }
+}
+
+// ============================================================================
+// SUPPLIERS, ALIASES & AI ROUNDING SETTINGS SHEET (/settings/...)
+// ============================================================================
+
+class SupplierAndRoundingSettingsSheet extends StatefulWidget {
+  final HisobchiApiClient api;
+  final void Function(String, {bool isError}) showSnack;
+
+  const SupplierAndRoundingSettingsSheet({
+    super.key,
+    required this.api,
+    required this.showSnack,
+  });
+
+  @override
+  State<SupplierAndRoundingSettingsSheet> createState() =>
+      _SupplierAndRoundingSettingsSheetState();
+}
+
+class _SupplierAndRoundingSettingsSheetState
+    extends State<SupplierAndRoundingSettingsSheet> {
+  final TextEditingController _nameCtrl = TextEditingController();
+  final TextEditingController _aliasCtrl = TextEditingController();
+  List<Map<String, dynamic>> _configs = [];
+  String _roundMode = 'floor_1000';
+  bool _loading = true;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _aliasCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final res = await Future.wait([
+        widget.api.getSupplierConfigs(),
+        widget.api.getRoundMode(),
+      ]);
+      if (mounted) {
+        setState(() {
+          _configs = res[0] as List<Map<String, dynamic>>;
+          _roundMode = res[1] as String;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _loading = false);
+      widget.showSnack(e.toString(), isError: true);
+    }
+  }
+
+  Future<void> _changeRoundMode(String newMode) async {
+    setState(() {
+      _roundMode = newMode;
+      _saving = true;
+    });
+    try {
+      final saved = await widget.api.setRoundMode(newMode);
+      if (mounted) setState(() => _roundMode = saved);
+      widget.showSnack('✅ Yaxlitlash qoidasi saqlandi!');
+    } catch (e) {
+      widget.showSnack(e.toString(), isError: true);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _saveSupplier() async {
+    final name = _nameCtrl.text.trim();
+    if (name.isEmpty) {
+      widget.showSnack('Postavshik nomini kiriting', isError: true);
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      await widget.api.saveSupplierConfig(
+        displayName: name,
+        aliases: _aliasCtrl.text.trim(),
+      );
+      _nameCtrl.clear();
+      _aliasCtrl.clear();
+      widget.showSnack('✅ Postavshik va taxalluslar saqlandi!');
+      await _load();
+    } catch (e) {
+      widget.showSnack(e.toString(), isError: true);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _deleteSupplier(int id, String name) async {
+    setState(() => _saving = true);
+    try {
+      await widget.api.deleteSupplierConfig(id);
+      widget.showSnack("🗑 «$name» ro'yxatdan o'chirildi");
+      await _load();
+    } catch (e) {
+      widget.showSnack(e.toString(), isError: true);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 18,
+          right: 18,
+          bottom: sheetBottomPadding(context),
+        ),
+        child: SizedBox(
+          height: MediaQuery.sizeOf(context).height * 0.84,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      "🏢 Postavshiklar va Yaxlitlash",
+                      style:
+                          TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (_loading)
+                const Expanded(
+                    child: Center(child: CircularProgressIndicator()))
+              else
+                Expanded(
+                  child: ListView(
+                    children: [
+                      // 1. AI Summa Yaxlitlash (round_mode)
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const Row(
+                                children: [
+                                  Icon(Icons.auto_fix_high_rounded,
+                                      color: AppTokens.brand, size: 19),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    'AI Summa Yaxlitlash Qoidasi',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 15,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              DropdownButtonFormField<String>(
+                                initialValue: (_roundMode == 'nearest_1000' ||
+                                        _roundMode == 'none')
+                                    ? _roundMode
+                                    : 'floor_1000',
+                                isDense: true,
+                                decoration: const InputDecoration(
+                                  labelText: 'Yaxlitlash turi',
+                                ),
+                                items: const [
+                                  DropdownMenuItem(
+                                    value: 'floor_1000',
+                                    child: Text(
+                                        "1 000 so'mga pastga (192 640 → 192 000)"),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: 'nearest_1000',
+                                    child: Text(
+                                        "1 000 so'mga yaqiniga (192 640 → 193 000)"),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: 'none',
+                                    child: Text('Yaxlitlanmasin (Aniq summa)'),
+                                  ),
+                                ],
+                                onChanged: (widget.api.canWrite && !_saving)
+                                    ? (v) {
+                                        if (v != null && v != _roundMode) {
+                                          _changeRoundMode(v);
+                                        }
+                                      }
+                                    : null,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+
+                      // 2. Postavshiklar va Taxalluslar (aliases)
+                      if (widget.api.canWrite)
+                        Card(
+                          child: Padding(
+                            padding: const EdgeInsets.all(14),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                const Row(
+                                  children: [
+                                    Icon(Icons.storefront_rounded,
+                                        color: AppTokens.cashGreen, size: 19),
+                                    SizedBox(width: 8),
+                                    Text(
+                                      "Postavshik va Taxallus qo'shish",
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: 15,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                TextField(
+                                  controller: _nameCtrl,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Postavshik nomi',
+                                    hintText: 'Masalan: Ummun',
+                                    isDense: true,
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                TextField(
+                                  controller: _aliasCtrl,
+                                  decoration: const InputDecoration(
+                                    labelText:
+                                        'Taxalluslar (vergul bilan ajratib yozing)',
+                                    hintText: 'UMMUN, ITTIN, ИТТИН, УММУН',
+                                    isDense: true,
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                FilledButton.icon(
+                                  onPressed: _saving ? null : _saveSupplier,
+                                  icon: const Icon(Icons.save_rounded, size: 18),
+                                  label: Text(_saving
+                                      ? 'Saqlanmoqda...'
+                                      : 'Saqlash / Yangilash'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      const SizedBox(height: 12),
+
+                      Text(
+                        "Saqlangan postavshiklar (${_configs.length} ta) — tahrirlash uchun ustiga bosing:",
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      ..._configs.map((c) {
+                        final id = (c['id'] as num).toInt();
+                        final name = (c['display_name'] ?? '').toString();
+                        final aliases = (c['aliases'] ?? '').toString();
+                        return Card(
+                          child: ListTile(
+                            onTap: widget.api.canWrite
+                                ? () {
+                                    setState(() {
+                                      _nameCtrl.text = name;
+                                      _aliasCtrl.text = aliases;
+                                    });
+                                  }
+                                : null,
+                            title: Text(
+                              name,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w900),
+                            ),
+                            subtitle: Text(
+                              aliases.isNotEmpty
+                                  ? 'Taxalluslar: $aliases'
+                                  : 'Taxallus kiritilmagan',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                            trailing: widget.api.canWrite
+                                ? IconButton(
+                                    icon: const Icon(
+                                      Icons.delete_outline_rounded,
+                                      size: 20,
+                                      color: AppTokens.dangerRed,
+                                    ),
+                                    onPressed: _saving
+                                        ? null
+                                        : () => _deleteSupplier(id, name),
+                                  )
+                                : null,
+                          ),
+                        );
+                      }),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

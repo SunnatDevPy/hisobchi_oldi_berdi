@@ -44,12 +44,15 @@ from api.schemas import (
     NasiyaCreateRequest,
     PaymentMethodRequest,
     PrixodTextCreateRequest,
+    RoundModeUpdateRequest,
     StatusSummaryResponse,
+    SupplierConfigCreateRequest,
     UserProfileResponse,
 )
 from bot.auth import ROLE_ADMIN, can_write_role, get_user_role, is_admin_role
 from database.crud import (
     add_cash_transaction,
+    add_or_update_supplier,
     add_supplier_debt,
     close_cash_session,
     compute_session_summary,
@@ -57,6 +60,7 @@ from database.crud import (
     create_pending_nakladnoy,
     delete_cash_transaction,
     delete_nakladnoy,
+    delete_supplier,
     delete_supplier_debt,
     find_similar_suppliers,
     format_local_dt,
@@ -88,6 +92,7 @@ from database.crud import (
     round_nakladnoy_amount,
     save_prixod_report,
     search_nakladnoys,
+    set_app_setting,
     set_nakladnoy_payment_method,
     today_iso,
     update_cash_transaction,
@@ -97,7 +102,7 @@ from database.models import CashTransaction, NakladnoyPayment
 from database.session import async_session_maker
 from services.excel_export import build_range_excel, build_session_excel, build_sverka_excel
 from services.gemini_ai import extract_nakladnoy_from_image
-from services.prixod_parser import parse_manual_itog_text
+from services.prixod_parser import parse_manual_itog_text, parse_yespos_table
 
 
 def _serialize_cash_tx(tx: CashTransaction) -> CashTxOut:
@@ -990,8 +995,13 @@ def create_api_app() -> FastAPI:
 
         await asyncio.to_thread(save_local_photo, payment_id, raw)
 
-        if send_to_group and not (payment.group_chat_id and payment.group_message_id):
-            await post_nakladnoy_to_telegram_group(payment_id, force=False)
+        if send_to_group:
+            await post_nakladnoy_to_telegram_group(
+                payment_id,
+                photo_bytes=raw,
+                force=False,
+                replace_photo=True,
+            )
 
         async with async_session_maker() as db:
             refreshed = await get_nakladnoy(db, payment_id)
@@ -1193,5 +1203,129 @@ def create_api_app() -> FastAPI:
         if not ok:
             raise HTTPException(status_code=400, detail=msg)
         return {"ok": True, "message": msg, "report": _serialize_prixod(rep)}
+
+    @app.post("/prixod/file")
+    async def create_prixod_from_file(
+        file: UploadFile = File(...),
+        publish_to_group: bool = Form(default=False),
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> dict:
+        raw = await file.read()
+        if not raw:
+            raise HTTPException(status_code=400, detail="Fayl bo'sh")
+        async with async_session_maker() as db:
+            suppliers = await list_suppliers(db, active_only=True)
+            try:
+                parsed = parse_yespos_table(raw, file.filename or "yespos.xlsx", suppliers)
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=400, detail=f"Faylni tahlil qilib bo'lmadi: {exc}"
+                ) from exc
+            rows_data = [
+                {
+                    "row_num": r.row_num,
+                    "supplier_raw": r.supplier_raw,
+                    "supplier_display": r.supplier_display,
+                    "note_raw": r.note_raw,
+                    "cost": r.cost,
+                    "price": r.price,
+                    "category": r.category,
+                    "old_date_label": r.old_date_label,
+                    "created_at_str": r.created_at_str,
+                }
+                for r in parsed.rows
+            ]
+            report = await save_prixod_report(
+                db,
+                report_date=parsed.report_date,
+                total_cost=parsed.total_cost,
+                total_price=parsed.total_price,
+                formatted_text=parsed.formatted_text,
+                rows_data=rows_data,
+            )
+
+        published = False
+        pub_msg = "Fayldan ITOG 👑 yaratildi va bazaga saqlandi"
+        if publish_to_group:
+            published, pub_msg, report = await _publish_prixod_to_group(report.id)
+
+        return {
+            "report": _serialize_prixod(report),
+            "published": published,
+            "message": pub_msg,
+        }
+
+    # -----------------------------------------------------------------------
+    # Suppliers & AI Rounding Settings Management (/settings/...)
+    # -----------------------------------------------------------------------
+
+    @app.get("/settings/suppliers")
+    async def get_supplier_configs_endpoint(
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        async with async_session_maker() as db:
+            cfgs = await list_suppliers(db, active_only=True)
+            all_known = await get_all_known_suppliers(db)
+        return {
+            "configs": [
+                {
+                    "id": int(c.id),
+                    "order_num": int(c.order_num),
+                    "display_name": c.display_name,
+                    "aliases": c.aliases or "",
+                    "default_category": c.default_category or "qarz",
+                }
+                for c in cfgs
+            ],
+            "all_known": all_known,
+        }
+
+    @app.post("/settings/suppliers")
+    async def save_supplier_config_endpoint(
+        payload: SupplierConfigCreateRequest,
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> dict:
+        async with async_session_maker() as db:
+            cfg = await add_or_update_supplier(
+                db,
+                display_name=payload.display_name.strip(),
+                aliases=payload.aliases.strip(),
+                default_category=payload.default_category.strip() or "qarz",
+            )
+        return {
+            "id": int(cfg.id),
+            "order_num": int(cfg.order_num),
+            "display_name": cfg.display_name,
+            "aliases": cfg.aliases or "",
+            "default_category": cfg.default_category or "qarz",
+        }
+
+    @app.delete("/settings/suppliers/{supplier_id}")
+    async def delete_supplier_config_endpoint(
+        supplier_id: int,
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> dict:
+        async with async_session_maker() as db:
+            ok = await delete_supplier(db, supplier_id=supplier_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Postavshik topilmadi")
+        return {"ok": True, "deleted_id": supplier_id}
+
+    @app.get("/settings/round-mode")
+    async def get_round_mode_endpoint(
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        async with async_session_maker() as db:
+            mode = await get_app_setting(db, "round_mode", "floor_1000")
+        return {"round_mode": mode}
+
+    @app.post("/settings/round-mode")
+    async def update_round_mode_endpoint(
+        payload: RoundModeUpdateRequest,
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> dict:
+        async with async_session_maker() as db:
+            await set_app_setting(db, "round_mode", payload.round_mode)
+        return {"ok": True, "round_mode": payload.round_mode}
 
     return app
