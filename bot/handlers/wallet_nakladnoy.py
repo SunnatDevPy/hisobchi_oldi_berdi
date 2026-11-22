@@ -51,6 +51,7 @@ from database.crud import (
     get_group_config,
     get_kassa_debt_stats,
     get_nakladnoy,
+    get_nakladnoy_session_seq,
     get_or_create_open_session,
     get_recent_amounts_for_supplier,
     list_unpaid_debt_nakladnoys,
@@ -198,22 +199,28 @@ def render_status_text(summary: SessionSummary) -> str:
     return result
 
 
+def _nakladnoy_num_label(payment_id: int, session_seq: Optional[int] = None) -> str:
+    """Format nakladnoy identifier as '#ID / N' within a daily session (or '#ID' fallback)."""
+    return f"#{payment_id} / {session_seq}" if session_seq else f"#{payment_id}"
+
+
 def render_nakladnoy_group_caption(
-    payment: NakladnoyPayment, tag: str = ""
+    payment: NakladnoyPayment, tag: str = "", session_seq: Optional[int] = None
 ) -> str:
     """Build caption/message sent to the Nakladnoy Telegram group."""
     ts = format_local_dt(payment.created_at, "%d.%m.%Y %H:%M")
+    num_lbl = _nakladnoy_num_label(payment.id, session_seq)
     if payment.status == "deleted":
         return (
             f"❌ <b>[O'CHIRILDI / BEKOR QILINDI]</b>\n"
-            f"📸 Nakladnoy #{payment.id}\n"
+            f"📸 Nakladnoy {num_lbl}\n"
             f"🏢 Postavshik: <s>{html.escape(payment.supplier_name)}</s>\n"
             f"💰 Summa: <s>{format_uzs(payment.amount)} so'm</s>"
         )
     if getattr(payment, "is_debt", False):
         return (
             f"📌 <b>[QARZGA — PUL BERILMADI]</b>\n"
-            f"📸 <b>Nakladnoy #{payment.id}</b>\n"
+            f"📸 <b>Nakladnoy {num_lbl}</b>\n"
             f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
             f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>\n"
             f"📌 Holat: <b>QARZGA (to'lanmagan)</b>\n"
@@ -233,7 +240,7 @@ def render_nakladnoy_group_caption(
             paid_state = f"✅ Holat: <b>TO'LANDI ({paid_ts})</b>"
         return (
             f"{paid_head}\n"
-            f"📸 <b>Nakladnoy #{payment.id}</b>\n"
+            f"📸 <b>Nakladnoy {num_lbl}</b>\n"
             f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
             f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>\n"
             f"{paid_state}\n"
@@ -255,7 +262,7 @@ def render_nakladnoy_group_caption(
         else ("\n🏦 To'lov turi: <b>Perechesleniya (o'tkazma)</b>" if pm == "transfer" else "")
     )
     return (
-        f"{header_tag}📸 <b>Nakladnoy #{payment.id}</b>\n"
+        f"{header_tag}📸 <b>Nakladnoy {num_lbl}</b>\n"
         f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
         f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>"
         f"{pm_line}\n"
@@ -269,7 +276,11 @@ async def _sync_nakladnoy_group_message(
     """Update existing message in the Nakladnoy group if a confirmed payment was edited or deleted."""
     if not payment.group_chat_id or not payment.group_message_id:
         return False, "<i>(Bu nakladnoy hali guruhga yuborilmagan)</i>"
-    new_caption = render_nakladnoy_group_caption(payment, tag=tag)
+    session_seq: Optional[int] = None
+    if payment.status == "confirmed":
+        async with async_session_maker() as db:
+            session_seq = await get_nakladnoy_session_seq(db, payment)
+    new_caption = render_nakladnoy_group_caption(payment, tag=tag, session_seq=session_seq)
     try:
         if payment.photo_file_id:
             await bot.edit_message_caption(
@@ -755,9 +766,14 @@ async def process_quick_nakladnoy_amount(message: Message, state: FSMContext) ->
     )
 
 
-async def _post_payment_to_group(bot, payment: NakladnoyPayment, nak_group) -> tuple[bool, str]:
+async def _post_payment_to_group(
+    bot, payment: NakladnoyPayment, nak_group, session_seq: Optional[int] = None
+) -> tuple[bool, str]:
     """Send a confirmed nakladnoy payment to the bound Nakladnoy group and save message ID."""
-    caption = render_nakladnoy_group_caption(payment)
+    if session_seq is None and payment.status == "confirmed":
+        async with async_session_maker() as db:
+            session_seq = await get_nakladnoy_session_seq(db, payment)
+    caption = render_nakladnoy_group_caption(payment, session_seq=session_seq)
     try:
         if payment.photo_file_id:
             sent = await bot.send_photo(
@@ -839,27 +855,32 @@ async def _process_ready_nakladnoy(
         nak_group = await get_group_config(db, "nakladnoy")
 
         can_auto = auto_confirm and is_confident and dup is None and suggested_sup is None
+        session_seq: Optional[int] = None
         if can_auto:
             payment = await confirm_nakladnoy(db, payment.id, user_id=uid)
+            session_seq = await get_nakladnoy_session_seq(db, payment)
 
     await state.clear()
 
     if can_auto and payment is not None:
         posted = False
         if nak_group:
-            posted, group_notice = await _post_payment_to_group(message.bot, payment, nak_group)
+            posted, group_notice = await _post_payment_to_group(
+                message.bot, payment, nak_group, session_seq=session_seq
+            )
         else:
             group_notice = "<i>(Nakladnoy guruhi ulanmagan — faqat bazaga saqlandi)</i>"
 
         async with async_session_maker() as db:
             summary = await compute_session_summary(db, payment.session_id)
 
+        num_lbl = _nakladnoy_num_label(payment.id, session_seq)
         round_line = ""
         if orig_amt is not None:
             round_line = f"🔄 Yaxlitlandi: <i>{format_uzs(orig_amt)} → {format_uzs(payment.amount)}</i>\n"
         await message.answer(
             f"{prefix_html}"
-            f"⚡ <b>Avto-tasdiqlandi! (#{payment.id})</b>\n"
+            f"⚡ <b>Avto-tasdiqlandi! ({num_lbl})</b>\n"
             f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
             f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>\n"
             f"{round_line}"
@@ -1085,14 +1106,18 @@ async def _finalize_nakladnoy_confirmation(
             is_debt=is_debt,
             payment_method=payment_method,
         )
+        session_seq = await get_nakladnoy_session_seq(db, payment)
 
+    num_lbl = _nakladnoy_num_label(payment.id, session_seq)
     pm = (getattr(payment, "payment_method", "cash") or "cash").strip().lower()
     posted = False
     reply_kb = None
     if is_debt:
-        header = f"📌 <b>Qarzga saqlandi! (#{payment.id})</b>"
+        header = f"📌 <b>Qarzga saqlandi! ({num_lbl})</b>"
         if nak_group and payment:
-            posted, group_notice = await _post_payment_to_group(cb.bot, payment, nak_group)
+            posted, group_notice = await _post_payment_to_group(
+                cb.bot, payment, nak_group, session_seq=session_seq
+            )
         else:
             group_notice = "<i>(Nakladnoy guruhi ulanmagan — faqat bazaga qarzga olindi)</i>"
         group_notice += "\n📌 <i>Holat: Qarzga (qo'ldagi puldan ayrilmadi)</i>"
@@ -1101,20 +1126,22 @@ async def _finalize_nakladnoy_confirmation(
         )
         toast = "📌 Qarzga saqlandi!"
     elif not send_to_group:
-        header = f"⏭ <b>Bazaga saqlandi! (#{payment.id})</b>"
+        header = f"⏭ <b>Bazaga saqlandi! ({num_lbl})</b>"
         group_notice = "<i>(Guruhga yuborilmadi — faqat hisobingizga olindi)</i>"
         toast = "✅ Saqlandi!"
     elif nak_group and payment:
         if pm == "card":
-            header = f"💳 <b>Karta orqali saqlandi! (#{payment.id})</b>"
+            header = f"💳 <b>Karta orqali saqlandi! ({num_lbl})</b>"
             toast = "💳 Karta orqali saqlandi!"
         elif pm == "transfer":
-            header = f"🏦 <b>Perechesleniya saqlandi! (#{payment.id})</b>"
+            header = f"🏦 <b>Perechesleniya saqlandi! ({num_lbl})</b>"
             toast = "🏦 Perechesleniya saqlandi!"
         else:
-            header = f"✅ <b>Tasdiqlandi! (#{payment.id})</b>"
+            header = f"✅ <b>Tasdiqlandi! ({num_lbl})</b>"
             toast = "✅ Saqlandi!"
-        posted, group_notice = await _post_payment_to_group(cb.bot, payment, nak_group)
+        posted, group_notice = await _post_payment_to_group(
+            cb.bot, payment, nak_group, session_seq=session_seq
+        )
         if pm == "card":
             group_notice += "\n💳 <i>To'lov turi: Karta (qo'ldagi puldan ayrilmadi)</i>"
             reply_kb = auto_confirmed_nakladnoy_kb(
@@ -1127,21 +1154,21 @@ async def _finalize_nakladnoy_confirmation(
             )
     else:
         if pm == "card":
-            header = f"💳 <b>Karta orqali saqlandi! (#{payment.id})</b>"
+            header = f"💳 <b>Karta orqali saqlandi! ({num_lbl})</b>"
             group_notice = (
                 "<i>(Nakladnoy guruhi ulanmagan — faqat bazaga saqlandi)</i>\n"
                 "💳 <i>To'lov turi: Karta (qo'ldagi puldan ayrilmadi)</i>"
             )
             toast = "💳 Karta orqali saqlandi!"
         elif pm == "transfer":
-            header = f"🏦 <b>Perechesleniya saqlandi! (#{payment.id})</b>"
+            header = f"🏦 <b>Perechesleniya saqlandi! ({num_lbl})</b>"
             group_notice = (
                 "<i>(Nakladnoy guruhi ulanmagan — faqat bazaga saqlandi)</i>\n"
                 "🏦 <i>To'lov turi: Perechesleniya / o'tkazma (qo'ldagi puldan ayrilmadi)</i>"
             )
             toast = "🏦 Perechesleniya saqlandi!"
         else:
-            header = f"✅ <b>Tasdiqlandi! (#{payment.id})</b>"
+            header = f"✅ <b>Tasdiqlandi! ({num_lbl})</b>"
             group_notice = "<i>(Nakladnoy guruhi ulanmagan — faqat hisobga olindi)</i>"
             toast = "✅ Saqlandi!"
         username = await get_bot_username(cb.bot)
@@ -1592,10 +1619,15 @@ async def cb_view_nakladnoy_photo(cb: CallbackQuery) -> None:
     payment_id = int(cb.data.split(":")[-1])
     async with async_session_maker() as db:
         payment = await get_nakladnoy(db, payment_id)
+        session_seq = (
+            await get_nakladnoy_session_seq(db, payment)
+            if (payment and payment.photo_file_id)
+            else None
+        )
     if not payment or not payment.photo_file_id:
         await cb.answer("Bu yozuvda rasm saqlanmagan.", show_alert=True)
         return
-    caption = render_nakladnoy_group_caption(payment)
+    caption = render_nakladnoy_group_caption(payment, session_seq=session_seq)
     await cb.bot.send_photo(
         chat_id=cb.from_user.id,
         photo=payment.photo_file_id,

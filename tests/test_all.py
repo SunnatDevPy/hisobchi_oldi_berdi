@@ -1311,3 +1311,48 @@ def test_all_known_suppliers_pagination_and_inline_supplier_edit(tmp_path: Path,
         asyncio.run(scenario())
     finally:
         get_settings.cache_clear()
+
+
+def test_nakladnoy_session_seq_numbering_and_daily_reset(tmp_path: Path):
+    from bot.handlers.wallet_nakladnoy import render_nakladnoy_group_caption
+    from database.crud import get_nakladnoy_session_seq
+
+    async def scenario(db_session: AsyncSession) -> None:
+        s1 = await get_or_create_open_session(db_session, report_date="2026-11-26")
+        await add_cash_transaction(db_session, 5_000_000, source_type="main", session_id=s1.id)
+
+        p1 = await create_pending_nakladnoy(db_session, "RDB Yunusobod 1", 1_554_000, session_id=s1.id)
+        # Pending draft has no confirmed session sequence yet
+        assert await get_nakladnoy_session_seq(db_session, p1) is None
+        await confirm_nakladnoy(db_session, p1.id)
+
+        # Deleted draft between confirmed payments must not consume sequence numbers
+        p_del = await create_pending_nakladnoy(db_session, "Deleted Draft", 100_000, session_id=s1.id)
+        await delete_nakladnoy(db_session, p_del.id)
+
+        p2 = await create_pending_nakladnoy(db_session, "Karta Vendor", 400_000, session_id=s1.id)
+        await confirm_nakladnoy(db_session, p2.id, payment_method="card")
+
+        p3 = await create_pending_nakladnoy(db_session, "Qarz Vendor", 250_000, session_id=s1.id)
+        await confirm_nakladnoy(db_session, p3.id, is_debt=True)
+
+        assert await get_nakladnoy_session_seq(db_session, p_del) is None
+        assert await get_nakladnoy_session_seq(db_session, p1) == 1
+        assert await get_nakladnoy_session_seq(db_session, p2) == 2
+        assert await get_nakladnoy_session_seq(db_session, p3) == 3
+
+        assert f"Nakladnoy #{p1.id} / 1" in render_nakladnoy_group_caption(p1, session_seq=1)
+        assert f"Nakladnoy #{p2.id} / 2" in render_nakladnoy_group_caption(p2, session_seq=2)
+        assert f"Nakladnoy #{p3.id} / 3" in render_nakladnoy_group_caption(p3, session_seq=3)
+
+        # Close Day 1 -> Open Day 2 -> daily ordinal resets cleanly to 1
+        await close_cash_session(db_session, s1.id, actual_counted_cash=3_446_000)
+        s2 = await get_or_create_open_session(db_session, report_date="2026-11-27")
+        p4 = await create_pending_nakladnoy(db_session, "Next Day Supplier", 300_000, session_id=s2.id)
+        await confirm_nakladnoy(db_session, p4.id)
+
+        assert p4.id > p3.id
+        assert await get_nakladnoy_session_seq(db_session, p4) == 1
+        assert f"Nakladnoy #{p4.id} / 1" in render_nakladnoy_group_caption(p4, session_seq=1)
+
+    asyncio.run(_run_with_db(tmp_path, scenario))

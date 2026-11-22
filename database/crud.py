@@ -494,6 +494,22 @@ async def get_nakladnoy(db: AsyncSession, payment_id: int) -> Optional[Nakladnoy
     return await db.get(NakladnoyPayment, payment_id)
 
 
+async def get_nakladnoy_session_seq(
+    db: AsyncSession, payment: Optional[NakladnoyPayment]
+) -> Optional[int]:
+    """Return 1-based ordinal of a confirmed nakladnoy within its daily session."""
+    if payment is None or payment.status != "confirmed":
+        return None
+    cnt = await db.scalar(
+        select(func.count(NakladnoyPayment.id)).where(
+            NakladnoyPayment.session_id == payment.session_id,
+            NakladnoyPayment.status == "confirmed",
+            NakladnoyPayment.id <= payment.id,
+        )
+    )
+    return int(cnt) if cnt else 1
+
+
 async def find_nakladnoy_by_photo_unique_id(
     db: AsyncSession, photo_unique_id: str
 ) -> Optional[NakladnoyPayment]:
