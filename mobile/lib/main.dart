@@ -539,15 +539,26 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ],
                     ),
-                    child: const Column(
+                    child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           children: [
-                            Icon(Icons.account_balance_wallet_rounded,
-                                color: Colors.white, size: 32),
-                            SizedBox(width: 12),
-                            Expanded(
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(13),
+                              child: Image.asset(
+                                'assets/app_icon.png',
+                                width: 46,
+                                height: 46,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => const Icon(
+                                    Icons.account_balance_wallet_rounded,
+                                    color: Colors.white,
+                                    size: 32),
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            const Expanded(
                               child: Text(
                                 'Hisobchi Mobil',
                                 style: TextStyle(
@@ -559,8 +570,8 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ],
                         ),
-                        SizedBox(height: 10),
-                        Text(
+                        const SizedBox(height: 10),
+                        const Text(
                           'Telegram bot, AI nakladnoy skaneri va Nakladnoy guruhi bilan bevosita sinxron ishlovchi rasmiy kassa ilovasi.',
                           style: TextStyle(
                             color: Colors.white70,
@@ -1124,14 +1135,23 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
       appBar: AppBar(
         title: Row(
           children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                gradient: AppTokens.heroGradient,
-                borderRadius: BorderRadius.circular(11),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(11),
+              child: Image.asset(
+                'assets/app_icon.png',
+                width: 34,
+                height: 34,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    gradient: AppTokens.heroGradient,
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  child: const Icon(Icons.account_balance_wallet_rounded,
+                      size: 19, color: Colors.white),
+                ),
               ),
-              child: const Icon(Icons.account_balance_wallet_rounded,
-                  size: 19, color: Colors.white),
             ),
             const SizedBox(width: 10),
             const Text('Hisobchi'),

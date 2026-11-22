@@ -1,7 +1,7 @@
 ﻿name: hisobchi_app
 description: "Hisobchi вЂ” Kunlik kassa va nakladnoy mobil ilovasi (Telegram bot bilan sinxron)."
 publish_to: 'none'
-version: 1.0.6+6
+version: 1.0.7+7
 
 environment:
   sdk: ^3.14.0
@@ -24,3 +24,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/app_icon.png
