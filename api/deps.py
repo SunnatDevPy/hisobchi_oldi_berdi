@@ -48,7 +48,7 @@ def get_apk_version_metadata() -> dict:
     }
     if APK_VERSION_PATH.is_file():
         try:
-            loaded = json.loads(APK_VERSION_PATH.read_text(encoding="utf-8"))
+            loaded = json.loads(APK_VERSION_PATH.read_text(encoding="utf-8-sig"))
             if isinstance(loaded, dict):
                 meta["version"] = str(loaded.get("version") or meta["version"])
                 meta["build"] = int(loaded.get("build") or meta["build"])

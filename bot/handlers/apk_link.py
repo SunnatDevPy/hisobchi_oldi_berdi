@@ -41,7 +41,7 @@ def _read_apk_version_str() -> tuple[str, str]:
     """Return (version, full_version) from data/apk_version.json."""
     if APK_VERSION_PATH.is_file():
         try:
-            d = json.loads(APK_VERSION_PATH.read_text(encoding="utf-8"))
+            d = json.loads(APK_VERSION_PATH.read_text(encoding="utf-8-sig"))
             v = str(d.get("version") or "1.0.0")
             b = int(d.get("build") or 1)
             return v, f"v{v} (build #{b})"
