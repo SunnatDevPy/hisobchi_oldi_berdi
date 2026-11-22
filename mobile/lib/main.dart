@@ -1513,7 +1513,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
             const NavigationDestination(
               icon: Icon(Icons.assessment_outlined),
               selectedIcon: Icon(Icons.assessment_rounded),
-              label: 'Smena & Excel',
+              label: 'Smena',
             ),
           ],
         ),
@@ -1735,17 +1735,33 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
             children: [
               Expanded(
                 child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, 44),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 11),
+                  ),
                   onPressed: _openLiveSverkaSheet,
                   icon: const Icon(Icons.query_stats_rounded, size: 18),
-                  label: const Text('Jonli Sverka & 7/30 kun'),
+                  label: const FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text('Jonli Sverka', maxLines: 1),
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, 44),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 11),
+                  ),
                   onPressed: _openHistorySessionsSheet,
                   icon: const Icon(Icons.history_rounded, size: 18),
-                  label: const Text("O'tgan smenalar"),
+                  label: const FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text("O'tgan smenalar", maxLines: 1),
+                  ),
                 ),
               ),
             ],
@@ -1794,28 +1810,35 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
         child: Column(
           children: [
             Row(
               children: [
                 IconButton(
                   tooltip: 'Oldingi smena / sana',
-                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints.tightFor(width: 34, height: 34),
                   onPressed: (_switchingSession || !hasPrev)
                       ? null
                       : () =>
                           _selectDashboardSession(sessions[curIdx + 1].id),
                   icon: const Icon(Icons.chevron_left_rounded),
                 ),
+                const SizedBox(width: 2),
                 Expanded(
                   child: sessions.isEmpty
-                      ? Text(
-                          '📅 ${activeSummary.reportDate} (Smena #${activeSummary.sessionId})',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w900,
-                            fontSize: 13.5,
+                      ? FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            '📅 ${activeSummary.reportDate} • #${activeSummary.sessionId}',
+                            maxLines: 1,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 13.5,
+                            ),
                           ),
                         )
                       : HisobchiCustomDropdown<int>(
@@ -1831,6 +1854,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                             return CustomDropdownOption<int>(
                               value: s.id,
                               label: '${s.reportDate} • Smena #${s.id}',
+                              selectedLabel: s.reportDate,
                               subtitle: isCurOpen
                                   ? "Bugungi faol ochiq smena"
                                   : "Kutilgan naqd: ${formatUzs(s.expectedCash, withCurrency: true)}",
@@ -1846,9 +1870,12 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                           onChanged: (val) => _selectDashboardSession(val),
                         ),
                 ),
+                const SizedBox(width: 2),
                 IconButton(
                   tooltip: 'Keyingi smena / sana',
-                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints.tightFor(width: 34, height: 34),
                   onPressed: (_switchingSession || !hasNext)
                       ? null
                       : () =>
@@ -1863,13 +1890,18 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                 width: double.infinity,
                 child: FilledButton.tonalIcon(
                   style: FilledButton.styleFrom(
-                    minimumSize: const Size(80, 36),
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    minimumSize: const Size(0, 38),
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
                   ),
                   onPressed: () => _selectDashboardSession(null),
                   icon: const Icon(Icons.today_rounded, size: 16),
-                  label: Text(
-                      "🟢 Bugungi faol smenaga qaytish (${_summary!.reportDate})"),
+                  label: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      "Bugungi smenaga qaytish (${_summary!.reportDate})",
+                      maxLines: 1,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -1974,6 +2006,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                 Expanded(
                   child: HisobchiCustomDropdown<String>(
                     value: _filterMode,
+                    compact: true,
                     labelText: "To'lov turi",
                     sheetTitle: "To'lov turi bo'yicha filtrlash",
                     options: [
@@ -2021,16 +2054,18 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                     onChanged: (v) => setState(() => _filterMode = v),
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 8),
                 Expanded(
                   child: HisobchiCustomDropdown<String>(
                     value: _sortMode,
+                    compact: true,
                     labelText: 'Saralash',
                     sheetTitle: 'Nakladnoylarni saralash',
                     options: const [
                       CustomDropdownOption<String>(
                         value: 'newest',
                         label: 'Yangilari tepada',
+                        selectedLabel: 'Yangilari',
                         subtitle: "Oxirgi kiritilganlar birinchi",
                         icon: Icons.schedule_rounded,
                         accentColor: AppTokens.brand,
@@ -2038,6 +2073,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                       CustomDropdownOption<String>(
                         value: 'amount_desc',
                         label: 'Summasi katta',
+                        selectedLabel: 'Katta summa',
                         subtitle: "Eng yirik summadan kichigiga",
                         icon: Icons.trending_down_rounded,
                         accentColor: AppTokens.cashGreen,
@@ -2045,6 +2081,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                       CustomDropdownOption<String>(
                         value: 'supplier_az',
                         label: 'Postavshik (A-Z)',
+                        selectedLabel: 'A-Z',
                         subtitle: "Alifbo tartibida guruhlash",
                         icon: Icons.sort_by_alpha_rounded,
                         accentColor: AppTokens.cardBlue,
@@ -2073,6 +2110,11 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
               ),
               const SizedBox(width: 8),
               OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(0, 46),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
+                ),
                 onPressed: _openGlobalSearchSheet,
                 icon: const Icon(Icons.travel_explore_rounded, size: 18),
                 label: const Text('Arxiv'),
@@ -2450,33 +2492,59 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   }
 
   Widget _buildDebtSectionSwitcher() {
+    final filledCompact = FilledButton.styleFrom(
+      minimumSize: const Size(0, 44),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+    );
+    final outlinedCompact = OutlinedButton.styleFrom(
+      minimumSize: const Size(0, 44),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+    );
     return Row(
       children: [
         Expanded(
           child: _debtSubTab == 'nakladnoy'
               ? FilledButton.icon(
+                  style: filledCompact,
                   onPressed: () {},
                   icon: const Icon(Icons.push_pin_rounded, size: 17),
-                  label: Text('Nakladnoy qarz (${_allDebts.length})'),
+                  label: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child:
+                        Text('Nakladnoy (${_allDebts.length})', maxLines: 1),
+                  ),
                 )
               : OutlinedButton.icon(
+                  style: outlinedCompact,
                   onPressed: () => setState(() => _debtSubTab = 'nakladnoy'),
                   icon: const Icon(Icons.push_pin_outlined, size: 17),
-                  label: Text('Nakladnoy qarz (${_allDebts.length})'),
+                  label: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child:
+                        Text('Nakladnoy (${_allDebts.length})', maxLines: 1),
+                  ),
                 ),
         ),
         const SizedBox(width: 8),
         Expanded(
           child: _debtSubTab == 'nasiya'
               ? FilledButton.icon(
+                  style: filledCompact,
                   onPressed: () {},
                   icon: const Icon(Icons.menu_book_rounded, size: 17),
-                  label: const Text('Nasiya daftari'),
+                  label: const FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text('Nasiya daftari', maxLines: 1),
+                  ),
                 )
               : OutlinedButton.icon(
+                  style: outlinedCompact,
                   onPressed: () => setState(() => _debtSubTab = 'nasiya'),
                   icon: const Icon(Icons.menu_book_outlined, size: 17),
-                  label: const Text('Nasiya daftari'),
+                  label: const FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text('Nasiya daftari', maxLines: 1),
+                  ),
                 ),
         ),
       ],
@@ -3606,28 +3674,38 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
                           child: FilledButton.icon(
                             style: FilledButton.styleFrom(
                               backgroundColor: AppTokens.brandViolet,
-                              minimumSize: const Size(80, 46),
+                              minimumSize: const Size(0, 44),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 11),
                             ),
                             onPressed: _aiLoading
                                 ? null
                                 : () => _pickPhoto(ImageSource.camera),
                             icon: const Icon(Icons.photo_camera_rounded,
                                 size: 18),
-                            label: const Text('Kamera (AI)'),
+                            label: const FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text('Kamera (AI)', maxLines: 1),
+                            ),
                           ),
                         ),
-                        const SizedBox(width: 10),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: OutlinedButton.icon(
                             style: OutlinedButton.styleFrom(
-                              minimumSize: const Size(80, 46),
+                              minimumSize: const Size(0, 44),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 11),
                             ),
                             onPressed: _aiLoading
                                 ? null
                                 : () => _pickPhoto(ImageSource.gallery),
                             icon: const Icon(Icons.photo_library_rounded,
                                 size: 18),
-                            label: const Text('Galereya (AI)'),
+                            label: const FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text('Galereya (AI)', maxLines: 1),
+                            ),
                           ),
                         ),
                       ],
@@ -4442,24 +4520,38 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                   children: [
                     Expanded(
                       child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(0, 44),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 10),
+                        ),
                         onPressed: _busy
                             ? null
                             : () => _pickAndUploadPhoto(ImageSource.camera),
                         icon: const Icon(Icons.add_a_photo_rounded, size: 17),
-                        label: Text(_cur.hasPhoto
-                            ? 'Kameradan yangilash'
-                            : 'Kameradan rasm'),
+                        label: const FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text('Kamera', maxLines: 1),
+                        ),
                       ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(0, 44),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 10),
+                        ),
                         onPressed: _busy
                             ? null
                             : () => _pickAndUploadPhoto(ImageSource.gallery),
                         icon:
                             const Icon(Icons.photo_library_rounded, size: 17),
-                        label: const Text('Galereyadan'),
+                        label: const FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text('Galereya', maxLines: 1),
+                        ),
                       ),
                     ),
                   ],
@@ -4585,6 +4677,11 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                   children: [
                     Expanded(
                       child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(0, 44),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 10),
+                        ),
                         onPressed: _busy
                             ? null
                             : () async {
@@ -4609,15 +4706,23 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                                 }
                               },
                         icon: const Icon(Icons.send_rounded, size: 17),
-                        label: Text(_cur.inGroup
-                            ? 'Guruhda yangilash'
-                            : 'Guruhga yuborish'),
+                        label: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            _cur.inGroup ? 'Guruhda yangilash' : 'Guruhga',
+                            maxLines: 1,
+                          ),
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 8),
                     OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
-                          foregroundColor: AppTokens.dangerRed),
+                        foregroundColor: AppTokens.dangerRed,
+                        minimumSize: const Size(0, 44),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10),
+                      ),
                       onPressed: _busy
                           ? null
                           : () async {
@@ -5174,9 +5279,18 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
           ? FilledButton(
               onPressed: () {},
               style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 10),
+                minimumSize: const Size(0, 40),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
               ),
-              child: Text(label, style: const TextStyle(fontSize: 12.5)),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  style: const TextStyle(fontSize: 12.5),
+                ),
+              ),
             )
           : OutlinedButton(
               onPressed: () {
@@ -5184,9 +5298,18 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
                 _loadData();
               },
               style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 10),
+                minimumSize: const Size(0, 40),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
               ),
-              child: Text(label, style: const TextStyle(fontSize: 12.5)),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  style: const TextStyle(fontSize: 12.5),
+                ),
+              ),
             ),
     );
   }
@@ -5605,18 +5728,34 @@ class _NasiyaLedgerViewState extends State<NasiyaLedgerView> {
                       children: [
                         Expanded(
                           child: FilledButton.icon(
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size(0, 44),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 11),
+                            ),
                             onPressed: () => _openAddEntryDialog('debt'),
                             icon: const Icon(Icons.add_circle_outline_rounded,
                                 size: 18),
-                            label: const Text('Qarz yozish'),
+                            label: const FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text('Qarz yozish', maxLines: 1),
+                            ),
                           ),
                         ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: FilledButton.tonalIcon(
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size(0, 44),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 11),
+                            ),
                             onPressed: () => _openAddEntryDialog('payment'),
                             icon: const Icon(Icons.task_alt_rounded, size: 18),
-                            label: const Text("Qarz to'lash"),
+                            label: const FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text("Qarz to'lash", maxLines: 1),
+                            ),
                           ),
                         ),
                       ],

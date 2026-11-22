@@ -268,7 +268,7 @@ ThemeData buildAppTheme(Brightness brightness) {
       ),
       labelTextStyle: WidgetStateProperty.resolveWith(
         (s) => TextStyle(
-          fontSize: 12,
+          fontSize: 11.5,
           color: s.contains(WidgetState.selected) ? primaryText : secondaryText,
           fontWeight: s.contains(WidgetState.selected)
               ? FontWeight.w800
@@ -333,10 +333,10 @@ ThemeData buildAppTheme(Brightness brightness) {
       style: FilledButton.styleFrom(
         backgroundColor: AppTokens.brand,
         foregroundColor: Colors.white,
-        minimumSize: const Size(88, 52),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        minimumSize: const Size(0, 48),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+        textStyle: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
@@ -345,10 +345,10 @@ ThemeData buildAppTheme(Brightness brightness) {
         side: BorderSide(
           color: isDark ? AppTokens.cardBorderDark : const Color(0xFFCBD5E1),
         ),
-        minimumSize: const Size(64, 48),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        minimumSize: const Size(0, 46),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        textStyle: const TextStyle(fontWeight: FontWeight.w700),
+        textStyle: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
       ),
     ),
     floatingActionButtonTheme: FloatingActionButtonThemeData(

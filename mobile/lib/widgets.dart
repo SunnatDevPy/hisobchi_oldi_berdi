@@ -64,48 +64,52 @@ class HeroBalanceCard extends StatelessWidget {
                   ],
                 ),
               ),
-              const Spacer(),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
-                decoration: BoxDecoration(
-                  color: grp.bound
-                      ? const Color(0xFF10B981).withValues(alpha: 0.24)
-                      : const Color(0xFFF59E0B).withValues(alpha: 0.24),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: grp.bound
-                        ? const Color(0xFF6EE7B7).withValues(alpha: 0.55)
-                        : const Color(0xFFFCD34D).withValues(alpha: 0.55),
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      grp.bound
-                          ? Icons.mark_chat_read_rounded
-                          : Icons.warning_amber_rounded,
-                      size: 13.5,
+              const SizedBox(width: 8),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
                       color: grp.bound
-                          ? const Color(0xFF6EE7B7)
-                          : const Color(0xFFFDE68A),
-                    ),
-                    const SizedBox(width: 5),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 155),
-                      child: Text(
-                        grp.bound ? grp.title : 'Guruh ulanmagan',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
+                          ? const Color(0xFF10B981).withValues(alpha: 0.24)
+                          : const Color(0xFFF59E0B).withValues(alpha: 0.24),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: grp.bound
+                            ? const Color(0xFF6EE7B7).withValues(alpha: 0.55)
+                            : const Color(0xFFFCD34D).withValues(alpha: 0.55),
                       ),
                     ),
-                  ],
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          grp.bound
+                              ? Icons.mark_chat_read_rounded
+                              : Icons.warning_amber_rounded,
+                          size: 13.5,
+                          color: grp.bound
+                              ? const Color(0xFF6EE7B7)
+                              : const Color(0xFFFDE68A),
+                        ),
+                        const SizedBox(width: 5),
+                        Flexible(
+                          child: Text(
+                            grp.bound ? grp.title : 'Guruh ulanmagan',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -167,7 +171,7 @@ class HeroBalanceCard extends StatelessWidget {
                   children: [
                     Expanded(
                       child: _HeroMetricTile(
-                        label: "Qo'ldagi jami kirim",
+                        label: 'Jami kirim',
                         value: formatUzs(summary.totalAvailableInflow),
                         icon: Icons.south_west_rounded,
                         color: const Color(0xFF6EE7B7),
@@ -181,7 +185,7 @@ class HeroBalanceCard extends StatelessWidget {
                     const SizedBox(width: 12),
                     Expanded(
                       child: _HeroMetricTile(
-                        label: 'Naqd nakladnoy rasxod',
+                        label: 'Naqd rasxod',
                         value: formatUzs(summary.totalNakladnoySpent),
                         icon: Icons.north_east_rounded,
                         color: const Color(0xFFFDA4AF),
@@ -194,19 +198,19 @@ class HeroBalanceCard extends StatelessWidget {
                   children: [
                     Expanded(
                       child: _HeroSubStat(
-                        label: 'Kechadan qoldiq',
+                        label: 'Kechadan',
                         value: formatUzs(summary.openingBalance),
                       ),
                     ),
                     Expanded(
                       child: _HeroSubStat(
-                        label: 'Bugun olingan',
+                        label: 'Bugun kirim',
                         value: '+${formatUzs(summary.mainCashIn)}',
                       ),
                     ),
                     Expanded(
                       child: _HeroSubStat(
-                        label: 'Kassa qarz qoldiq',
+                        label: 'Kassa qarzi',
                         value: formatUzs(summary.totalKassaDebtOutstanding),
                       ),
                     ),
@@ -367,21 +371,21 @@ class _HeroActionBtn extends StatelessWidget {
         borderRadius: BorderRadius.circular(13),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 8),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 16, color: Colors.white),
-              const SizedBox(width: 5),
-              Flexible(
+              Icon(icon, size: 18, color: Colors.white),
+              const SizedBox(height: 4),
+              FittedBox(
+                fit: BoxFit.scaleDown,
                 child: Text(
                   label,
                   maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
               ),
@@ -580,7 +584,7 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
             const SizedBox(width: 10),
             Expanded(
               child: _PaymentKpiCard(
-                title: 'Qarzga (${summary.reportDate})',
+                title: 'Qarzga (smena)',
                 amount: summary.totalDebtNakladnoy,
                 count: debtCnt,
                 share: grandTotal > 0
@@ -1239,14 +1243,11 @@ class _DonutStatisticsCard extends StatelessWidget {
     final totalCount = cashCount + cardCount + transferCount + debtCount;
 
     final segments = <_DonutSeg>[
-      _DonutSeg('cash', "Naqd to'lov", cashAmount, cashCount,
-          AppTokens.cashGreen),
-      _DonutSeg(
-          'card', 'Karta orqali', cardAmount, cardCount, AppTokens.cardBlue),
+      _DonutSeg('cash', 'Naqd', cashAmount, cashCount, AppTokens.cashGreen),
+      _DonutSeg('card', 'Karta', cardAmount, cardCount, AppTokens.cardBlue),
       _DonutSeg('transfer', "O'tkazma", transferAmount, transferCount,
           AppTokens.transferPurple),
-      _DonutSeg(
-          'debt', 'Qarzga', debtAmount, debtCount, AppTokens.debtAmber),
+      _DonutSeg('debt', 'Qarzga', debtAmount, debtCount, AppTokens.debtAmber),
     ];
 
     return Card(
@@ -1295,13 +1296,13 @@ class _DonutStatisticsCard extends StatelessWidget {
             Row(
               children: [
                 SizedBox(
-                  width: 142,
-                  height: 142,
+                  width: 124,
+                  height: 124,
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
                       CustomPaint(
-                        size: const Size(142, 142),
+                        size: const Size(124, 124),
                         painter: _DonutRingPainter(
                           segments: segments,
                           total: total,
@@ -1311,14 +1312,14 @@ class _DonutStatisticsCard extends StatelessWidget {
                         ),
                       ),
                       Padding(
-                        padding: const EdgeInsets.all(22),
+                        padding: const EdgeInsets.all(18),
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Text(
                               'JAMI',
                               style: TextStyle(
-                                fontSize: 10.5,
+                                fontSize: 10,
                                 fontWeight: FontWeight.w800,
                                 letterSpacing: 0.7,
                                 color: textSecondaryOf(context),
@@ -1330,7 +1331,7 @@ class _DonutStatisticsCard extends StatelessWidget {
                               child: Text(
                                 formatUzsCompact(total),
                                 style: TextStyle(
-                                  fontSize: 16.5,
+                                  fontSize: 15.5,
                                   fontWeight: FontWeight.w900,
                                   color: textPrimaryOf(context),
                                   fontFeatures: AppTokens.tabularNums,
@@ -1340,7 +1341,7 @@ class _DonutStatisticsCard extends StatelessWidget {
                             Text(
                               '$totalCount ta chek',
                               style: TextStyle(
-                                fontSize: 11,
+                                fontSize: 10.5,
                                 fontWeight: FontWeight.w700,
                                 color: textSecondaryOf(context),
                               ),
@@ -1351,7 +1352,7 @@ class _DonutStatisticsCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                const SizedBox(width: 16),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     children: segments.map((s) {
@@ -1417,13 +1418,18 @@ class _DonutStatisticsCard extends StatelessWidget {
                                         ),
                                       ],
                                     ),
-                                    Text(
-                                      '${formatUzs(s.value)} (${s.count} ta)',
-                                      style: TextStyle(
-                                        fontSize: 11.5,
-                                        fontWeight: FontWeight.w600,
-                                        color: textSecondaryOf(context),
-                                        fontFeatures: AppTokens.tabularNums,
+                                    FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      alignment: Alignment.centerLeft,
+                                      child: Text(
+                                        '${formatUzs(s.value)} (${s.count} ta)',
+                                        maxLines: 1,
+                                        style: TextStyle(
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.w600,
+                                          color: textSecondaryOf(context),
+                                          fontFeatures: AppTokens.tabularNums,
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -1702,27 +1708,33 @@ class _TrendLineStatisticsCard extends StatelessWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
-                            Text(
-                              "Rasxod: ${formatUzs(selectedPt['spent'] as num?)} (${selectedPt['count']} ta)",
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w900,
-                                fontSize: 12.5,
-                                color: AppTokens.brand,
-                                fontFeatures: AppTokens.tabularNums,
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerRight,
+                              child: Text(
+                                "Rasxod: ${formatUzs(selectedPt['spent'] as num?)} (${selectedPt['count']} ta)",
+                                maxLines: 1,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 12.5,
+                                  color: AppTokens.brand,
+                                  fontFeatures: AppTokens.tabularNums,
+                                ),
                               ),
                             ),
                             if (cashInVal > 0)
-                              Text(
-                                "Kirim: +${formatUzs(cashInVal)} so'm",
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 11.5,
-                                  color: AppTokens.cashGreen,
-                                  fontFeatures: AppTokens.tabularNums,
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerRight,
+                                child: Text(
+                                  "Kirim: +${formatUzs(cashInVal)} so'm",
+                                  maxLines: 1,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 11.5,
+                                    color: AppTokens.cashGreen,
+                                    fontFeatures: AppTokens.tabularNums,
+                                  ),
                                 ),
                               ),
                           ],
@@ -2444,46 +2456,57 @@ class NakladnoyListCard extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 4),
-                        Row(
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 3,
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
-                            Icon(Icons.schedule_rounded,
-                                size: 12.5, color: textSecondaryOf(context)),
-                            const SizedBox(width: 3),
-                            Text(
-                              item.reportDate != null
-                                  ? '${item.reportDate} • ${item.timeHm}'
-                                  : item.timeHm,
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: textSecondaryOf(context),
-                              ),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.schedule_rounded,
+                                    size: 12.5,
+                                    color: textSecondaryOf(context)),
+                                const SizedBox(width: 3),
+                                Text(
+                                  item.reportDate != null
+                                      ? '${item.reportDate} • ${item.timeHm}'
+                                      : item.timeHm,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: textSecondaryOf(context),
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(width: 8),
-                            Icon(
-                              item.inGroup
-                                  ? Icons.cloud_done_rounded
-                                  : Icons.storage_rounded,
-                              size: 13.5,
-                              color: item.inGroup
-                                  ? grpFg
-                                  : textSecondaryOf(context),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  item.inGroup
+                                      ? Icons.cloud_done_rounded
+                                      : Icons.storage_rounded,
+                                  size: 13.5,
+                                  color: item.inGroup
+                                      ? grpFg
+                                      : textSecondaryOf(context),
+                                ),
+                                const SizedBox(width: 3),
+                                Text(
+                                  item.inGroup ? 'Guruhda' : 'Bazada',
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: item.inGroup
+                                        ? grpFg
+                                        : textSecondaryOf(context),
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(width: 3),
-                            Text(
-                              item.inGroup ? 'Guruhda' : 'Bazada',
-                              style: TextStyle(
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w700,
-                                color: item.inGroup
-                                    ? grpFg
-                                    : textSecondaryOf(context),
-                              ),
-                            ),
-                            if (item.hasPhoto) ...[
-                              const SizedBox(width: 8),
+                            if (item.hasPhoto)
                               Icon(Icons.image_rounded, size: 14, color: fg),
-                            ],
                           ],
                         ),
                       ],
@@ -2547,12 +2570,20 @@ class NakladnoyListCard extends StatelessWidget {
                   width: double.infinity,
                   child: FilledButton.tonalIcon(
                     style: FilledButton.styleFrom(
-                      minimumSize: const Size(80, 44),
+                      minimumSize: const Size(0, 44),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
                     ),
                     onPressed: onQuickPay,
                     icon: const Icon(Icons.check_circle_outline_rounded,
                         size: 18),
-                    label: const Text("Qarzni to'lash (Naqd / Karta / O'tkazma)"),
+                    label: const FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        "Qarzni to'lash (Naqd / Karta / O'tkazma)",
+                        maxLines: 1,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -2571,6 +2602,7 @@ class NakladnoyListCard extends StatelessWidget {
 class CustomDropdownOption<T> {
   final T value;
   final String label;
+  final String? selectedLabel;
   final String? subtitle;
   final IconData? icon;
   final Color? accentColor;
@@ -2579,6 +2611,7 @@ class CustomDropdownOption<T> {
   const CustomDropdownOption({
     required this.value,
     required this.label,
+    this.selectedLabel,
     this.subtitle,
     this.icon,
     this.accentColor,
@@ -2652,7 +2685,7 @@ class HisobchiCustomDropdown<T> extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (labelText != null && !compact) ...[
+        if (labelText != null) ...[
           Padding(
             padding: const EdgeInsets.only(left: 4, bottom: 5),
             child: Text(
@@ -2676,8 +2709,8 @@ class HisobchiCustomDropdown<T> extends StatelessWidget {
               onTap: enabled ? () => _openPickerSheet(context) : null,
               child: Container(
                 padding: EdgeInsets.symmetric(
-                  horizontal: compact ? 10 : 12,
-                  vertical: compact ? 8 : 10.5,
+                  horizontal: compact ? 8 : 12,
+                  vertical: compact ? 7.5 : 10.5,
                 ),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(14),
@@ -2692,24 +2725,27 @@ class HisobchiCustomDropdown<T> extends StatelessWidget {
                   children: [
                     if (sel?.icon != null) ...[
                       Container(
-                        width: compact ? 26 : 30,
-                        height: compact ? 26 : 30,
+                        width: compact ? 24 : 30,
+                        height: compact ? 24 : 30,
                         decoration: BoxDecoration(
                           color: bg,
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(compact ? 7 : 8),
                           border: Border.all(color: border),
                         ),
                         child: Icon(
                           sel!.icon,
-                          size: compact ? 15 : 17,
+                          size: compact ? 14 : 17,
                           color: fg,
                         ),
                       ),
-                      const SizedBox(width: 9),
+                      SizedBox(width: compact ? 6 : 9),
                     ],
                     Expanded(
                       child: Text(
-                        sel?.label ?? placeholder ?? 'Tanlang',
+                        sel?.selectedLabel ??
+                            sel?.label ??
+                            placeholder ??
+                            'Tanlang',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -2720,10 +2756,12 @@ class HisobchiCustomDropdown<T> extends StatelessWidget {
                       ),
                     ),
                     if (sel?.badge != null && sel!.badge!.isNotEmpty) ...[
-                      const SizedBox(width: 6),
+                      SizedBox(width: compact ? 4 : 6),
                       Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 7, vertical: 2.5),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: compact ? 6 : 7,
+                          vertical: compact ? 2 : 2.5,
+                        ),
                         decoration: BoxDecoration(
                           color: bg,
                           borderRadius: BorderRadius.circular(8),
@@ -2740,21 +2778,28 @@ class HisobchiCustomDropdown<T> extends StatelessWidget {
                         ),
                       ),
                     ],
-                    const SizedBox(width: 6),
-                    Container(
-                      padding: const EdgeInsets.all(3),
-                      decoration: BoxDecoration(
-                        color: isDark
-                            ? AppTokens.surfaceDark.withValues(alpha: 0.7)
-                            : AppTokens.surfaceLight,
-                        borderRadius: BorderRadius.circular(7),
-                      ),
-                      child: Icon(
+                    SizedBox(width: compact ? 3 : 6),
+                    if (compact)
+                      Icon(
                         Icons.keyboard_arrow_down_rounded,
-                        size: compact ? 17 : 19,
+                        size: 17,
                         color: textSecondaryOf(context),
+                      )
+                    else
+                      Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: BoxDecoration(
+                          color: isDark
+                              ? AppTokens.surfaceDark.withValues(alpha: 0.7)
+                              : AppTokens.surfaceLight,
+                          borderRadius: BorderRadius.circular(7),
+                        ),
+                        child: Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          size: 19,
+                          color: textSecondaryOf(context),
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),
