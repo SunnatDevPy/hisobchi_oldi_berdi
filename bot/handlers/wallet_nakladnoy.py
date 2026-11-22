@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import html
 import io
 import logging
@@ -270,14 +271,32 @@ def render_nakladnoy_group_caption(
     )
 
 
+_BG_TASKS: set[asyncio.Task] = set()
+_PENDING_GROUP_SYNCS: dict[int, asyncio.Task] = {}
+
+
+async def _safe_cb_answer(
+    cb: CallbackQuery, text: Optional[str] = None, show_alert: bool = False
+) -> None:
+    """Answer Telegram callback query safely, ignoring stale query errors."""
+    try:
+        await cb.answer(text, show_alert=show_alert)
+    except Exception as exc:
+        msg_l = str(exc).lower()
+        if "query is too old" not in msg_l and "query id is invalid" not in msg_l:
+            logger.debug("cb.answer ignored: %s", exc)
+
+
 async def _sync_nakladnoy_group_message(
-    bot, payment: NakladnoyPayment, tag: str = "✏️ [TAHRIRLANDI]"
+    bot,
+    payment: NakladnoyPayment,
+    tag: str = "✏️ [TAHRIRLANDI]",
+    session_seq: Optional[int] = None,
 ) -> tuple[bool, str]:
     """Update existing message in the Nakladnoy group if a confirmed payment was edited or deleted."""
     if not payment.group_chat_id or not payment.group_message_id:
         return False, "<i>(Bu nakladnoy hali guruhga yuborilmagan)</i>"
-    session_seq: Optional[int] = None
-    if payment.status == "confirmed":
+    if session_seq is None and payment.status == "confirmed":
         async with async_session_maker() as db:
             session_seq = await get_nakladnoy_session_seq(db, payment)
     new_caption = render_nakladnoy_group_caption(payment, tag=tag, session_seq=session_seq)
@@ -308,6 +327,46 @@ async def _sync_nakladnoy_group_message(
             exc,
         )
         return False, "⚠️ Guruhdagi xabarni tahrirlab bo'lmadi."
+
+
+def _schedule_group_sync(
+    bot,
+    payment: NakladnoyPayment,
+    tag: str = "✏️ [TAHRIRLANDI]",
+    delay: float = 0.0,
+) -> str:
+    """Coalesce and schedule background group sync so UI button clicks return immediately."""
+    if not payment.group_chat_id or not payment.group_message_id:
+        return "<i>(Bu nakladnoy hali guruhga yuborilmagan)</i>"
+    pid = payment.id
+    prev = _PENDING_GROUP_SYNCS.pop(pid, None)
+    if prev is not None and not prev.done():
+        prev.cancel()
+
+    async def _runner() -> None:
+        cur = asyncio.current_task()
+        try:
+            if delay > 0:
+                await asyncio.sleep(delay)
+            async with async_session_maker() as db:
+                fresh = await get_nakladnoy(db, pid)
+                if not fresh or not fresh.group_chat_id or not fresh.group_message_id:
+                    return
+                seq = await get_nakladnoy_session_seq(db, fresh) if fresh.status == "confirmed" else None
+            await _sync_nakladnoy_group_message(bot, fresh, tag=tag, session_seq=seq)
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            logger.warning("Background group sync error payment_id=%s: %s", pid, exc)
+        finally:
+            if cur is not None and _PENDING_GROUP_SYNCS.get(pid) is cur:
+                _PENDING_GROUP_SYNCS.pop(pid, None)
+
+    task = asyncio.create_task(_runner())
+    _PENDING_GROUP_SYNCS[pid] = task
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+    return "📤 <b>Guruhdagi xabar ham avtomatik yangilanmoqda!</b>"
 
 
 def _pending_card_text(
@@ -646,14 +705,16 @@ async def cb_quick_supplier_page(cb: CallbackQuery, state: FSMContext) -> None:
         async with async_session_maker() as db:
             suppliers = await get_all_known_suppliers(db)
         await state.update_data(quick_suppliers=suppliers)
-    try:
-        await cb.message.edit_reply_markup(
-            reply_markup=quick_suppliers_kb(suppliers, page=page)
-        )
-    except Exception as exc:
-        if "message is not modified" not in str(exc).lower():
-            logger.debug("qsup page markup fallback: %s", exc)
-    await cb.answer()
+    async def _update_markup() -> None:
+        try:
+            await cb.message.edit_reply_markup(
+                reply_markup=quick_suppliers_kb(suppliers, page=page)
+            )
+        except Exception as exc:
+            if "message is not modified" not in str(exc).lower():
+                logger.debug("qsup page markup fallback: %s", exc)
+
+    await asyncio.gather(_update_markup(), _safe_cb_answer(cb))
 
 
 @router.callback_query(F.data.startswith("qsup:"))
@@ -856,13 +917,16 @@ async def _process_ready_nakladnoy(
 
         can_auto = auto_confirm and is_confident and dup is None and suggested_sup is None
         session_seq: Optional[int] = None
+        summary: Optional[SessionSummary] = None
         if can_auto:
             payment = await confirm_nakladnoy(db, payment.id, user_id=uid)
             session_seq = await get_nakladnoy_session_seq(db, payment)
+            if payment is not None:
+                summary = await compute_session_summary(db, payment.session_id)
 
     await state.clear()
 
-    if can_auto and payment is not None:
+    if can_auto and payment is not None and summary is not None:
         posted = False
         if nak_group:
             posted, group_notice = await _post_payment_to_group(
@@ -870,9 +934,6 @@ async def _process_ready_nakladnoy(
             )
         else:
             group_notice = "<i>(Nakladnoy guruhi ulanmagan — faqat bazaga saqlandi)</i>"
-
-        async with async_session_maker() as db:
-            summary = await compute_session_summary(db, payment.session_id)
 
         num_lbl = _nakladnoy_num_label(payment.id, session_seq)
         round_line = ""
@@ -1107,9 +1168,22 @@ async def _finalize_nakladnoy_confirmation(
             payment_method=payment_method,
         )
         session_seq = await get_nakladnoy_session_seq(db, payment)
+        summary = await compute_session_summary(db, payment.session_id)
 
     num_lbl = _nakladnoy_num_label(payment.id, session_seq)
     pm = (getattr(payment, "payment_method", "cash") or "cash").strip().lower()
+    if is_debt:
+        toast = "📌 Qarzga saqlandi!"
+    elif not send_to_group:
+        toast = "✅ Saqlandi!"
+    elif pm == "card":
+        toast = "💳 Karta orqali saqlandi!"
+    elif pm == "transfer":
+        toast = "🏦 Perechesleniya saqlandi!"
+    else:
+        toast = "✅ Saqlandi!"
+    await _safe_cb_answer(cb, toast)
+
     posted = False
     reply_kb = None
     if is_debt:
@@ -1124,21 +1198,16 @@ async def _finalize_nakladnoy_confirmation(
         reply_kb = auto_confirmed_nakladnoy_kb(
             payment.id, sent_to_group=posted, is_debt=True, payment_method="cash"
         )
-        toast = "📌 Qarzga saqlandi!"
     elif not send_to_group:
         header = f"⏭ <b>Bazaga saqlandi! ({num_lbl})</b>"
         group_notice = "<i>(Guruhga yuborilmadi — faqat hisobingizga olindi)</i>"
-        toast = "✅ Saqlandi!"
     elif nak_group and payment:
         if pm == "card":
             header = f"💳 <b>Karta orqali saqlandi! ({num_lbl})</b>"
-            toast = "💳 Karta orqali saqlandi!"
         elif pm == "transfer":
             header = f"🏦 <b>Perechesleniya saqlandi! ({num_lbl})</b>"
-            toast = "🏦 Perechesleniya saqlandi!"
         else:
             header = f"✅ <b>Tasdiqlandi! ({num_lbl})</b>"
-            toast = "✅ Saqlandi!"
         posted, group_notice = await _post_payment_to_group(
             cb.bot, payment, nak_group, session_seq=session_seq
         )
@@ -1159,18 +1228,15 @@ async def _finalize_nakladnoy_confirmation(
                 "<i>(Nakladnoy guruhi ulanmagan — faqat bazaga saqlandi)</i>\n"
                 "💳 <i>To'lov turi: Karta (qo'ldagi puldan ayrilmadi)</i>"
             )
-            toast = "💳 Karta orqali saqlandi!"
         elif pm == "transfer":
             header = f"🏦 <b>Perechesleniya saqlandi! ({num_lbl})</b>"
             group_notice = (
                 "<i>(Nakladnoy guruhi ulanmagan — faqat bazaga saqlandi)</i>\n"
                 "🏦 <i>To'lov turi: Perechesleniya / o'tkazma (qo'ldagi puldan ayrilmadi)</i>"
             )
-            toast = "🏦 Perechesleniya saqlandi!"
         else:
             header = f"✅ <b>Tasdiqlandi! ({num_lbl})</b>"
             group_notice = "<i>(Nakladnoy guruhi ulanmagan — faqat hisobga olindi)</i>"
-            toast = "✅ Saqlandi!"
         username = await get_bot_username(cb.bot)
         reply_kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -1183,9 +1249,6 @@ async def _finalize_nakladnoy_confirmation(
             ]
         )
 
-    async with async_session_maker() as db:
-        summary = await compute_session_summary(db, payment.session_id)
-
     await _safe_edit_text(
         cb.message,
         f"{header}\n"
@@ -1194,7 +1257,6 @@ async def _finalize_nakladnoy_confirmation(
         f"{_format_balance_summary_block(summary)}",
         reply_markup=reply_kb,
     )
-    await cb.answer(toast)
 
 
 @router.callback_query(F.data.startswith("nak:confirm:"))
@@ -1248,7 +1310,7 @@ async def cb_nakladnoy_mark_debt(cb: CallbackQuery) -> None:
         summary = await compute_session_summary(db, payment.session_id)
 
     in_group = bool(payment.group_chat_id and payment.group_message_id)
-    _, sync_msg = await _sync_nakladnoy_group_message(cb.bot, payment)
+    sync_msg = _schedule_group_sync(cb.bot, payment, delay=0.0)
     kb = (
         confirmed_nakladnoy_edit_kb(
             payment.id,
@@ -1260,17 +1322,19 @@ async def cb_nakladnoy_mark_debt(cb: CallbackQuery) -> None:
         if "Tasdiqlangan Nakladnoy" in (cb.message.text or "")
         else auto_confirmed_nakladnoy_kb(payment.id, sent_to_group=in_group, is_debt=True)
     )
-    await _safe_edit_text(
-        cb.message,
-        f"📌 <b>Qarzga o'tkazildi! (#{payment.id})</b>\n"
-        f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
-        f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>\n"
-        f"<i>(Qo'ldagi puldan ayrilmadi)</i>\n"
-        f"{sync_msg}\n\n"
-        f"{_format_balance_summary_block(summary)}",
-        reply_markup=kb,
+    await asyncio.gather(
+        _safe_edit_text(
+            cb.message,
+            f"📌 <b>Qarzga o'tkazildi! (#{payment.id})</b>\n"
+            f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
+            f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>\n"
+            f"<i>(Qo'ldagi puldan ayrilmadi)</i>\n"
+            f"{sync_msg}\n\n"
+            f"{_format_balance_summary_block(summary)}",
+            reply_markup=kb,
+        ),
+        _safe_cb_answer(cb, "📌 Qarzga o'tkazildi!"),
     )
-    await cb.answer("📌 Qarzga o'tkazildi!")
 
 
 async def _handle_set_payment_method(cb: CallbackQuery, payment_id: int, pm: str) -> None:
@@ -1304,7 +1368,7 @@ async def _handle_set_payment_method(cb: CallbackQuery, payment_id: int, pm: str
             "card": "💳 [KARTA ORQALI TO'LANDI]",
             "transfer": "🏦 [PERECHESLENIYA / O'TKAZMA]",
         }
-    _, sync_msg = await _sync_nakladnoy_group_message(cb.bot, payment, tag=tag_map.get(actual_pm, ""))
+    sync_msg = _schedule_group_sync(cb.bot, payment, tag=tag_map.get(actual_pm, ""), delay=0.0)
     moved_line = "\n📅 <i>O'tgan kundan bugungi kassaga yozildi</i>" if moved_to_today else ""
 
     if actual_pm == "card":
@@ -1349,16 +1413,18 @@ async def _handle_set_payment_method(cb: CallbackQuery, payment_id: int, pm: str
             payment_method=actual_pm,
         )
 
-    await _safe_edit_text(
-        cb.message,
-        f"{heading}\n"
-        f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
-        f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>{moved_line}{note_line}\n"
-        f"{sync_msg}\n\n"
-        f"{_format_balance_summary_block(summary)}",
-        reply_markup=kb,
+    await asyncio.gather(
+        _safe_edit_text(
+            cb.message,
+            f"{heading}\n"
+            f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
+            f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>{moved_line}{note_line}\n"
+            f"{sync_msg}\n\n"
+            f"{_format_balance_summary_block(summary)}",
+            reply_markup=kb,
+        ),
+        _safe_cb_answer(cb, toast),
     )
-    await cb.answer(toast)
 
 
 @router.callback_query(F.data.startswith("nak:mark_paid:"))
@@ -1428,25 +1494,30 @@ async def cb_nakladnoy_use_suggested(cb: CallbackQuery) -> None:
 
     if payment.status == "confirmed":
         in_group = bool(payment.group_chat_id and payment.group_message_id)
-        await _sync_nakladnoy_group_message(cb.bot, payment, tag="✏️ [NOM TAHRIRLANDI]")
-        await _safe_edit_text(
-            cb.message,
-            f"✅ Birlashtirildi: <b>{html.escape(payment.supplier_name)}</b> — {format_uzs(payment.amount)} so'm",
-            reply_markup=confirmed_nakladnoy_edit_kb(
-                payment.id,
-                in_group=in_group,
-                is_debt=payment.is_debt,
-                is_admin=is_admin_role(cb.from_user.id),
-                payment_method=getattr(payment, "payment_method", "cash"),
+        sync_msg = _schedule_group_sync(cb.bot, payment, tag="✏️ [NOM TAHRIRLANDI]", delay=0.0)
+        await asyncio.gather(
+            _safe_edit_text(
+                cb.message,
+                f"✅ Birlashtirildi: <b>{html.escape(payment.supplier_name)}</b> — {format_uzs(payment.amount)} so'm\n{sync_msg}",
+                reply_markup=confirmed_nakladnoy_edit_kb(
+                    payment.id,
+                    in_group=in_group,
+                    is_debt=payment.is_debt,
+                    is_admin=is_admin_role(cb.from_user.id),
+                    payment_method=getattr(payment, "payment_method", "cash"),
+                ),
             ),
+            _safe_cb_answer(cb, "✅ Birlashtirildi!"),
         )
     else:
-        await _safe_edit_text(
-            cb.message,
-            _pending_card_text(payment, duplicate_warning=dup),
-            reply_markup=nakladnoy_confirm_kb(payment.id),
+        await asyncio.gather(
+            _safe_edit_text(
+                cb.message,
+                _pending_card_text(payment, duplicate_warning=dup),
+                reply_markup=nakladnoy_confirm_kb(payment.id),
+            ),
+            _safe_cb_answer(cb, "✅ Birlashtirildi!"),
         )
-    await cb.answer("✅ Birlashtirildi!")
 
 
 @router.callback_query(F.data.startswith("nak:back_card:"))
@@ -1462,12 +1533,14 @@ async def cb_nakladnoy_back_card(cb: CallbackQuery, state: FSMContext) -> None:
         dup = await find_duplicate_confirmed_nakladnoy(
             db, payment.session_id, payment.supplier_name, payment.amount, exclude_id=payment.id
         )
-    await _safe_edit_text(
-        cb.message,
-        _pending_card_text(payment, duplicate_warning=dup, suggested_supplier=sug),
-        reply_markup=nakladnoy_confirm_kb(payment.id, suggested_supplier=sug),
+    await asyncio.gather(
+        _safe_edit_text(
+            cb.message,
+            _pending_card_text(payment, duplicate_warning=dup, suggested_supplier=sug),
+            reply_markup=nakladnoy_confirm_kb(payment.id, suggested_supplier=sug),
+        ),
+        _safe_cb_answer(cb),
     )
-    await cb.answer()
 
 
 @router.callback_query(F.data.startswith("nak:unpost_group:"))
@@ -1554,16 +1627,18 @@ async def cb_nakladnoy_done(cb: CallbackQuery, state: FSMContext) -> None:
         if payment.is_debt
         else None
     )
-    await _safe_edit_text(
-        cb.message,
-        f"{icon} <b>Saqlandi! (#{payment.id})</b>\n"
-        f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
-        f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>\n"
-        f"<i>({status_line})</i>\n\n"
-        f"{_format_balance_summary_block(summary)}",
-        reply_markup=done_kb,
+    await asyncio.gather(
+        _safe_edit_text(
+            cb.message,
+            f"{icon} <b>Saqlandi! (#{payment.id})</b>\n"
+            f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
+            f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>\n"
+            f"<i>({status_line})</i>\n\n"
+            f"{_format_balance_summary_block(summary)}",
+            reply_markup=done_kb,
+        ),
+        _safe_cb_answer(cb, "✅ Tayyor!"),
     )
-    await cb.answer("✅ Tayyor!")
 
 
 @router.callback_query(F.data.startswith("nak:repost_group:"))
@@ -1689,17 +1764,19 @@ async def cb_edit_menu_open(cb: CallbackQuery, state: FSMContext) -> None:
     ):
         await cb.answer("Bugungi smenada yozuvlar yo'q.", show_alert=True)
         return
-    await _safe_edit_text(
-        cb.message,
-        "✏️ <b>Tasdiqlanganlarni tahrirlash:</b>\nKerakli qatorni tanlang:",
-        reply_markup=edit_items_list_kb(
-            summary.confirmed_nakladnoys,
-            summary.cash_transactions,
-            debt_nakladnoys=summary.debt_nakladnoys,
-            noncash_nakladnoys=summary.noncash_nakladnoys,
+    await asyncio.gather(
+        _safe_edit_text(
+            cb.message,
+            "✏️ <b>Tasdiqlanganlarni tahrirlash:</b>\nKerakli qatorni tanlang:",
+            reply_markup=edit_items_list_kb(
+                summary.confirmed_nakladnoys,
+                summary.cash_transactions,
+                debt_nakladnoys=summary.debt_nakladnoys,
+                noncash_nakladnoys=summary.noncash_nakladnoys,
+            ),
         ),
+        _safe_cb_answer(cb),
     )
-    await cb.answer()
 
 
 @router.callback_query(F.data == "menu:dismiss")
@@ -1708,7 +1785,7 @@ async def cb_menu_dismiss(cb: CallbackQuery) -> None:
         await cb.message.delete()
     except Exception:
         pass
-    await cb.answer()
+    await _safe_cb_answer(cb)
 
 
 @router.callback_query(F.data.startswith("nak_view:"))
@@ -1738,22 +1815,24 @@ async def cb_nakladnoy_edit_view(cb: CallbackQuery, state: FSMContext) -> None:
         pay_state = "🏦 Perechesleniya / o'tkazma (naqdsiz)"
     else:
         pay_state = "✅ Naqd to'langan"
-    await _safe_edit_text(
-        cb.message,
-        f"📸 <b>Tasdiqlangan Nakladnoy #{payment.id}</b>\n"
-        f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
-        f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>\n"
-        f"💳 To'lov holati: <b>{pay_state}</b>\n"
-        f"📍 Guruh: <i>{group_state}</i>",
-        reply_markup=confirmed_nakladnoy_edit_kb(
-            payment.id,
-            in_group=in_group,
-            is_debt=payment.is_debt,
-            is_admin=is_admin_role(cb.from_user.id),
-            payment_method=pm,
+    await asyncio.gather(
+        _safe_edit_text(
+            cb.message,
+            f"📸 <b>Tasdiqlangan Nakladnoy #{payment.id}</b>\n"
+            f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
+            f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>\n"
+            f"💳 To'lov holati: <b>{pay_state}</b>\n"
+            f"📍 Guruh: <i>{group_state}</i>",
+            reply_markup=confirmed_nakladnoy_edit_kb(
+                payment.id,
+                in_group=in_group,
+                is_debt=payment.is_debt,
+                is_admin=is_admin_role(cb.from_user.id),
+                payment_method=pm,
+            ),
         ),
+        _safe_cb_answer(cb),
     )
-    await cb.answer()
 
 
 async def _arm_amount_input_state(
@@ -1781,20 +1860,23 @@ async def cb_nakladnoy_edit_amt_prompt(cb: CallbackQuery, state: FSMContext) -> 
     if await deny_if_unauthorized(cb, allowed):
         return
     await _arm_amount_input_state(state, payment_id, cb, used_cancel_kb=False)
-    await _safe_edit_text(
-        cb.message,
-        f"💰 <b>Summani tahrirlash (#{payment.id})</b>\n"
-        f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
-        f"💵 Hozirgi summa: <b>{format_uzs(payment.amount)} so'm</b>\n\n"
-        "👇 Tez tugmalarni bosing yoki to'g'ridan-to'g'ri yangi summani yozib (yoki ovozda aytib) yuboring (masalan: <code>260 000</code>):",
-        reply_markup=nakladnoy_quick_amount_kb(payment.id, is_confirmed=(payment.status == "confirmed")),
+    await asyncio.gather(
+        _safe_edit_text(
+            cb.message,
+            f"💰 <b>Summani tahrirlash (#{payment.id})</b>\n"
+            f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
+            f"💵 Hozirgi summa: <b>{format_uzs(payment.amount)} so'm</b>\n\n"
+            "👇 Tez tugmalarni bosing yoki to'g'ridan-to'g'ri yangi summani yozib (yoki ovozda aytib) yuboring (masalan: <code>260 000</code>):",
+            reply_markup=nakladnoy_quick_amount_kb(payment.id, is_confirmed=(payment.status == "confirmed")),
+        ),
+        _safe_cb_answer(cb),
     )
-    await cb.answer()
 
 
 async def _apply_quick_amount_change(
     cb: CallbackQuery, state: FSMContext, payment_id: int, mode: str, delta: int = 0
 ) -> None:
+    summary: Optional[SessionSummary] = None
     async with async_session_maker() as db:
         payment = await get_nakladnoy(db, payment_id)
         if not payment or payment.status == "deleted":
@@ -1810,26 +1892,29 @@ async def _apply_quick_amount_change(
             if new_amt <= 0:
                 new_amt = float(payment.amount)
         payment = await update_nakladnoy(db, payment_id, amount=new_amt, user_id=cb.from_user.id)
-        summary = await compute_session_summary(db, payment.session_id)
+        if payment.status == "confirmed":
+            summary = await compute_session_summary(db, payment.session_id)
 
     await _arm_amount_input_state(state, payment_id, cb, used_cancel_kb=False)
 
     sync_line = ""
-    if payment.status == "confirmed":
-        _, sync_msg = await _sync_nakladnoy_group_message(
-            cb.bot, payment, tag="✏️ [SUMMA TAHRIRLANDI]"
+    if payment.status == "confirmed" and summary is not None:
+        sync_msg = _schedule_group_sync(
+            cb.bot, payment, tag="✏️ [SUMMA TAHRIRLANDI]", delay=0.45
         )
         sync_line = f"\n{sync_msg}\n💵 Qoldiq: <b>{format_uzs(summary.expected_cash)} so'm</b>"
 
-    await _safe_edit_text(
-        cb.message,
-        f"✅ <b>Summa yangilandi (#{payment.id})</b>\n"
-        f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
-        f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>{sync_line}\n\n"
-        "<i>Yana tez tugmalarni bosing yoki yangi summani yozib yuboring:</i>",
-        reply_markup=nakladnoy_quick_amount_kb(payment.id, is_confirmed=(payment.status == "confirmed")),
+    await asyncio.gather(
+        _safe_edit_text(
+            cb.message,
+            f"✅ <b>Summa yangilandi (#{payment.id})</b>\n"
+            f"🏢 Postavshik: <b>{html.escape(payment.supplier_name)}</b>\n"
+            f"💰 Summa: <b>{format_uzs(payment.amount)} so'm</b>{sync_line}\n\n"
+            "<i>Yana tez tugmalarni bosing yoki yangi summani yozib yuboring:</i>",
+            reply_markup=nakladnoy_quick_amount_kb(payment.id, is_confirmed=(payment.status == "confirmed")),
+        ),
+        _safe_cb_answer(cb, f"💰 {format_uzs(payment.amount)} so'm"),
     )
-    await cb.answer(f"💰 {format_uzs(payment.amount)} so'm")
 
 
 @router.callback_query(F.data.startswith("nak:adj:"))
@@ -1919,8 +2004,8 @@ async def process_edit_nakladnoy_amount(message: Message, state: FSMContext) -> 
             pass
     if payment.status == "confirmed":
         in_group = bool(payment.group_chat_id and payment.group_message_id)
-        _, sync_msg = await _sync_nakladnoy_group_message(
-            message.bot, payment, tag="✏️ [SUMMA TAHRIRLANDI]"
+        sync_msg = _schedule_group_sync(
+            message.bot, payment, tag="✏️ [SUMMA TAHRIRLANDI]", delay=0.0
         )
         await message.answer(
             f"✅ Summa yangilandi: <b>{html.escape(payment.supplier_name)} — {format_uzs(payment.amount)} so'm</b>\n"
@@ -1987,17 +2072,19 @@ async def _render_supplier_picker(
         suppliers = list(cached) if cached else await get_all_known_suppliers(db)
 
     await _arm_supplier_input_state(state, payment_id, suppliers, cb)
-    await _safe_edit_text(
-        cb.message,
-        _edit_supplier_prompt_text(payment, len(suppliers)),
-        reply_markup=edit_supplier_pick_kb(
-            payment.id,
-            suppliers,
-            is_confirmed=(payment.status == "confirmed"),
-            page=page,
+    await asyncio.gather(
+        _safe_edit_text(
+            cb.message,
+            _edit_supplier_prompt_text(payment, len(suppliers)),
+            reply_markup=edit_supplier_pick_kb(
+                payment.id,
+                suppliers,
+                is_confirmed=(payment.status == "confirmed"),
+                page=page,
+            ),
         ),
+        _safe_cb_answer(cb),
     )
-    await cb.answer()
 
 
 async def _build_supplier_updated_response(
@@ -2006,11 +2093,11 @@ async def _build_supplier_updated_response(
     uid: Optional[int],
     dup: Optional[NakladnoyPayment] = None,
 ) -> tuple[str, InlineKeyboardMarkup]:
-    """Sync group message (if confirmed) and build response text + keyboard after supplier edit."""
+    """Schedule background group sync (if confirmed) and build response text + keyboard."""
     if payment.status == "confirmed":
         in_group = bool(payment.group_chat_id and payment.group_message_id)
-        _, sync_msg = await _sync_nakladnoy_group_message(
-            bot, payment, tag="✏️ [NOM TAHRIRLANDI]"
+        sync_msg = _schedule_group_sync(
+            bot, payment, tag="✏️ [NOM TAHRIRLANDI]", delay=0.0
         )
         text = (
             f"✅ Postavshik yangilandi: <b>{html.escape(payment.supplier_name)} — {format_uzs(payment.amount)} so'm</b>\n"
@@ -2080,8 +2167,10 @@ async def cb_nakladnoy_pick_supplier(cb: CallbackQuery, state: FSMContext) -> No
         await cb.answer("Topilmadi", show_alert=True)
         return
     text, kb = await _build_supplier_updated_response(cb.bot, payment, uid, dup=dup)
-    await _safe_edit_text(cb.message, text, reply_markup=kb)
-    await cb.answer(f"✅ {payment.supplier_name}")
+    await asyncio.gather(
+        _safe_edit_text(cb.message, text, reply_markup=kb),
+        _safe_cb_answer(cb, f"✅ {payment.supplier_name}"),
+    )
 
 
 @router.message(
@@ -2184,14 +2273,16 @@ async def cb_nakladnoy_delete_confirmed(cb: CallbackQuery) -> None:
             return
         summary = await compute_session_summary(db, payment.session_id)
 
-    _, sync_msg = await _sync_nakladnoy_group_message(cb.bot, payment)
-    await _safe_edit_text(
-        cb.message,
-        f"🗑 Nakladnoy #{payment.id} ({html.escape(payment.supplier_name)} — {format_uzs(payment.amount)}) o'chirildi!\n"
-        f"{sync_msg}\n"
-        f"💰 Yangilangan qoldiq: <b>{format_uzs(summary.expected_cash)} so'm</b>",
+    sync_msg = _schedule_group_sync(cb.bot, payment, delay=0.0)
+    await asyncio.gather(
+        _safe_edit_text(
+            cb.message,
+            f"🗑 Nakladnoy #{payment.id} ({html.escape(payment.supplier_name)} — {format_uzs(payment.amount)}) o'chirildi!\n"
+            f"{sync_msg}\n"
+            f"💰 Yangilangan qoldiq: <b>{format_uzs(summary.expected_cash)} so'm</b>",
+        ),
+        _safe_cb_answer(cb, "O'chirildi!"),
     )
-    await cb.answer("O'chirildi!")
 
 
 @router.callback_query(F.data.startswith("cash_view:"))

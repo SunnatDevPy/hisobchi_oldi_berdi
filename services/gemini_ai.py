@@ -217,12 +217,13 @@ _HTTP_CLIENT: Optional[httpx.AsyncClient] = None
 
 
 def _get_http_client() -> httpx.AsyncClient:
-    """Reuse a persistent keep-alive AsyncClient to avoid repeated TLS handshakes."""
+    """Reuse a persistent IPv4 keep-alive AsyncClient to avoid IPv6 timeouts and TLS handshakes."""
     global _HTTP_CLIENT
     if _HTTP_CLIENT is None or _HTTP_CLIENT.is_closed:
         _HTTP_CLIENT = httpx.AsyncClient(
             timeout=15.0,
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+            transport=httpx.AsyncHTTPTransport(local_address="0.0.0.0"),
         )
     return _HTTP_CLIENT
 
@@ -393,7 +394,9 @@ async def extract_nakladnoy_from_image(
             "error_code": "no_key",
         }
 
-    resized_bytes, out_mime = compress_image_for_ocr(image_bytes, max_side=1280, quality=82)
+    resized_bytes, out_mime = await asyncio.to_thread(
+        compress_image_for_ocr, image_bytes, 1280, 82
+    )
     prompt = OCR_PROMPT
     if cap_supplier:
         prompt += (

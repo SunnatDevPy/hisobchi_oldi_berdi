@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 import html
 import logging
@@ -127,7 +128,8 @@ async def _send_sverka_report(
         fname = f"Sverka_{month}.xlsx"
 
     await reply_target.answer("\n".join(lines)[:4000], parse_mode="HTML")
-    doc = BufferedInputFile(build_sverka_excel(month, rows), filename=fname)
+    excel_bytes = await asyncio.to_thread(build_sverka_excel, month, rows)
+    doc = BufferedInputFile(excel_bytes, filename=fname)
     # E7: Always deliver Excel to private DM
     dest_chat = user_id if reply_target.chat.type != "private" else reply_target.chat.id
     await bot.send_document(dest_chat, doc, caption=f"📥 <code>{fname}</code>", parse_mode="HTML")

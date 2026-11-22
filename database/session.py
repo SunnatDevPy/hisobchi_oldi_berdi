@@ -145,7 +145,10 @@ def create_engine_and_session(
 ) -> Tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
     """Create an AsyncEngine and async_sessionmaker for the given URL."""
     url = database_url or get_settings().DATABASE_URL
-    eng = create_async_engine(url, echo=False, future=True)
+    kwargs: dict = {"echo": False, "future": True, "pool_pre_ping": True}
+    if not url.startswith("sqlite"):
+        kwargs.update({"pool_size": 10, "max_overflow": 10, "pool_recycle": 1800})
+    eng = create_async_engine(url, **kwargs)
     maker = async_sessionmaker(eng, expire_on_commit=False, class_=AsyncSession)
     return eng, maker
 

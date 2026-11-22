@@ -10,7 +10,7 @@ import re
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -291,6 +291,54 @@ async def get_kassa_debt_stats(db: AsyncSession, limit: int = 10) -> dict:
     }
 
 
+async def _sync_session_expected_cash(db: AsyncSession, session_id: int) -> None:
+    """Lightweight recalculation of DailyCashSession.expected_cash without extra debt/history queries."""
+    sess = await db.get(DailyCashSession, session_id)
+    if sess is None:
+        return
+    tx_sums = dict(
+        (
+            await db.execute(
+                select(
+                    CashTransaction.source_type,
+                    func.coalesce(func.sum(CashTransaction.amount), 0),
+                )
+                .where(
+                    CashTransaction.session_id == session_id,
+                    CashTransaction.is_deleted.is_(False),
+                )
+                .group_by(CashTransaction.source_type)
+            )
+        ).all()
+    )
+    cash_spent = float(
+        await db.scalar(
+            select(func.coalesce(func.sum(NakladnoyPayment.amount), 0)).where(
+                NakladnoyPayment.session_id == session_id,
+                NakladnoyPayment.status == "confirmed",
+                NakladnoyPayment.is_debt.is_(False),
+                or_(
+                    NakladnoyPayment.payment_method == "cash",
+                    NakladnoyPayment.payment_method.is_(None),
+                ),
+            )
+        )
+        or 0.0
+    )
+    opening = float(sess.opening_balance or 0.0)
+    main_in = float(tx_sums.get("main") or 0.0)
+    kassa_debt = float(tx_sums.get("kassa_debt") or 0.0)
+    kassa_repay = float(tx_sums.get("kassa_repay") or 0.0)
+    expected_cash = opening + main_in + kassa_debt - kassa_repay - cash_spent
+
+    if abs(float(sess.expected_cash or 0.0) - expected_cash) > 0.001:
+        sess.expected_cash = expected_cash
+        if sess.actual_counted_cash is not None:
+            sess.difference = float(sess.actual_counted_cash) - expected_cash
+        await db.commit()
+        await db.refresh(sess)
+
+
 async def compute_session_summary(
     db: AsyncSession, session_id: Optional[int] = None
 ) -> SessionSummary:
@@ -367,7 +415,17 @@ async def compute_session_summary(
         await db.refresh(sess)
 
     outstanding_debt = await get_outstanding_kassa_debt(db)
-    all_unpaid = await list_unpaid_debt_nakladnoys(db)
+    unpaid_cnt, unpaid_tot = (
+        await db.execute(
+            select(
+                func.count(NakladnoyPayment.id),
+                func.coalesce(func.sum(NakladnoyPayment.amount), 0),
+            ).where(
+                NakladnoyPayment.status == "confirmed",
+                NakladnoyPayment.is_debt.is_(True),
+            )
+        )
+    ).one()
 
     return SessionSummary(
         session=sess,
@@ -383,8 +441,8 @@ async def compute_session_summary(
         confirmed_nakladnoys=nakladnoys,
         debt_nakladnoys=debt_nakladnoys,
         total_debt_nakladnoy=total_debt_nakladnoy,
-        all_unpaid_debt_count=len(all_unpaid),
-        all_unpaid_debt_total=sum(float(n.amount) for n, _ in all_unpaid),
+        all_unpaid_debt_count=int(unpaid_cnt or 0),
+        all_unpaid_debt_total=float(unpaid_tot or 0),
         noncash_nakladnoys=noncash_nakladnoys,
         total_card_spent=total_card_spent,
         total_transfer_spent=total_transfer_spent,
@@ -412,7 +470,7 @@ async def add_cash_transaction(
     db.add(tx)
     await db.commit()
     await db.refresh(tx)
-    await compute_session_summary(db, session_id)
+    await _sync_session_expected_cash(db, session_id)
     return tx
 
 
@@ -435,7 +493,7 @@ async def update_cash_transaction(
     await db.commit()
     await db.refresh(tx)
     await log_action(db, "edit", "cash", tx.id, f"{old} -> summa={tx.amount:.0f}, izoh={tx.note}", user_id=user_id)
-    await compute_session_summary(db, tx.session_id)
+    await _sync_session_expected_cash(db, tx.session_id)
     return tx
 
 
@@ -450,7 +508,7 @@ async def delete_cash_transaction(
     await db.commit()
     await db.refresh(tx)
     await log_action(db, "delete", "cash", tx.id, f"summa={tx.amount:.0f}, izoh={tx.note}", user_id=user_id)
-    await compute_session_summary(db, tx.session_id)
+    await _sync_session_expected_cash(db, tx.session_id)
     return tx
 
 
@@ -595,7 +653,7 @@ async def confirm_nakladnoy(
         f"{payment.supplier_name} / {payment.amount:.0f}" + tag,
         user_id=user_id,
     )
-    await compute_session_summary(db, payment.session_id)
+    await _sync_session_expected_cash(db, payment.session_id)
     return payment
 
 
@@ -636,7 +694,7 @@ async def mark_nakladnoy_as_debt(
         f"{payment.supplier_name} / {payment.amount:.0f}",
         user_id=user_id,
     )
-    await compute_session_summary(db, payment.session_id)
+    await _sync_session_expected_cash(db, payment.session_id)
     return payment
 
 
@@ -680,7 +738,7 @@ async def mark_nakladnoy_as_paid(
         + (" (bugunga o'tkazildi)" if moved_to_today else ""),
         user_id=user_id,
     )
-    await compute_session_summary(db, payment.session_id)
+    await _sync_session_expected_cash(db, payment.session_id)
     return payment, moved_to_today
 
 
@@ -719,7 +777,7 @@ async def set_nakladnoy_payment_method(
             f"{payment.supplier_name} / {payment.amount:.0f} [{pm_tags.get(pm, pm.upper())}]",
             user_id=user_id,
         )
-    await compute_session_summary(db, payment.session_id)
+    await _sync_session_expected_cash(db, payment.session_id)
     return payment, False
 
 
@@ -765,7 +823,7 @@ async def update_nakladnoy(
         db, "edit", "nakladnoy", payment.id, f"{old} -> {payment.supplier_name} / {payment.amount:.0f}", user_id=user_id
     )
     if payment.status == "confirmed":
-        await compute_session_summary(db, payment.session_id)
+        await _sync_session_expected_cash(db, payment.session_id)
     return payment
 
 
@@ -784,7 +842,7 @@ async def delete_nakladnoy(
         db, "delete", "nakladnoy", payment.id, f"{payment.supplier_name} / {payment.amount:.0f}", user_id=user_id
     )
     if was_confirmed:
-        await compute_session_summary(db, payment.session_id)
+        await _sync_session_expected_cash(db, payment.session_id)
     return payment
 
 

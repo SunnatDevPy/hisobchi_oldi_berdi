@@ -1302,9 +1302,10 @@ async def cb_export_range(cb: CallbackQuery, state: FSMContext) -> None:
         return
 
     if kind == "today":
+        await cb.answer("⏳ Excel tayyorlanmoqda...")
         async with async_session_maker() as db:
             summary = await compute_session_summary(db)
-        data = build_session_excel(summary)
+        data = await asyncio.to_thread(build_session_excel, summary)
         fname = f"Hisob_{summary.session.report_date}.xlsx"
     else:
         if kind == "week":
@@ -1325,7 +1326,8 @@ async def cb_export_range(cb: CallbackQuery, state: FSMContext) -> None:
         if not range_data["sessions"] and not range_data["nakladnoys"]:
             await cb.answer(f"{d_from} — {d_to} oralig'ida ma'lumot yo'q.", show_alert=True)
             return
-        data = build_range_excel(d_from, d_to, range_data)
+        await cb.answer("⏳ Excel tayyorlanmoqda...")
+        data = await asyncio.to_thread(build_range_excel, d_from, d_to, range_data)
         fname = f"Hisob_{d_from}_{d_to}.xlsx"
 
     await _send_private_excel(
@@ -1336,7 +1338,6 @@ async def cb_export_range(cb: CallbackQuery, state: FSMContext) -> None:
         data,
         fname,
     )
-    await cb.answer("Excel tayyor!")
 
 
 @router.message(WalletStates.waiting_excel_date_range, F.chat.type == "private")
@@ -1373,8 +1374,9 @@ async def process_custom_excel_range(message: Message, state: FSMContext) -> Non
         )
         return
     fname = f"Hisob_{d_from}_{d_to}.xlsx"
+    excel_bytes = await asyncio.to_thread(build_range_excel, d_from, d_to, range_data)
     await message.answer_document(
-        BufferedInputFile(build_range_excel(d_from, d_to, range_data), filename=fname),
+        BufferedInputFile(excel_bytes, filename=fname),
         caption=f"📥 Tayyor Excel hisobot: <code>{fname}</code>",
         parse_mode="HTML",
         reply_markup=main_menu_keyboard(),
@@ -1389,16 +1391,18 @@ async def cb_export_excel(cb: CallbackQuery) -> None:
     kind = parts[1]
     async with async_session_maker() as db:
         if kind == "session":
+            await cb.answer("⏳ Excel tayyorlanmoqda...")
             sess_id = int(parts[2])
             summary = await compute_session_summary(db, sess_id)
-            data = build_session_excel(summary)
+            data = await asyncio.to_thread(build_session_excel, summary)
             filename = f"Hisob_{summary.session.report_date}.xlsx"
         elif kind == "history":
             sessions = await list_closed_sessions(db, limit=60)
             if not sessions:
                 await cb.answer("Eksport uchun yopilgan kunlar yo'q.", show_alert=True)
                 return
-            data = build_history_excel(sessions)
+            await cb.answer("⏳ Excel tayyorlanmoqda...")
+            data = await asyncio.to_thread(build_history_excel, sessions)
             filename = "Kunlik_Hisob_Tarix.xlsx"
         elif kind == "prixod":
             rep_id = int(parts[2])
@@ -1406,7 +1410,8 @@ async def cb_export_excel(cb: CallbackQuery) -> None:
             if not report:
                 await cb.answer("Hisobot topilmadi.", show_alert=True)
                 return
-            data = build_prixod_excel(report)
+            await cb.answer("⏳ Excel tayyorlanmoqda...")
+            data = await asyncio.to_thread(build_prixod_excel, report)
             filename = f"Prixod_{report.report_date}.xlsx"
         else:
             await cb.answer("Noma'lum eksport turi")
@@ -1420,4 +1425,3 @@ async def cb_export_excel(cb: CallbackQuery) -> None:
         data,
         filename,
     )
-    await cb.answer("Excel tayyor!")

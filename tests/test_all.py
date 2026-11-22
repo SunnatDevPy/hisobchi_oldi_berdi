@@ -1356,3 +1356,91 @@ def test_nakladnoy_session_seq_numbering_and_daily_reset(tmp_path: Path):
         assert f"Nakladnoy #{p4.id} / 1" in render_nakladnoy_group_caption(p4, session_seq=1)
 
     asyncio.run(_run_with_db(tmp_path, scenario))
+
+
+def test_fsm_storage_cache_and_fast_expected_cash_sync(tmp_path: Path, monkeypatch):
+    from aiogram.fsm.state import State
+    from aiogram.fsm.storage.base import StorageKey
+    from bot.handlers import wallet_nakladnoy as wallet_mod
+    from bot.storage import DatabaseFSMStorage
+    from database.crud import _sync_session_expected_cash, set_nakladnoy_payment_method
+
+    async def scenario() -> None:
+        db_file = tmp_path / "perf_test.db"
+        eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+        monkeypatch.setattr(wallet_mod, "async_session_maker", maker)
+        try:
+            await init_db(engine_override=eng, session_maker_override=maker)
+
+            # 1. FSM storage write-through RAM cache + DB persistence across instances
+            st1 = DatabaseFSMStorage(maker)
+            key = StorageKey(bot_id=1, chat_id=22, user_id=22)
+            sample_state = State(state="edit_amt", group_name="Wallet")
+
+            await st1.set_state(key, sample_state)
+            await st1.set_data(key, {"payment_id": 99, "items": ["a", "b"]})
+            assert await st1.get_state(key) == "Wallet:edit_amt"
+
+            cached_view = await st1.get_data(key)
+            cached_view["mutated"] = True
+            assert "mutated" not in await st1.get_data(key)
+
+            # Identical repeat writes are skipped cleanly & fresh instance reads persisted state
+            await st1.set_state(key, sample_state)
+            await st1.set_data(key, {"payment_id": 99, "items": ["a", "b"]})
+            st2 = DatabaseFSMStorage(maker)
+            assert await st2.get_state(key) == "Wallet:edit_amt"
+            assert await st2.get_data(key) == {"payment_id": 99, "items": ["a", "b"]}
+
+            # 2. Fast _sync_session_expected_cash stays 100% consistent with compute_session_summary
+            async with maker() as db:
+                sess = await get_or_create_open_session(db, report_date="2026-11-28")
+                await add_cash_transaction(db, 5_000_000, source_type="main", session_id=sess.id)
+                await add_cash_transaction(db, 1_000_000, source_type="kassa_debt", session_id=sess.id)
+                await add_cash_transaction(db, 500_000, source_type="kassa_repay", session_id=sess.id)
+
+                p_cash = await create_pending_nakladnoy(
+                    db, "Cash Co", 1_200_000, photo_file_id="fake-photo-id", session_id=sess.id
+                )
+                await confirm_nakladnoy(
+                    db, p_cash.id, group_chat_id=-1009, group_message_id=77, payment_method="cash"
+                )
+                p_card = await create_pending_nakladnoy(db, "Card Co", 800_000, session_id=sess.id)
+                await confirm_nakladnoy(db, p_card.id, payment_method="card")
+                p_debt = await create_pending_nakladnoy(db, "Debt Co", 400_000, session_id=sess.id)
+                await confirm_nakladnoy(db, p_debt.id, is_debt=True)
+
+                await db.refresh(sess)
+                full = await compute_session_summary(db, sess.id)
+                assert sess.expected_cash == full.expected_cash == 4_300_000.0
+
+                await update_nakladnoy(db, p_cash.id, amount=777_000)
+                await set_nakladnoy_payment_method(db, p_card.id, "transfer")
+                await _sync_session_expected_cash(db, sess.id)
+                await db.refresh(sess)
+                full2 = await compute_session_summary(db, sess.id)
+                assert sess.expected_cash == full2.expected_cash == 4_723_000.0
+
+            # 3. Coalesced background group sync triggers only 1 edit after rapid burst
+            edited_captions: list[str] = []
+
+            class FakeGroupBot:
+                async def edit_message_caption(self, chat_id: int, message_id: int, caption: str, **kwargs) -> None:
+                    edited_captions.append(caption)
+
+            fake_bot = FakeGroupBot()
+            async with maker() as db:
+                fresh = await db.get(type(p_cash), p_cash.id)
+
+            wallet_mod._schedule_group_sync(fake_bot, fresh, tag="✏️ [SUMMA TAHRIRLANDI]", delay=0.05)
+            wallet_mod._schedule_group_sync(fake_bot, fresh, tag="✏️ [SUMMA TAHRIRLANDI]", delay=0.05)
+            wallet_mod._schedule_group_sync(fake_bot, fresh, tag="✏️ [SUMMA TAHRIRLANDI]", delay=0.05)
+            pending = wallet_mod._PENDING_GROUP_SYNCS.get(fresh.id)
+            assert pending is not None
+            await pending
+            assert len(edited_captions) == 1
+            assert "777 000" in edited_captions[0]
+        finally:
+            await eng.dispose()
+
+    asyncio.run(scenario())

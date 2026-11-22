@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import html
 import io
 
@@ -129,7 +130,7 @@ async def handle_yespos_document(message: Message, state: FSMContext) -> None:
     async with async_session_maker() as db:
         suppliers = await list_suppliers(db, active_only=True)
         try:
-            parsed = parse_yespos_table(file_bytes, filename, suppliers)
+            parsed = await asyncio.to_thread(parse_yespos_table, file_bytes, filename, suppliers)
         except Exception as exc:
             await message.answer(f"⚠️ Faylni o'qishda xatolik: {exc}")
             return
