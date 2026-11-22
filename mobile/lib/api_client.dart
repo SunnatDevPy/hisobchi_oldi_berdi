@@ -601,6 +601,192 @@ class HisobchiApiClient {
     }
     throw const ApiException('APK yuklab olishda xatolik');
   }
+
+  // Stage 1: History sessions, detail, reopen & global search
+  Future<List<HistorySessionItem>> getHistorySessions({int limit = 25}) async {
+    final res = await _http
+        .get(_uri('/history/sessions', {'limit': '$limit'}), headers: _headers())
+        .timeout(const Duration(seconds: 15));
+    final data = _decodeJson(res);
+    return ((data['sessions'] as List?) ?? const [])
+        .map((e) => HistorySessionItem.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<StatusSummary> getHistorySessionDetail(int sessionId) async {
+    final res = await _http
+        .get(_uri('/history/sessions/$sessionId'), headers: _headers())
+        .timeout(const Duration(seconds: 15));
+    return StatusSummary.fromJson(_decodeJson(res));
+  }
+
+  Future<Map<String, dynamic>> reopenSession(int sessionId) async {
+    final res = await _http
+        .post(_uri('/history/sessions/$sessionId/reopen'), headers: _headers())
+        .timeout(const Duration(seconds: 12));
+    return _decodeJson(res);
+  }
+
+  Future<List<NakladnoyItem>> searchHistoryNakladnoys(String query) async {
+    final res = await _http
+        .get(_uri('/history/search', {'q': query.trim()}), headers: _headers())
+        .timeout(const Duration(seconds: 15));
+    final data = _decodeJson(res);
+    return ((data['items'] as List?) ?? const [])
+        .map((e) => NakladnoyItem.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  // Stage 2: Period statistics & Live Sverka
+  Future<Map<String, dynamic>> getPeriodStats({
+    int days = 7,
+    String? dateFrom,
+    String? dateTo,
+  }) async {
+    final q = <String, String>{'days': '$days'};
+    if (dateFrom != null && dateFrom.isNotEmpty) q['date_from'] = dateFrom;
+    if (dateTo != null && dateTo.isNotEmpty) q['date_to'] = dateTo;
+    final res = await _http
+        .get(_uri('/stats/period', q), headers: _headers())
+        .timeout(const Duration(seconds: 15));
+    return _decodeJson(res);
+  }
+
+  Future<Map<String, dynamic>> getLiveSverka({String? month}) async {
+    final q = (month != null && month.isNotEmpty) ? {'month': month} : null;
+    final res = await _http
+        .get(_uri('/sverka', q), headers: _headers())
+        .timeout(const Duration(seconds: 15));
+    return _decodeJson(res);
+  }
+
+  // Stage 3: Attach / Replace photo on existing nakladnoy
+  Future<NakladnoyItem> uploadNakladnoyPhoto(
+    int paymentId,
+    File photoFile, {
+    bool sendToGroup = true,
+  }) async {
+    final req =
+        http.MultipartRequest('POST', _uri('/nakladnoy/$paymentId/photo'));
+    if (accessToken != null) {
+      req.headers['Authorization'] = 'Bearer $accessToken';
+    }
+    req.fields['send_to_group'] = sendToGroup ? 'true' : 'false';
+    req.files.add(await http.MultipartFile.fromPath('photo', photoFile.path));
+    final streamed = await _http.send(req).timeout(const Duration(seconds: 30));
+    final res = await http.Response.fromStream(streamed);
+    return NakladnoyItem.fromJson(_decodeJson(res));
+  }
+
+  // Stage 4: Nasiya Ledger & Prixod (ITOG 👑)
+  Future<Map<String, dynamic>> getNasiya({String? supplier}) async {
+    final q = (supplier != null && supplier.isNotEmpty)
+        ? {'supplier': supplier}
+        : null;
+    final res = await _http
+        .get(_uri('/nasiya', q), headers: _headers())
+        .timeout(const Duration(seconds: 15));
+    return _decodeJson(res);
+  }
+
+  Future<Map<String, dynamic>> addNasiya({
+    required String supplierName,
+    required String entryType, // debt | payment
+    required double amount,
+    String note = '',
+  }) async {
+    final res = await _http
+        .post(
+          _uri('/nasiya'),
+          headers: _headers(),
+          body: jsonEncode({
+            'supplier_name': supplierName.trim(),
+            'entry_type': entryType,
+            'amount': amount,
+            'note': note.trim(),
+          }),
+        )
+        .timeout(const Duration(seconds: 12));
+    return _decodeJson(res);
+  }
+
+  Future<void> deleteNasiya(int entryId) async {
+    final res = await _http
+        .delete(_uri('/nasiya/$entryId'), headers: _headers())
+        .timeout(const Duration(seconds: 12));
+    _decodeJson(res);
+  }
+
+  Future<List<Map<String, dynamic>>> getPrixodList() async {
+    final res = await _http
+        .get(_uri('/prixod'), headers: _headers())
+        .timeout(const Duration(seconds: 15));
+    final data = _decodeJson(res);
+    return ((data['items'] as List?) ?? const [])
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> createPrixodFromText({
+    required String text,
+    bool publishToGroup = false,
+  }) async {
+    final res = await _http
+        .post(
+          _uri('/prixod/text'),
+          headers: _headers(),
+          body: jsonEncode({
+            'text': text.trim(),
+            'publish_to_group': publishToGroup,
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
+    return _decodeJson(res);
+  }
+
+  Future<Map<String, dynamic>> publishPrixod(int reportId) async {
+    final res = await _http
+        .post(_uri('/prixod/$reportId/publish'), headers: _headers())
+        .timeout(const Duration(seconds: 20));
+    return _decodeJson(res);
+  }
+}
+
+class HistorySessionItem {
+  final int id;
+  final String reportDate;
+  final String status; // open | closed
+  final double openingBalance;
+  final double expectedCash;
+  final double? actualCountedCash;
+  final double? difference;
+  final String createdAt;
+  final String? closedAt;
+
+  const HistorySessionItem({
+    required this.id,
+    required this.reportDate,
+    required this.status,
+    required this.openingBalance,
+    required this.expectedCash,
+    this.actualCountedCash,
+    this.difference,
+    required this.createdAt,
+    this.closedAt,
+  });
+
+  factory HistorySessionItem.fromJson(Map<String, dynamic> j) =>
+      HistorySessionItem(
+        id: (j['id'] as num).toInt(),
+        reportDate: (j['report_date'] ?? '').toString(),
+        status: (j['status'] ?? 'open').toString(),
+        openingBalance: ((j['opening_balance'] as num?) ?? 0).toDouble(),
+        expectedCash: ((j['expected_cash'] as num?) ?? 0).toDouble(),
+        actualCountedCash: (j['actual_counted_cash'] as num?)?.toDouble(),
+        difference: (j['difference'] as num?)?.toDouble(),
+        createdAt: (j['created_at'] ?? '').toString(),
+        closedAt: j['closed_at']?.toString(),
+      );
 }
 
 class ApkVersionInfo {

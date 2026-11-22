@@ -121,3 +121,16 @@ class DayCloseResponse(BaseModel):
     difference: float
     next_session_id: int
     next_opening_balance: float
+
+
+class NasiyaCreateRequest(BaseModel):
+    supplier_name: str = Field(..., min_length=1, max_length=255)
+    entry_type: str = Field(..., pattern="^(debt|payment)$")
+    amount: float = Field(..., gt=0)
+    note: str = Field(default="", max_length=500)
+
+
+class PrixodTextCreateRequest(BaseModel):
+    text: str = Field(..., min_length=3)
+    publish_to_group: bool = False
+

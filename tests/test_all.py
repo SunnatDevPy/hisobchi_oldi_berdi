@@ -1669,6 +1669,67 @@ def test_mobile_apk_rest_api_and_group_posting(tmp_path: Path, monkeypatch):
                 assert ai_cur["supplier_suggestion"] == "Ummun"
                 assert "Ummun" in ai_cur["similar_suppliers"]
 
+                # 8e. Attach/update photo on existing nakladnoy (Stage 3)
+                r_up_photo = await client.post(
+                    f"/nakladnoy/{debt_id}/photo",
+                    headers=headers,
+                    files={"photo": ("late_photo.jpg", b"\xff\xd8\xff\xe0fake", "image/jpeg")},
+                )
+                assert r_up_photo.status_code == 200
+                assert r_up_photo.json()["has_photo"] is True
+
+                # 8f. Period stats & Live Sverka + Sverka Excel export (Stage 2)
+                r_pstats = await client.get("/stats/period?days=7", headers=headers)
+                assert r_pstats.status_code == 200
+                assert r_pstats.json()["total_spent"] > 0
+
+                r_sv = await client.get("/sverka", headers=headers)
+                assert r_sv.status_code == 200
+                assert r_sv.json()["grand_total"] > 0
+                assert len(r_sv.json()["suppliers"]) >= 3
+
+                r_sv_xlsx = await client.get("/export/sverka", headers=headers)
+                assert r_sv_xlsx.status_code == 200
+                assert len(r_sv_xlsx.content) > 1000
+
+                # 8g. Nasiya ledger & Prixod ITOG endpoints (Stage 4)
+                r_nas_add = await client.post(
+                    "/nasiya",
+                    headers=headers,
+                    json={
+                        "supplier_name": "Nafis",
+                        "entry_type": "debt",
+                        "amount": 2_500_000,
+                        "note": "Un qop",
+                    },
+                )
+                assert r_nas_add.status_code == 200
+                nas_id = r_nas_add.json()["id"]
+
+                r_nas_list = await client.get("/nasiya", headers=headers)
+                assert r_nas_list.status_code == 200
+                assert r_nas_list.json()["total_balance"] == 2_500_000.0
+                assert len(r_nas_list.json()["balances"]) == 1
+
+                r_nas_del = await client.delete(f"/nasiya/{nas_id}", headers=headers)
+                assert r_nas_del.status_code == 200
+
+                r_prx = await client.post(
+                    "/prixod/text",
+                    headers=headers,
+                    json={
+                        "text": "Nafis 150 000\nCoca Cola 100 000",
+                        "publish_to_group": False,
+                    },
+                )
+                assert r_prx.status_code == 200
+                assert r_prx.json()["report"]["total_cost"] == 250_000.0
+                assert "ITOG" in r_prx.json()["report"]["formatted_text"]
+
+                r_prx_list = await client.get("/prixod", headers=headers)
+                assert r_prx_list.status_code == 200
+                assert len(r_prx_list.json()["items"]) == 1
+
                 # 9. Close day
                 r_close = await client.post(
                     "/day/close",
@@ -1676,8 +1737,26 @@ def test_mobile_apk_rest_api_and_group_posting(tmp_path: Path, monkeypatch):
                     json={"actual_counted_cash": 3_800_000},
                 )
                 assert r_close.status_code == 200
+                closed_sid = r_close.json()["closed_session_id"]
                 assert r_close.json()["difference"] == 0.0
                 assert r_close.json()["next_opening_balance"] == 3_800_000.0
+
+                # 9b. History sessions, session detail, reopen, and global search (Stage 1)
+                r_hist = await client.get("/history/sessions", headers=headers)
+                assert r_hist.status_code == 200
+                assert len(r_hist.json()["sessions"]) >= 1
+
+                r_hdet = await client.get(f"/history/sessions/{closed_sid}", headers=headers)
+                assert r_hdet.status_code == 200
+                assert r_hdet.json()["session_status"] == "closed"
+
+                r_search = await client.get("/history/search?q=Coca", headers=headers)
+                assert r_search.status_code == 200
+                assert len(r_search.json()["items"]) == 1
+
+                r_reopen = await client.post(f"/history/sessions/{closed_sid}/reopen", headers=headers)
+                assert r_reopen.status_code == 200
+                assert r_reopen.json()["status"] == "open"
 
                 # 10. Logout revokes token
                 r_out = await client.post("/auth/logout", headers=headers)
