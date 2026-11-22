@@ -18,8 +18,10 @@ from api.auth import (
     consume_login_code,
     get_current_user,
     issue_api_token,
+    issue_webapp_token,
     require_write_user,
     revoke_raw_token,
+    verify_telegram_webapp_init_data,
 )
 from api.deps import (
     APK_BINARY_PATH,
@@ -48,9 +50,11 @@ from api.schemas import (
     RoundModeUpdateRequest,
     StatusSummaryResponse,
     SupplierConfigCreateRequest,
+    TelegramWebAppAuthRequest,
     UserProfileResponse,
 )
-from bot.auth import ROLE_ADMIN, can_write_role, get_user_role, is_admin_role
+from bot.auth import ROLE_ADMIN, can_write_role, get_user_role, is_admin_role, is_webapp_allowed
+from config import BASE_DIR, get_settings
 from database.crud import (
     add_cash_transaction,
     add_or_update_supplier,
@@ -257,6 +261,31 @@ def create_api_app() -> FastAPI:
             headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
         )
 
+    WEBAPP_DIR = BASE_DIR / "webapp"
+
+    def _webapp_file_response(filename: str, media_type: str) -> FileResponse:
+        fpath = WEBAPP_DIR / filename
+        if not fpath.is_file():
+            raise HTTPException(status_code=404, detail="Mini App fayli topilmadi")
+        return FileResponse(
+            fpath,
+            media_type=media_type,
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
+
+    @app.get("/webapp", include_in_schema=False)
+    @app.get("/webapp/", include_in_schema=False)
+    async def serve_webapp_index():
+        return _webapp_file_response("index.html", "text/html; charset=utf-8")
+
+    @app.get("/webapp/styles.css", include_in_schema=False)
+    async def serve_webapp_css():
+        return _webapp_file_response("styles.css", "text/css; charset=utf-8")
+
+    @app.get("/webapp/app.js", include_in_schema=False)
+    async def serve_webapp_js():
+        return _webapp_file_response("app.js", "application/javascript; charset=utf-8")
+
     @app.post("/auth/login", response_model=LoginResponse)
     async def auth_login(payload: LoginRequest, request: Request) -> LoginResponse:
         client_ip = request.client.host if request.client else "unknown"
@@ -281,6 +310,30 @@ def create_api_app() -> FastAPI:
             role=role,
             can_write=can_write_role(user_id),
             is_admin=is_admin_role(user_id) or role == ROLE_ADMIN,
+        )
+
+    @app.post("/auth/telegram-webapp", response_model=LoginResponse)
+    async def auth_telegram_webapp(payload: TelegramWebAppAuthRequest) -> LoginResponse:
+        tg_user = verify_telegram_webapp_init_data(
+            payload.init_data, get_settings().BOT_TOKEN
+        )
+        user_id = int(tg_user["user_id"])
+        if not is_webapp_allowed(user_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="🔒 Mini App hozircha faqat asosiy admin uchun ochiq.",
+            )
+        role = get_user_role(user_id) or ROLE_ADMIN
+        async with async_session_maker() as db:
+            raw_token, _ = await issue_webapp_token(
+                db, user_id=user_id, device_name="Telegram Mini App"
+            )
+        return LoginResponse(
+            access_token=raw_token,
+            user_id=user_id,
+            role=role,
+            can_write=True,
+            is_admin=True,
         )
 
     @app.post("/auth/logout")

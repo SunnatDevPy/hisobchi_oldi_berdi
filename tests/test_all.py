@@ -2208,3 +2208,133 @@ def test_nakladnoy_math_mismatch_disables_autoconfirm_and_use_calc_button(tmp_pa
         get_settings.cache_clear()
 
 
+def test_telegram_webapp_auth_owner_only_and_static_routes(tmp_path: Path, monkeypatch):
+    import hashlib
+    import hmac
+    import json
+    import time
+    from urllib.parse import urlencode
+
+    import httpx
+    import api.app as api_app_mod
+    import api.auth as api_auth_mod
+    from bot.auth import clear_role_cache, is_webapp_allowed, set_cached_role
+    from bot.handlers.apk_link import _apk_panel_kb
+    from bot.keyboards import more_menu_kb
+    from config import get_settings
+
+    bot_token = "987654:TEST_BOT_TOKEN_FOR_WEBAPP"
+    monkeypatch.setenv("BOT_TOKEN", bot_token)
+    monkeypatch.setenv("ADMIN_IDS", "111")
+    monkeypatch.setenv("API_PUBLIC_URL", "https://hisobchi.okaposai.uz")
+    get_settings.cache_clear()
+    clear_role_cache()
+    set_cached_role(222, "kassir")
+
+    def build_init_data(user_id: int, auth_date: int, tamper_hash: bool = False) -> str:
+        params = {
+            "auth_date": str(auth_date),
+            "query_id": "AAEAAAE",
+            "user": json.dumps({"id": user_id, "first_name": "Admin"}, separators=(",", ":")),
+        }
+        dcs = "\n".join(f"{k}={v}" for k, v in sorted(params.items()))
+        secret = hmac.new(b"WebAppData", bot_token.encode("utf-8"), hashlib.sha256).digest()
+        sig = hmac.new(secret, dcs.encode("utf-8"), hashlib.sha256).hexdigest()
+        if tamper_hash:
+            sig = "0" * 64
+        params["hash"] = sig
+        return urlencode(params)
+
+    assert is_webapp_allowed(111) is True
+    assert is_webapp_allowed(222) is False
+    assert is_webapp_allowed(None) is False
+
+    # Bot keyboards hide Mini App button unless show_webapp=True (owner-only)
+    more_hidden = [b for row in more_menu_kb("admin", show_webapp=False).inline_keyboard for b in row]
+    more_shown = [b for row in more_menu_kb("admin", show_webapp=True).inline_keyboard for b in row]
+    assert not any(getattr(b, "web_app", None) for b in more_hidden)
+    assert any(
+        getattr(b, "web_app", None) and b.web_app.url == "https://hisobchi.okaposai.uz/webapp"
+        for b in more_shown
+    )
+    apk_hidden = [b for row in _apk_panel_kb(True, 0, True, show_webapp=False).inline_keyboard for b in row]
+    apk_shown = [b for row in _apk_panel_kb(True, 0, True, show_webapp=True).inline_keyboard for b in row]
+    assert not any(getattr(b, "web_app", None) for b in apk_hidden)
+    assert any(getattr(b, "web_app", None) for b in apk_shown)
+
+    async def scenario() -> None:
+        db_file = tmp_path / "webapp_auth.db"
+        eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+        monkeypatch.setattr(api_app_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_auth_mod, "async_session_maker", maker)
+        api_auth_mod.clear_auth_memory_state()
+        try:
+            await init_db(engine_override=eng, session_maker_override=maker)
+            fastapi_app = api_app_mod.create_api_app()
+            transport = httpx.ASGITransport(app=fastapi_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                now_ts = int(time.time())
+
+                # 1. Static assets served
+                r_html = await client.get("/webapp")
+                assert r_html.status_code == 200 and "text/html" in r_html.headers["content-type"]
+                r_css = await client.get("/webapp/styles.css")
+                assert r_css.status_code == 200 and "text/css" in r_css.headers["content-type"]
+                r_js = await client.get("/webapp/app.js")
+                assert r_js.status_code == 200 and "javascript" in r_js.headers["content-type"]
+
+                # 2. Tampered hash & expired auth_date -> 401
+                r_bad = await client.post(
+                    "/auth/telegram-webapp",
+                    json={"init_data": build_init_data(111, now_ts, tamper_hash=True)},
+                )
+                assert r_bad.status_code == 401
+                r_old = await client.post(
+                    "/auth/telegram-webapp",
+                    json={"init_data": build_init_data(111, now_ts - 200_000)},
+                )
+                assert r_old.status_code == 401
+
+                # 3. Valid HMAC for non-owner kassir (222) -> 403
+                r_non_owner = await client.post(
+                    "/auth/telegram-webapp",
+                    json={"init_data": build_init_data(222, now_ts)},
+                )
+                assert r_non_owner.status_code == 403
+
+                # 4. Owner (111) logs in -> 200, token works on /status & /me
+                r_ok1 = await client.post(
+                    "/auth/telegram-webapp",
+                    json={"init_data": build_init_data(111, now_ts)},
+                )
+                assert r_ok1.status_code == 200
+                tok1 = r_ok1.json()["access_token"]
+                assert r_ok1.json()["is_admin"] is True
+
+                r_st = await client.get("/status", headers={"Authorization": f"Bearer {tok1}"})
+                assert r_st.status_code == 200
+
+                # 5. Re-opening Mini App revokes prior Mini App token (keeps only 1 active)
+                r_ok2 = await client.post(
+                    "/auth/telegram-webapp",
+                    json={"init_data": build_init_data(111, now_ts)},
+                )
+                assert r_ok2.status_code == 200
+                tok2 = r_ok2.json()["access_token"]
+                assert tok2 != tok1
+
+                async with maker() as db:
+                    toks = await api_auth_mod.list_active_tokens(db, user_id=111)
+                    assert len(toks) == 1
+        finally:
+            clear_role_cache()
+            await eng.dispose()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        clear_role_cache()
+        get_settings.cache_clear()
+
+
+

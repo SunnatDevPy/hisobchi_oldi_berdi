@@ -11,10 +11,11 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
-from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats
+from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, MenuButtonWebApp, WebAppInfo
 
 from bot.auth import refresh_role_cache
 from bot.handlers import get_main_router
+from bot.keyboards import get_webapp_url
 from bot.storage import DatabaseFSMStorage
 from config import get_settings
 from database.session import async_session_maker, init_db
@@ -59,6 +60,24 @@ async def _register_bot_commands(bot: Bot) -> None:
         logger.debug("set_my_commands skipped")
 
 
+async def _register_admin_webapp_menu(bot: Bot) -> None:
+    """Attach the Telegram Mini App menu button exclusively for configured primary admins."""
+    webapp_url = get_webapp_url()
+    if not webapp_url:
+        return
+    for admin_id in get_settings().admin_id_list:
+        try:
+            await bot.set_chat_menu_button(
+                chat_id=admin_id,
+                menu_button=MenuButtonWebApp(
+                    text="📱 Hisobchi",
+                    web_app=WebAppInfo(url=webapp_url),
+                ),
+            )
+        except Exception:
+            logger.debug("set_chat_menu_button skipped for admin_id=%s", admin_id)
+
+
 async def _run_api_server(host: str, port: int) -> None:
     """Run embedded FastAPI mobile API server inside the bot asyncio loop."""
     import uvicorn
@@ -101,6 +120,7 @@ async def run_bot() -> None:
 
     set_bot(bot)
     await _register_bot_commands(bot)
+    await _register_admin_webapp_menu(bot)
     bg_tasks = [
         asyncio.create_task(backup_scheduler(bot)),
         asyncio.create_task(daily_report_scheduler(bot)),

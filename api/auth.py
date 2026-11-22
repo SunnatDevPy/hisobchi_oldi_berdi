@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import hmac
+import json
 import re
 import secrets
 import time
 from typing import Optional, Sequence, Tuple
+from urllib.parse import parse_qsl
 
 from fastapi import Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy import desc, select
@@ -128,6 +131,106 @@ async def issue_api_token(
     await db.commit()
     await db.refresh(row)
     return raw_token, row
+
+
+async def issue_webapp_token(
+    db: AsyncSession, user_id: int, device_name: str = "Telegram Mini App"
+) -> Tuple[str, ApiToken]:
+    """Replace any previous active Mini App token for this user with a fresh token."""
+    clean_device = (device_name or "Telegram Mini App").strip()[:120] or "Telegram Mini App"
+    existing_rows = (
+        await db.scalars(
+            select(ApiToken).where(
+                ApiToken.user_id == int(user_id),
+                ApiToken.device_name == clean_device,
+                ApiToken.revoked.is_(False),
+            )
+        )
+    ).all()
+    for existing in existing_rows:
+        existing.revoked = True
+    return await issue_api_token(db, user_id=user_id, device_name=clean_device)
+
+
+def verify_telegram_webapp_init_data(
+    init_data: str, bot_token: str, max_age_seconds: int = 86400
+) -> dict:
+    """Verify Telegram WebApp initData HMAC-SHA256 signature and extract caller user info."""
+    if not bot_token or bot_token == "YOUR_TELEGRAM_BOT_TOKEN_HERE":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Bot tokeni sozlanmagan.",
+        )
+    if not init_data or not init_data.strip():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Telegram initData topilmadi.",
+        )
+
+    params = dict(parse_qsl(init_data, keep_blank_values=True))
+    received_hash = params.pop("hash", "").strip().lower()
+    if not received_hash:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Telegram imzosi (hash) topilmadi.",
+        )
+
+    raw_auth_date = params.get("auth_date", "")
+    try:
+        auth_ts = int(raw_auth_date)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Telegram auth_date yaroqsiz.",
+        ) from exc
+
+    now_ts = time.time()
+    if now_ts - auth_ts > max_age_seconds or auth_ts - now_ts > 300:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Telegram sessiyasi eskirgan. Mini App'ni qaytadan oching.",
+        )
+
+    data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(params.items()))
+    secret_key = hmac.new(
+        b"WebAppData", bot_token.encode("utf-8"), hashlib.sha256
+    ).digest()
+    expected_hash = hmac.new(
+        secret_key, data_check_string.encode("utf-8"), hashlib.sha256
+    ).hexdigest().lower()
+
+    if not hmac.compare_digest(expected_hash, received_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Telegram imzosi tasdiqlanmadi.",
+        )
+
+    raw_user = params.get("user")
+    if not raw_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Telegram foydalanuvchi ma'lumoti topilmadi.",
+        )
+    try:
+        user_obj = json.loads(raw_user)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Telegram user JSON yaroqsiz.",
+        ) from exc
+
+    uid = user_obj.get("id") if isinstance(user_obj, dict) else None
+    if not isinstance(uid, int) or isinstance(uid, bool) or uid <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Telegram foydalanuvchi ID yaroqsiz.",
+        )
+
+    return {
+        "user_id": int(uid),
+        "first_name": str(user_obj.get("first_name") or ""),
+        "username": str(user_obj.get("username") or ""),
+    }
 
 
 async def list_active_tokens(

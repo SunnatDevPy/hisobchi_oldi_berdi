@@ -13,7 +13,14 @@ from typing import Optional
 from aiogram import F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, CallbackQuery, ChatMemberUpdated, Message
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    ChatMemberUpdated,
+    MenuButtonWebApp,
+    Message,
+    WebAppInfo,
+)
 
 from bot.auth import (
     ANONYMOUS_ADMIN_BOT_ID,
@@ -23,6 +30,7 @@ from bot.auth import (
     get_user_role,
     is_admin_role,
     is_authorized,  # re-exported for backward compatibility
+    is_webapp_allowed,
     refresh_role_cache,
     set_cached_role,
 )
@@ -32,6 +40,7 @@ from bot.keyboards import (
     cancel_reply_keyboard,
     delete_confirm_kb,
     export_range_kb,
+    get_webapp_url,
     groups_config_kb,
     history_detail_kb,
     history_feed_kb,
@@ -135,13 +144,29 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         return
     await state.clear()
     role = get_user_role(uid) or "viewer"
+    webapp_allowed = is_webapp_allowed(uid)
+    webapp_url = get_webapp_url() if webapp_allowed else None
+    if webapp_url and uid and message.bot is not None and hasattr(message.bot, "set_chat_menu_button"):
+        try:
+            await message.bot.set_chat_menu_button(
+                chat_id=uid,
+                menu_button=MenuButtonWebApp(
+                    text="📱 Hisobchi",
+                    web_app=WebAppInfo(url=webapp_url),
+                ),
+            )
+        except Exception:
+            logger.debug("set_chat_menu_button skipped on /start for %s", uid)
+
+    webapp_hint = "\n• 📱 <b>/app</b> — Telegram ichida Mini App'ni ochish" if webapp_allowed else ""
     await message.answer(
         "👋 <b>Assalomu alaykum! Hisobot va Nakladnoy nazorat botiga xush kelibsiz.</b>\n\n"
         "Botda quyidagilarni bajarishingiz mumkin:\n"
         "• 📸 <b>Nakladnoy</b> — rasm/ovoz/matn yoki tez tugma bilan kiritish\n"
         "• ➕ <b>Pul oldim</b> — kirim va kassa qarzini yuritish\n"
         "• 📊 <b>Status</b> — jonli kassa qoldig'i va Excel eksport\n"
-        "• ⚙️ <b>Boshqa</b> — tahrirlash, kunni yopish, nasiya, sverka va sozlamalar\n\n"
+        "• ⚙️ <b>Boshqa</b> — tahrirlash, kunni yopish, nasiya, sverka va sozlamalar"
+        f"{webapp_hint}\n\n"
         f"👤 Rol: <b>{ROLE_LABELS.get(role, role)}</b>\n"
         f"🆔 Sizning Telegram ID: <code>{uid}</code>",
         parse_mode="HTML",
@@ -159,7 +184,7 @@ async def open_more_menu(
     await state.clear()
     role = get_user_role(uid) or "viewer"
     text = "⚙️ <b>Qo'shimcha bo'limlar va hisobotlar:</b>"
-    kb = more_menu_kb(role)
+    kb = more_menu_kb(role, show_webapp=is_webapp_allowed(uid))
     if isinstance(target, CallbackQuery):
         await _safe_edit(target.message, text, reply_markup=kb)
         await target.answer()

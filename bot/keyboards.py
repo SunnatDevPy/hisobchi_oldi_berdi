@@ -9,9 +9,11 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardMarkup,
+    WebAppInfo,
 )
 
 from bot.auth import ROLE_ADMIN, ROLE_KASSIR, ROLE_LABELS
+from config import get_settings
 from database.models import (
     CashTransaction,
     DailyCashSession,
@@ -72,9 +74,28 @@ def delete_confirm_kb(confirm_cb: str, cancel_cb: str) -> InlineKeyboardMarkup:
     )
 
 
-def more_menu_kb(role: str = ROLE_ADMIN) -> InlineKeyboardMarkup:
+def get_webapp_url() -> Optional[str]:
+    """Return HTTPS URL of the Telegram Mini App if API_PUBLIC_URL is HTTPS."""
+    pub = (get_settings().API_PUBLIC_URL or "").strip().rstrip("/")
+    if pub.startswith("https://"):
+        return f"{pub}/webapp"
+    return None
+
+
+def more_menu_kb(role: str = ROLE_ADMIN, show_webapp: bool = False) -> InlineKeyboardMarkup:
     """Extended operations & settings hub opened from ⚙️ Boshqa (T2)."""
     rows: list[list[InlineKeyboardButton]] = []
+    if show_webapp:
+        webapp_url = get_webapp_url()
+        if webapp_url:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text="🚀 Hisobchi ilovasini ochish (Mini App)",
+                        web_app=WebAppInfo(url=webapp_url),
+                    )
+                ]
+            )
     if role == ROLE_ADMIN:
         rows.append(
             [

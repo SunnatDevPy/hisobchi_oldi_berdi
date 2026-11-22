@@ -9,13 +9,15 @@ from pathlib import Path
 from typing import Optional
 
 from aiogram import F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
+from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
     FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
+    WebAppInfo,
 )
 
 from api.auth import (
@@ -24,8 +26,15 @@ from api.auth import (
     list_active_tokens,
     revoke_token_by_id,
 )
-from bot.auth import ROLE_LABELS, deny_if_unauthorized, get_user_role, is_admin_role
+from bot.auth import (
+    ROLE_LABELS,
+    deny_if_unauthorized,
+    get_user_role,
+    is_admin_role,
+    is_webapp_allowed,
+)
 from bot.handlers.wallet_nakladnoy import _safe_cb_answer, _safe_edit_text
+from bot.keyboards import get_webapp_url
 from config import get_settings
 from database.crud import format_local_dt, get_app_setting, get_group_config, set_app_setting
 from database.session import async_session_maker
@@ -50,21 +59,38 @@ def _read_apk_version_str() -> tuple[str, str]:
     return "1.0.0", "v1.0.0"
 
 
-def _apk_panel_kb(post_to_group_on: bool, device_count: int, is_admin: bool) -> InlineKeyboardMarkup:
+def _apk_panel_kb(
+    post_to_group_on: bool,
+    device_count: int,
+    is_admin: bool,
+    show_webapp: bool = False,
+) -> InlineKeyboardMarkup:
     grp_label = (
         "📤 Guruhga yuborish: ✅ Yoqilgan"
         if post_to_group_on
         else "📤 Guruhga yuborish: 🔕 O'chirilgan"
     )
     pub_url = (get_settings().API_PUBLIC_URL or "https://hisobchi.okaposai.uz").strip().rstrip("/")
-    rows: list[list[InlineKeyboardButton]] = [
+    rows: list[list[InlineKeyboardButton]] = []
+    if show_webapp:
+        webapp_url = get_webapp_url()
+        if webapp_url:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text="🚀 Telegram ichida ochish (Mini App)",
+                        web_app=WebAppInfo(url=webapp_url),
+                    )
+                ]
+            )
+    rows.append(
         [
             InlineKeyboardButton(
                 text="📥 APK ilovani yuklab olish (Telegramda)",
                 callback_data="apk:download_file",
             )
-        ],
-    ]
+        ]
+    )
     if pub_url.startswith("https://") or pub_url.startswith("http://"):
         rows.append(
             [
@@ -133,7 +159,43 @@ async def _render_apk_home(user_id: int, code: Optional[str] = None) -> tuple[st
         f"📲 Ulangan qurilmalar: <b>{len(tokens)} ta</b>\n\n"
         "<i>Ilovada 8 xonali kodni kiriting. Kod faqat 1 marta ishlaydi.</i>"
     )
-    return text, _apk_panel_kb(post_on, len(tokens), is_adm)
+    return text, _apk_panel_kb(
+        post_on,
+        len(tokens),
+        is_adm,
+        show_webapp=is_webapp_allowed(user_id),
+    )
+
+
+@router.message(StateFilter("*"), Command("app"), F.chat.type == "private")
+async def cmd_webapp(message: Message, state: FSMContext) -> None:
+    """Open the Telegram Mini App directly (exclusively for ADMIN_IDS owners)."""
+    uid = message.from_user.id if message.from_user else None
+    if not is_webapp_allowed(uid):
+        await message.answer("🔒 Mini App hozircha faqat asosiy admin uchun ochiq.")
+        return
+    await state.clear()
+    url = get_webapp_url()
+    if not url:
+        await message.answer("⚠️ Mini App uchun HTTPS manzil sozlanmagan.")
+        return
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🚀 Hisobchi Mini App'ni ochish",
+                    web_app=WebAppInfo(url=url),
+                )
+            ]
+        ]
+    )
+    await message.answer(
+        "📱 <b>Hisobchi Telegram Mini App</b>\n\n"
+        "Quyidagi tugmani bosing — ilova to'g'ridan-to'g'ri Telegram ichida tezkor ochiladi "
+        "(login kodi kiritish shart emas):",
+        parse_mode="HTML",
+        reply_markup=kb,
+    )
 
 
 @router.message(Command("apk"), F.chat.type == "private")

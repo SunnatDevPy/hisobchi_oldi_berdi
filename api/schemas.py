@@ -12,6 +12,10 @@ class LoginRequest(BaseModel):
     device_name: str = Field(default="Android", max_length=120)
 
 
+class TelegramWebAppAuthRequest(BaseModel):
+    init_data: str = Field(..., min_length=10, max_length=8192)
+
+
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

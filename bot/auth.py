@@ -70,6 +70,13 @@ def is_admin_role(user_id: int | None, allow_group_anon: bool = False) -> bool:
     return get_user_role(user_id, allow_group_anon=allow_group_anon) == ROLE_ADMIN
 
 
+def is_webapp_allowed(user_id: int | None) -> bool:
+    """True strictly for configured primary owners (ADMIN_IDS) allowed into the Mini App."""
+    if not user_id:
+        return False
+    return int(user_id) in get_settings().admin_id_list
+
+
 def can_write_role(user_id: int | None) -> bool:
     """True for roles permitted to record cash inflows, nakladnoys, and nasiya entries."""
     return get_user_role(user_id) in (ROLE_ADMIN, ROLE_KASSIR)
