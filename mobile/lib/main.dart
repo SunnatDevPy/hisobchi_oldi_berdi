@@ -14,6 +14,14 @@ void main() {
   runApp(const HisobchiApp());
 }
 
+/// Computes safe bottom padding inside modal bottom sheets so buttons NEVER slip
+/// behind Android's 3-button or gesture navigation bar OR the soft keyboard.
+double sheetBottomPadding(BuildContext context) {
+  final insets = MediaQuery.viewInsetsOf(context).bottom;
+  final navBar = MediaQuery.viewPaddingOf(context).bottom;
+  return (insets > navBar ? insets : navBar) + 24;
+}
+
 class HisobchiApp extends StatefulWidget {
   final HisobchiApiClient? apiOverride;
 
@@ -174,22 +182,24 @@ class _LoginScreenState extends State<LoginScreen> {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(22),
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 440),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Brand Hero
                   Container(
                     padding: const EdgeInsets.all(22),
                     decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [AppTokens.navyDark, AppTokens.navyPrimary],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(22),
+                      gradient: AppTokens.heroGradient,
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppTokens.brand.withValues(alpha: 0.25),
+                          blurRadius: 20,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
                     ),
                     child: const Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -205,7 +215,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 style: TextStyle(
                                   color: Colors.white,
                                   fontSize: 23,
-                                  fontWeight: FontWeight.w800,
+                                  fontWeight: FontWeight.w900,
                                 ),
                               ),
                             ),
@@ -213,7 +223,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         SizedBox(height: 10),
                         Text(
-                          'Telegram bot va Nakladnoy guruhi bilan bevosita sinxron ishlovchi rasmiy kassa ilovasi.',
+                          'Telegram bot, AI nakladnoy skaneri va Nakladnoy guruhi bilan bevosita sinxron ishlovchi rasmiy kassa ilovasi.',
                           style: TextStyle(
                             color: Colors.white70,
                             fontSize: 13.5,
@@ -223,9 +233,8 @@ class _LoginScreenState extends State<LoginScreen> {
                       ],
                     ),
                   ),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 16),
 
-                  // Instructions Card
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(16),
@@ -235,7 +244,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           const Text(
                             'Qanday ulanadi?',
                             style: TextStyle(
-                              fontWeight: FontWeight.w700,
+                              fontWeight: FontWeight.w800,
                               fontSize: 15,
                             ),
                           ),
@@ -252,9 +261,8 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 16),
 
-                  // Form Card
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(18),
@@ -264,7 +272,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           const Text(
                             'Server manzili (Domen / HTTPS)',
                             style: TextStyle(
-                                fontWeight: FontWeight.w600, fontSize: 13),
+                                fontWeight: FontWeight.w700, fontSize: 13),
                           ),
                           const SizedBox(height: 6),
                           Row(
@@ -274,7 +282,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                   controller: _urlCtrl,
                                   keyboardType: TextInputType.url,
                                   decoration: const InputDecoration(
-                                    hintText: 'https://hisobchi.domen.uz',
+                                    hintText: 'https://hisobchi.okaposai.uz',
                                     prefixIcon: Icon(Icons.dns_rounded),
                                   ),
                                 ),
@@ -300,7 +308,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               '✅ $_urlOkMessage',
                               style: const TextStyle(
                                 color: AppTokens.cashGreen,
-                                fontWeight: FontWeight.w600,
+                                fontWeight: FontWeight.w700,
                                 fontSize: 12.5,
                               ),
                             ),
@@ -309,7 +317,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           const Text(
                             '8 xonali kirish kodi (/apk)',
                             style: TextStyle(
-                                fontWeight: FontWeight.w600, fontSize: 13),
+                                fontWeight: FontWeight.w700, fontSize: 13),
                           ),
                           const SizedBox(height: 6),
                           TextField(
@@ -330,7 +338,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           const Text(
                             'Qurilma nomi',
                             style: TextStyle(
-                                fontWeight: FontWeight.w600, fontSize: 13),
+                                fontWeight: FontWeight.w700, fontSize: 13),
                           ),
                           const SizedBox(height: 6),
                           TextField(
@@ -399,7 +407,7 @@ class _LoginScreenState extends State<LoginScreen> {
           height: 22,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: AppTokens.navyPrimary.withValues(alpha: 0.12),
+            color: AppTokens.brand.withValues(alpha: 0.12),
             shape: BoxShape.circle,
           ),
           child: Text(
@@ -407,7 +415,7 @@ class _LoginScreenState extends State<LoginScreen> {
             style: const TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w800,
-              color: AppTokens.navyPrimary,
+              color: AppTokens.brand,
             ),
           ),
         ),
@@ -452,6 +460,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   String _filterMode = 'all'; // all | cash | card | transfer | debt
   String _searchQuery = '';
   bool _showCashHistory = false;
+  final ImagePicker _quickPicker = ImagePicker();
 
   @override
   void initState() {
@@ -504,16 +513,20 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
       SnackBar(
         content: Text(msg),
         backgroundColor: isError ? AppTokens.dangerRed : AppTokens.navyDark,
-        behavior: SnackBarBehavior.floating,
       ),
     );
   }
 
   Future<void> _openCashDialog(String sourceType) async {
     final titles = {
-      'main': '➕ Pul oldim (Asosiy kirim)',
-      'kassa_debt': '🏦 Kassadan qarz oldim',
-      'kassa_repay': '↩️ Kassaga qaytardim',
+      'main': 'Pul oldim (Asosiy kirim)',
+      'kassa_debt': 'Kassadan qarz oldim',
+      'kassa_repay': 'Kassaga qaytardim',
+    };
+    final icons = {
+      'main': Icons.add_card_rounded,
+      'kassa_debt': Icons.account_balance_rounded,
+      'kassa_repay': Icons.assignment_return_rounded,
     };
     final amtCtrl = TextEditingController();
     final noteCtrl = TextEditingController();
@@ -521,56 +534,68 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     final confirmed = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
-      showDragHandle: true,
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(
-          left: 20,
-          right: 20,
-          top: 8,
-          bottom: MediaQuery.of(ctx).viewInsets.bottom + 22,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              titles[sourceType] ?? 'Kassa amali',
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
+      useSafeArea: true,
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 4,
+            bottom: sheetBottomPadding(ctx),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Icon(icons[sourceType] ?? Icons.payments_rounded,
+                      color: AppTokens.brand),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      titles[sourceType] ?? 'Kassa amali',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: amtCtrl,
-              autofocus: true,
-              keyboardType: TextInputType.number,
-              style: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-                fontFeatures: AppTokens.tabularNums,
+              const SizedBox(height: 14),
+              TextField(
+                controller: amtCtrl,
+                autofocus: true,
+                keyboardType: TextInputType.number,
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  fontFeatures: AppTokens.tabularNums,
+                ),
+                decoration: const InputDecoration(
+                  labelText: "Summa (so'm)",
+                  hintText: 'Masalan: 5 000 000',
+                  prefixIcon: Icon(Icons.payments_outlined),
+                ),
               ),
-              decoration: const InputDecoration(
-                labelText: "Summa (so'm)",
-                hintText: 'Masalan: 5 000 000',
-                prefixIcon: Icon(Icons.payments_outlined),
+              const SizedBox(height: 12),
+              TextField(
+                controller: noteCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Izoh (ixtiyoriy)',
+                  prefixIcon: Icon(Icons.notes_rounded),
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: noteCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Izoh (ixtiyoriy)',
-                prefixIcon: Icon(Icons.notes_rounded),
+              const SizedBox(height: 18),
+              FilledButton.icon(
+                onPressed: () => Navigator.pop(ctx, true),
+                icon: const Icon(Icons.check_rounded),
+                label: const Text('Saqlash'),
               ),
-            ),
-            const SizedBox(height: 18),
-            FilledButton.icon(
-              onPressed: () => Navigator.pop(ctx, true),
-              icon: const Icon(Icons.check_rounded),
-              label: const Text('Saqlash'),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -595,17 +620,33 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     }
   }
 
-  Future<void> _openAddNakladnoySheet() async {
+  /// 1-Tap AI Camera / Gallery directly from Dashboard!
+  Future<void> _quickAiScan(ImageSource source) async {
+    try {
+      final xfile = await _quickPicker.pickImage(
+        source: source,
+        maxWidth: 1600,
+        maxHeight: 1600,
+        imageQuality: 85,
+      );
+      if (xfile == null || !mounted) return;
+      await _openAddNakladnoySheet(initialPhoto: File(xfile.path));
+    } catch (e) {
+      _showSnack('Rasm olishda xatolik: $e', isError: true);
+    }
+  }
+
+  Future<void> _openAddNakladnoySheet({File? initialPhoto}) async {
     final grpInfo = _summary?.groupInfo ??
         const GroupInfo(bound: false, title: '', apkPostToGroup: true);
     final saved = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      showDragHandle: true,
       builder: (ctx) => AddNakladnoySheet(
         api: widget.api,
         groupInfo: grpInfo,
+        initialPhoto: initialPhoto,
       ),
     );
     if (saved == true) {
@@ -618,7 +659,6 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      showDragHandle: true,
       builder: (ctx) => NakladnoyDetailSheet(
         api: widget.api,
         item: item,
@@ -632,10 +672,12 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   Future<void> _openPayDebtDialog(NakladnoyItem item) async {
     final method = await showModalBottomSheet<String>(
       context: context,
-      showDragHandle: true,
+      isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => SafeArea(
+        top: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+          padding: EdgeInsets.fromLTRB(20, 4, 20, sheetBottomPadding(ctx)),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -656,8 +698,8 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                 style: FilledButton.styleFrom(
                     backgroundColor: AppTokens.cashGreen),
                 onPressed: () => Navigator.pop(ctx, 'cash'),
-                icon: const Icon(Icons.money_rounded),
-                label: const Text("💵 Naqd to'landi (kassadan ayriladi)"),
+                icon: const Icon(Icons.payments_rounded),
+                label: const Text("Naqd to'landi (kassadan ayriladi)"),
               ),
               const SizedBox(height: 10),
               FilledButton.icon(
@@ -665,7 +707,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                     FilledButton.styleFrom(backgroundColor: AppTokens.cardBlue),
                 onPressed: () => Navigator.pop(ctx, 'card'),
                 icon: const Icon(Icons.credit_card_rounded),
-                label: const Text("💳 Karta orqali (naqddan ayrilmaydi)"),
+                label: const Text("Karta orqali (naqddan ayrilmaydi)"),
               ),
               const SizedBox(height: 10),
               FilledButton.icon(
@@ -673,7 +715,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                     backgroundColor: AppTokens.transferPurple),
                 onPressed: () => Navigator.pop(ctx, 'transfer'),
                 icon: const Icon(Icons.account_balance_rounded),
-                label: const Text("🏦 Perechesleniya / O'tkazma"),
+                label: const Text("Perechesleniya / O'tkazma"),
               ),
             ],
           ),
@@ -701,19 +743,28 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
         title: Row(
           children: [
             Container(
-              padding: const EdgeInsets.all(7),
+              padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: AppTokens.navyPrimary.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(10),
+                gradient: AppTokens.heroGradient,
+                borderRadius: BorderRadius.circular(11),
               ),
               child: const Icon(Icons.account_balance_wallet_rounded,
-                  size: 20, color: AppTokens.navyPrimary),
+                  size: 19, color: Colors.white),
             ),
             const SizedBox(width: 10),
-            const Text('Hisobchi'),
+            const Text(
+              'Hisobchi',
+              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 19),
+            ),
           ],
         ),
         actions: [
+          if (widget.api.canWrite)
+            IconButton(
+              tooltip: 'AI Kamera Skaner',
+              onPressed: () => _quickAiScan(ImageSource.camera),
+              icon: const Icon(Icons.document_scanner_rounded),
+            ),
           IconButton(
             tooltip: 'Yangilash',
             onPressed: _refreshAll,
@@ -728,47 +779,50 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
       ),
       floatingActionButton: _tabIndex <= 1 && widget.api.canWrite
           ? FloatingActionButton.extended(
-              onPressed: _openAddNakladnoySheet,
-              icon: const Icon(Icons.add_photo_alternate_rounded),
+              onPressed: () => _openAddNakladnoySheet(),
+              icon: const Icon(Icons.add_rounded),
               label: const Text(
                 'Nakladnoy',
                 style: TextStyle(fontWeight: FontWeight.w800),
               ),
             )
           : null,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _tabIndex,
-        onDestinationSelected: (i) => setState(() => _tabIndex = i),
-        destinations: [
-          const NavigationDestination(
-            icon: Icon(Icons.dashboard_outlined),
-            selectedIcon: Icon(Icons.dashboard_rounded),
-            label: 'Asosiy',
-          ),
-          NavigationDestination(
-            icon: Badge(
-              isLabelVisible: debtCount > 0,
-              label: Text('$debtCount'),
-              child: const Icon(Icons.push_pin_outlined),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: NavigationBar(
+          selectedIndex: _tabIndex,
+          onDestinationSelected: (i) => setState(() => _tabIndex = i),
+          destinations: [
+            const NavigationDestination(
+              icon: Icon(Icons.space_dashboard_outlined),
+              selectedIcon: Icon(Icons.space_dashboard_rounded),
+              label: 'Dashboard',
             ),
-            selectedIcon: Badge(
-              isLabelVisible: debtCount > 0,
-              label: Text('$debtCount'),
-              child: const Icon(Icons.push_pin_rounded),
+            NavigationDestination(
+              icon: Badge(
+                isLabelVisible: debtCount > 0,
+                label: Text('$debtCount'),
+                child: const Icon(Icons.push_pin_outlined),
+              ),
+              selectedIcon: Badge(
+                isLabelVisible: debtCount > 0,
+                label: Text('$debtCount'),
+                child: const Icon(Icons.push_pin_rounded),
+              ),
+              label: 'Qarzlar',
             ),
-            label: 'Qarzlar',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.table_view_outlined),
-            selectedIcon: Icon(Icons.table_view_rounded),
-            label: 'Excel',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.flag_outlined),
-            selectedIcon: Icon(Icons.flag_rounded),
-            label: 'Yopish',
-          ),
-        ],
+            const NavigationDestination(
+              icon: Icon(Icons.analytics_outlined),
+              selectedIcon: Icon(Icons.analytics_rounded),
+              label: 'Hisobot',
+            ),
+            const NavigationDestination(
+              icon: Icon(Icons.lock_clock_outlined),
+              selectedIcon: Icon(Icons.lock_clock_rounded),
+              label: 'Smena',
+            ),
+          ],
+        ),
       ),
       body: _loading && _summary == null
           ? const Center(child: CircularProgressIndicator())
@@ -845,7 +899,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     return RefreshIndicator(
       onRefresh: _refreshAll,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 110),
         children: [
           HeroBalanceCard(
             summary: s,
@@ -856,6 +910,12 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                 : null,
             onKassaRepay: widget.api.canWrite
                 ? () => _openCashDialog('kassa_repay')
+                : null,
+            onQuickAiCamera: widget.api.canWrite
+                ? () => _quickAiScan(ImageSource.camera)
+                : null,
+            onQuickAiGallery: widget.api.canWrite
+                ? () => _quickAiScan(ImageSource.gallery)
                 : null,
           ),
           const SizedBox(height: 14),
@@ -868,12 +928,19 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                   ListTile(
                     onTap: () =>
                         setState(() => _showCashHistory = !_showCashHistory),
-                    leading: const Icon(Icons.paid_outlined,
-                        color: AppTokens.cashGreen),
+                    leading: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: AppTokens.cashGreen.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(Icons.paid_rounded,
+                          color: AppTokens.cashGreen, size: 20),
+                    ),
                     title: Text(
                       'Kassa kirim-chiqimlari (${s.cashTransactions.length} ta)',
                       style: const TextStyle(
-                          fontWeight: FontWeight.w700, fontSize: 14.5),
+                          fontWeight: FontWeight.w800, fontSize: 14.5),
                     ),
                     subtitle: Text(
                       "Kechadan qoldiq: ${formatUzs(s.openingBalance, withCurrency: true)}",
@@ -886,16 +953,16 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                   if (_showCashHistory)
                     ...s.cashTransactions.map((tx) {
                       final labels = {
-                        'main': '➕ Olingan pul',
-                        'kassa_debt': '🏦 Kassadan qarz',
-                        'kassa_repay': '↩️ Kassaga qaytarildi',
+                        'main': 'Olingan pul',
+                        'kassa_debt': 'Kassadan qarz',
+                        'kassa_repay': 'Kassaga qaytarildi',
                       };
                       final isOut = tx.sourceType == 'kassa_repay';
                       return ListTile(
                         dense: true,
                         title: Text(
                           '${labels[tx.sourceType] ?? tx.sourceType} • ${tx.timeHm}',
-                          style: const TextStyle(fontWeight: FontWeight.w600),
+                          style: const TextStyle(fontWeight: FontWeight.w700),
                         ),
                         subtitle: tx.note.isNotEmpty ? Text(tx.note) : null,
                         trailing: Row(
@@ -937,43 +1004,49 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                 'Bugungi nakladnoylar (${s.nakladnoys.length} ta)',
                 style: const TextStyle(
                   fontSize: 16.5,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w900,
                 ),
               ),
               const Spacer(),
               if (s.totalKassaDebtOutstanding > 0)
-                Text(
-                  'Kassa qarz: ${formatUzs(s.totalKassaDebtOutstanding)}',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: AppTokens.debtAmber,
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppTokens.debtAmber.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    'Kassa qarz: ${formatUzsCompact(s.totalKassaDebtOutstanding)}',
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w800,
+                      color: AppTokens.debtAmber,
+                    ),
                   ),
                 ),
             ],
           ),
           const SizedBox(height: 10),
 
-          // Filter Chips
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
               children: [
                 _filterChip('all', 'Barchasi (${s.nakladnoys.length})'),
                 const SizedBox(width: 6),
-                _filterChip('cash', '💵 Naqd'),
+                _filterChip('cash', 'Naqd'),
                 const SizedBox(width: 6),
-                _filterChip('card', '💳 Karta'),
+                _filterChip('card', 'Karta'),
                 const SizedBox(width: 6),
-                _filterChip('transfer', "🏦 O'tkazma"),
+                _filterChip('transfer', "O'tkazma"),
                 const SizedBox(width: 6),
-                _filterChip('debt', '📌 Qarzga'),
+                _filterChip('debt', 'Qarzga'),
               ],
             ),
           ),
           const SizedBox(height: 10),
 
-          // Search Box
           TextField(
             onChanged: (v) => setState(() => _searchQuery = v.trim()),
             decoration: const InputDecoration(
@@ -996,11 +1069,12 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                     const Text(
                       'Hozircha nakladnoylar yo\'q',
                       style:
-                          TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                          TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      "Pastdagi '+ Nakladnoy' tugmasini bosib qo'shing.",
+                      "Yuqoridagi 'Tezkor AI Skaner' yoki '+ Nakladnoy' tugmasini bosing.",
+                      textAlign: TextAlign.center,
                       style: TextStyle(
                           fontSize: 13, color: Theme.of(context).hintColor),
                     ),
@@ -1045,7 +1119,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     return RefreshIndicator(
       onRefresh: _refreshAll,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 110),
         children: [
           Container(
             padding: const EdgeInsets.all(18),
@@ -1076,7 +1150,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                         formatUzs(totalDebt, withCurrency: true),
                         style: const TextStyle(
                           fontSize: 23,
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w900,
                           color: AppTokens.debtAmber,
                           fontFeatures: AppTokens.tabularNums,
                         ),
@@ -1100,7 +1174,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                     Text(
                       "To'lanmagan nakladnoy qarzlari yo'q!",
                       style:
-                          TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                          TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
                     ),
                   ],
                 ),
@@ -1153,15 +1227,14 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
     final weekAgo = DateFormat('yyyy-MM-dd')
         .format(DateTime.now().subtract(const Duration(days: 6)));
-    final monthStart =
-        DateFormat('yyyy-MM-01').format(DateTime.now());
+    final monthStart = DateFormat('yyyy-MM-01').format(DateTime.now());
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
       children: [
         const Text(
           'Excel hisobotlar va Sverka',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
         ),
         const SizedBox(height: 6),
         Text(
@@ -1206,7 +1279,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
         const SizedBox(height: 10),
         _reportTile(
           icon: Icons.edit_calendar_rounded,
-          color: AppTokens.navyPrimary,
+          color: AppTokens.brand,
           title: 'Ixtiyoriy sana oralig\'i (.xlsx)',
           subtitle: 'Boshlanish va tugash sanasini tanlash',
           onTap: () async {
@@ -1262,7 +1335,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
         ),
         title: Text(
           title,
-          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
         ),
         subtitle: Text(subtitle, style: const TextStyle(fontSize: 12.5)),
         trailing: const Icon(Icons.ios_share_rounded),
@@ -1344,7 +1417,7 @@ class _CloseDaySubViewState extends State<_CloseDaySubView> {
     final diff = counted != null ? counted - expected : null;
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
       children: [
         Card(
           child: Padding(
@@ -1354,7 +1427,7 @@ class _CloseDaySubViewState extends State<_CloseDaySubView> {
               children: [
                 const Row(
                   children: [
-                    Icon(Icons.flag_rounded, color: AppTokens.navyPrimary),
+                    Icon(Icons.lock_clock_rounded, color: AppTokens.brand),
                     SizedBox(width: 8),
                     Text(
                       'Kunni yakunlash (Smena yopish)',
@@ -1367,7 +1440,7 @@ class _CloseDaySubViewState extends State<_CloseDaySubView> {
                 Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
-                    color: AppTokens.navyPrimary.withValues(alpha: 0.08),
+                    color: AppTokens.brand.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
@@ -1380,7 +1453,7 @@ class _CloseDaySubViewState extends State<_CloseDaySubView> {
                       Text(
                         formatUzs(expected, withCurrency: true),
                         style: const TextStyle(
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w900,
                           fontSize: 16,
                           fontFeatures: AppTokens.tabularNums,
                         ),
@@ -1444,10 +1517,10 @@ class _CloseDaySubViewState extends State<_CloseDaySubView> {
                 FilledButton.icon(
                   onPressed:
                       widget.api.canWrite && !_closing ? _submitCloseDay : null,
-                  icon: const Icon(Icons.lock_clock_rounded),
+                  icon: const Icon(Icons.check_circle_rounded),
                   label: Text(_closing
                       ? 'Yopilmoqda...'
-                      : '🏁 Kunni yakunlash va yangi kun ochish'),
+                      : 'Kunni yakunlash va yangi kun ochish'),
                 ),
               ],
             ),
@@ -1455,7 +1528,6 @@ class _CloseDaySubViewState extends State<_CloseDaySubView> {
         ),
         const SizedBox(height: 14),
 
-        // Telegram Group Connection Info Card
         Card(
           child: Padding(
             padding: const EdgeInsets.all(18),
@@ -1542,17 +1614,19 @@ class _CloseDaySubViewState extends State<_CloseDaySubView> {
 }
 
 // ============================================================================
-// ADD NAKLADNOY SHEET (Supplier Picker + Quick Amounts + 4 Payment Modes + Photo)
+// ADD NAKLADNOY SHEET (Auto-AI OCR on photo pick + Supplier chips + 4 Modes)
 // ============================================================================
 
 class AddNakladnoySheet extends StatefulWidget {
   final HisobchiApiClient api;
   final GroupInfo groupInfo;
+  final File? initialPhoto;
 
   const AddNakladnoySheet({
     super.key,
     required this.api,
     required this.groupInfo,
+    this.initialPhoto,
   });
 
   @override
@@ -1570,6 +1644,10 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
   String _paymentMode = 'cash'; // cash | card | transfer | debt
   bool _sendToGroup = true;
   File? _photoFile;
+  double? _originalAmount;
+  String? _supplierSuggestion;
+  bool _aiLoading = false;
+  String? _aiBadgeText;
   bool _submitting = false;
   String? _error;
 
@@ -1579,6 +1657,12 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
     _sendToGroup =
         widget.groupInfo.bound && widget.groupInfo.apkPostToGroup;
     _loadSuppliers();
+    if (widget.initialPhoto != null) {
+      _photoFile = widget.initialPhoto;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _runAiExtract(widget.initialPhoto!);
+      });
+    }
   }
 
   @override
@@ -1598,6 +1682,7 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
 
   Future<void> _selectSupplier(String name) async {
     _supCtrl.text = name;
+    _supplierSuggestion = null;
     setState(() {});
     try {
       final amts = await widget.api.getSupplierAmounts(name);
@@ -1612,6 +1697,52 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
     setState(() {});
   }
 
+  /// Automatically calls server Gemini Vision OCR the moment a photo is picked!
+  Future<void> _runAiExtract(File file) async {
+    setState(() {
+      _aiLoading = true;
+      _aiBadgeText = null;
+      _error = null;
+    });
+    try {
+      final res = await widget.api.extractFromPhoto(file);
+      if (!mounted) return;
+      setState(() {
+        _aiLoading = false;
+        if (res.supplierName != null && res.supplierName!.trim().isNotEmpty) {
+          _supCtrl.text = res.supplierName!.trim();
+        }
+        if (res.amount != null && res.amount! > 0) {
+          _amtCtrl.text = res.amount!.round().toString();
+        }
+        _originalAmount = res.originalAmount;
+        _supplierSuggestion = res.supplierSuggestion;
+        if (res.recentAmounts.isNotEmpty) {
+          _recentAmounts = res.recentAmounts;
+        }
+        if (res.ok) {
+          final roundedNote = (res.originalAmount != null &&
+                  res.amount != null &&
+                  res.originalAmount!.round() != res.amount!.round())
+              ? " (Asli: ${formatUzs(res.originalAmount)} → ${formatUzs(res.amount)})"
+              : '';
+          _aiBadgeText = "✨ AI avtomatik to'ldirdi!$roundedNote";
+        } else if (res.message.isNotEmpty) {
+          _aiBadgeText = "⚠️ ${res.message}";
+        } else {
+          _aiBadgeText =
+              "ℹ️ Rasmdan yozuv aniq ko'rinmadi — quyida tanlang yoki kiriting";
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _aiLoading = false;
+        _aiBadgeText = "⚠️ AI tahlil qila olmadi ($e)";
+      });
+    }
+  }
+
   Future<void> _pickPhoto(ImageSource source) async {
     try {
       final xfile = await _picker.pickImage(
@@ -1621,7 +1752,9 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
         imageQuality: 85,
       );
       if (xfile != null && mounted) {
-        setState(() => _photoFile = File(xfile.path));
+        final file = File(xfile.path);
+        setState(() => _photoFile = file);
+        await _runAiExtract(file);
       }
     } catch (e) {
       if (mounted) {
@@ -1653,13 +1786,13 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
         note: _noteCtrl.text,
         sendToGroup: _sendToGroup,
         photoFile: _photoFile,
+        originalAmount: _originalAmount,
       );
       if (mounted) {
         final grpMsg = res['group_message']?.toString() ?? '';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('✅ Nakladnoy saqlandi! ($grpMsg)'),
-            behavior: SnackBarBehavior.floating,
           ),
         );
         Navigator.pop(context, true);
@@ -1676,245 +1809,379 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
     final q = _supCtrl.text.trim().toLowerCase();
     final matchingSuppliers = _allSuppliers
         .where((s) => q.isEmpty || s.toLowerCase().contains(q))
-        .take(18)
+        .take(24)
         .toList();
 
-    return Padding(
-      padding: EdgeInsets.only(
-        left: 18,
-        right: 18,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 18,
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text(
-              '➕ Yangi Nakladnoy qo\'shish',
-              style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 14),
-
-            // 1. Supplier field + inline supplier chips
-            TextField(
-              controller: _supCtrl,
-              onChanged: (_) => setState(() {}),
-              decoration: InputDecoration(
-                labelText: '🏢 Postavshik nomi',
-                hintText: 'Tanlang yoki yangi nom yozing...',
-                prefixIcon: const Icon(Icons.storefront_rounded),
-                suffixIcon: _supCtrl.text.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear_rounded),
-                        onPressed: () {
-                          _supCtrl.clear();
-                          setState(() => _recentAmounts = []);
-                        },
-                      )
-                    : null,
-              ),
-            ),
-            if (matchingSuppliers.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              SizedBox(
-                height: 38,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: matchingSuppliers.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 6),
-                  itemBuilder: (ctx, i) {
-                    final name = matchingSuppliers[i];
-                    final isSel =
-                        name.toLowerCase() == _supCtrl.text.trim().toLowerCase();
-                    return ActionChip(
-                      backgroundColor: isSel
-                          ? AppTokens.navyPrimary.withValues(alpha: 0.16)
-                          : null,
-                      label: Text(
-                        name,
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight:
-                              isSel ? FontWeight.w800 : FontWeight.w600,
-                        ),
-                      ),
-                      onPressed: () => _selectSupplier(name),
-                    );
-                  },
-                ),
-              ),
-            ],
-            const SizedBox(height: 14),
-
-            // 2. Amount field + recent amounts + quick +/- chips
-            TextField(
-              controller: _amtCtrl,
-              keyboardType: TextInputType.number,
-              onChanged: (_) => setState(() {}),
-              style: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-                fontFeatures: AppTokens.tabularNums,
-              ),
-              decoration: InputDecoration(
-                labelText: "💰 Summa (so'm)",
-                hintText: 'Masalan: 1 554 000',
-                prefixIcon: const Icon(Icons.payments_outlined),
-                helperText: parseUzsInput(_amtCtrl.text) != null
-                    ? formatUzs(parseUzsInput(_amtCtrl.text),
-                        withCurrency: true)
-                    : null,
-              ),
-            ),
-            const SizedBox(height: 8),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 18,
+          right: 18,
+          bottom: sheetBottomPadding(context),
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
                 children: [
-                  ..._recentAmounts.map(
-                    (a) => Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: ActionChip(
-                        avatar: const Icon(Icons.history_rounded, size: 15),
-                        label: Text(formatUzs(a)),
-                        onPressed: () {
-                          _amtCtrl.text = a.round().toString();
-                          setState(() {});
-                        },
-                      ),
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      gradient: AppTokens.aiGradient,
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                    child: const Icon(Icons.auto_awesome_rounded,
+                        color: Colors.white, size: 18),
+                  ),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text(
+                      'Yangi Nakladnoy',
+                      style:
+                          TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
                     ),
                   ),
-                  ActionChip(
-                    label: const Text('-10 000'),
-                    onPressed: () => _adjustAmount(-10000),
-                  ),
-                  const SizedBox(width: 6),
-                  ActionChip(
-                    label: const Text('+10 000'),
-                    onPressed: () => _adjustAmount(10000),
-                  ),
-                  const SizedBox(width: 6),
-                  ActionChip(
-                    label: const Text('+100 000'),
-                    onPressed: () => _adjustAmount(100000),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    icon: const Icon(Icons.close_rounded),
                   ),
                 ],
               ),
-            ),
-            const SizedBox(height: 14),
+              const SizedBox(height: 12),
 
-            // 3. Payment mode selector (Naqd | Karta | O'tkazma | Qarzga)
-            const Text(
-              "To'lov usuli",
-              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5),
-            ),
-            const SizedBox(height: 8),
-            PaymentModeSelector(
-              selectedMode: _paymentMode,
-              onChanged: (m) => setState(() => _paymentMode = m),
-            ),
-            const SizedBox(height: 14),
-
-            // 4. Camera / Gallery Photo Attachment
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _pickPhoto(ImageSource.camera),
-                    icon: const Icon(Icons.photo_camera_rounded),
-                    label: const Text('Kamera'),
+              // 1. TOP AI PHOTO SCANNER BOX (Upload -> Instant AI Auto-Fill!)
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTokens.brandViolet.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: AppTokens.brandViolet.withValues(alpha: 0.28),
                   ),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _pickPhoto(ImageSource.gallery),
-                    icon: const Icon(Icons.photo_library_rounded),
-                    label: const Text('Galereya'),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.icon(
+                            style: FilledButton.styleFrom(
+                              backgroundColor: AppTokens.brandViolet,
+                              minimumSize: const Size(80, 46),
+                            ),
+                            onPressed: _aiLoading
+                                ? null
+                                : () => _pickPhoto(ImageSource.camera),
+                            icon: const Icon(Icons.photo_camera_rounded,
+                                size: 18),
+                            label: const Text('AI Kamera'),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size(80, 46),
+                            ),
+                            onPressed: _aiLoading
+                                ? null
+                                : () => _pickPhoto(ImageSource.gallery),
+                            icon: const Icon(Icons.photo_library_rounded,
+                                size: 18),
+                            label: const Text('AI Galereya'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (_photoFile != null) ...[
+                      const SizedBox(height: 10),
+                      Stack(
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: Image.file(
+                              _photoFile!,
+                              height: 125,
+                              width: double.infinity,
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                          if (_aiLoading)
+                            Positioned.fill(
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.58),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                alignment: Alignment.center,
+                                child: const Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2.3,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                    SizedBox(width: 12),
+                                    Text(
+                                      "✨ AI nakladnoyni o'qimoqda...",
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 13.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          Positioned(
+                            top: 6,
+                            right: 6,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton.filledTonal(
+                                  tooltip: "AI qayta o'qish",
+                                  onPressed: _aiLoading
+                                      ? null
+                                      : () => _runAiExtract(_photoFile!),
+                                  icon: const Icon(Icons.auto_awesome_rounded,
+                                      size: 17),
+                                ),
+                                const SizedBox(width: 4),
+                                IconButton.filled(
+                                  onPressed: () => setState(() {
+                                    _photoFile = null;
+                                    _aiBadgeText = null;
+                                  }),
+                                  icon:
+                                      const Icon(Icons.close_rounded, size: 17),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                    if (_aiBadgeText != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        _aiBadgeText!,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: _aiBadgeText!.startsWith('✨')
+                              ? AppTokens.cashGreen
+                              : AppTokens.debtAmber,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              // 2. Supplier field + fuzzy suggestion + inline supplier chips
+              TextField(
+                controller: _supCtrl,
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  labelText: 'Postavshik nomi',
+                  hintText: 'Tanlang yoki yangi nom yozing...',
+                  prefixIcon: const Icon(Icons.storefront_rounded),
+                  suffixIcon: _supCtrl.text.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear_rounded),
+                          onPressed: () {
+                            _supCtrl.clear();
+                            setState(() => _recentAmounts = []);
+                          },
+                        )
+                      : null,
+                ),
+              ),
+              if (_supplierSuggestion != null &&
+                  _supplierSuggestion!.toLowerCase() !=
+                      _supCtrl.text.trim().toLowerCase()) ...[
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: ActionChip(
+                    avatar: const Icon(Icons.lightbulb_outline_rounded,
+                        size: 16, color: AppTokens.brand),
+                    label: Text("Balki: $_supplierSuggestion ?"),
+                    onPressed: () => _selectSupplier(_supplierSuggestion!),
                   ),
                 ),
               ],
-            ),
-            if (_photoFile != null) ...[
-              const SizedBox(height: 10),
-              Stack(
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: Image.file(
-                      _photoFile!,
-                      height: 140,
-                      width: double.infinity,
-                      fit: BoxFit.cover,
-                    ),
+              if (matchingSuppliers.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: 38,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: matchingSuppliers.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 6),
+                    itemBuilder: (ctx, i) {
+                      final name = matchingSuppliers[i];
+                      final isSel = name.toLowerCase() ==
+                          _supCtrl.text.trim().toLowerCase();
+                      return ActionChip(
+                        backgroundColor: isSel
+                            ? AppTokens.brand.withValues(alpha: 0.16)
+                            : null,
+                        label: Text(
+                          name,
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight:
+                                isSel ? FontWeight.w800 : FontWeight.w600,
+                          ),
+                        ),
+                        onPressed: () => _selectSupplier(name),
+                      );
+                    },
                   ),
-                  Positioned(
-                    top: 6,
-                    right: 6,
-                    child: IconButton.filled(
-                      onPressed: () => setState(() => _photoFile = null),
-                      icon: const Icon(Icons.close_rounded, size: 18),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-            const SizedBox(height: 12),
+                ),
+              ],
+              const SizedBox(height: 14),
 
-            // 5. Note & Group Send Switch
-            TextField(
-              controller: _noteCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Izoh (ixtiyoriy)',
-                prefixIcon: Icon(Icons.notes_rounded),
-                isDense: true,
-              ),
-            ),
-            const SizedBox(height: 8),
-            SwitchListTile.adaptive(
-              contentPadding: EdgeInsets.zero,
-              title: const Text(
-                '📤 Telegram guruhga yuborish',
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
-              ),
-              subtitle: Text(
-                widget.groupInfo.bound
-                    ? 'Guruh: ${widget.groupInfo.title}'
-                    : 'Hozircha guruh bog\'lanmagan (faqat bazaga tushadi)',
-                style: const TextStyle(fontSize: 12),
-              ),
-              value: _sendToGroup,
-              onChanged: widget.groupInfo.bound
-                  ? (v) => setState(() => _sendToGroup = v)
-                  : null,
-            ),
-
-            if (_error != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                '⚠️ $_error',
+              // 3. Amount field + recent amounts + quick +/- chips
+              TextField(
+                controller: _amtCtrl,
+                keyboardType: TextInputType.number,
+                onChanged: (_) => setState(() {}),
                 style: const TextStyle(
-                  color: AppTokens.dangerRed,
-                  fontWeight: FontWeight.w600,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                  fontFeatures: AppTokens.tabularNums,
+                ),
+                decoration: InputDecoration(
+                  labelText: "Summa (so'm)",
+                  hintText: 'Masalan: 1 554 000',
+                  prefixIcon: const Icon(Icons.payments_outlined),
+                  helperText: parseUzsInput(_amtCtrl.text) != null
+                      ? formatUzs(parseUzsInput(_amtCtrl.text),
+                          withCurrency: true)
+                      : null,
                 ),
               ),
+              const SizedBox(height: 8),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    ..._recentAmounts.map(
+                      (a) => Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: ActionChip(
+                          avatar: const Icon(Icons.history_rounded, size: 15),
+                          label: Text(formatUzs(a)),
+                          onPressed: () {
+                            _amtCtrl.text = a.round().toString();
+                            setState(() {});
+                          },
+                        ),
+                      ),
+                    ),
+                    ActionChip(
+                      label: const Text('−10 000'),
+                      onPressed: () => _adjustAmount(-10000),
+                    ),
+                    const SizedBox(width: 6),
+                    ActionChip(
+                      label: const Text('−1 000'),
+                      onPressed: () => _adjustAmount(-1000),
+                    ),
+                    const SizedBox(width: 6),
+                    ActionChip(
+                      label: const Text('+1 000'),
+                      onPressed: () => _adjustAmount(1000),
+                    ),
+                    const SizedBox(width: 6),
+                    ActionChip(
+                      label: const Text('+10 000'),
+                      onPressed: () => _adjustAmount(10000),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              // 4. Payment mode selector
+              const Text(
+                "To'lov usuli",
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5),
+              ),
+              const SizedBox(height: 8),
+              PaymentModeSelector(
+                selectedMode: _paymentMode,
+                onChanged: (m) => setState(() => _paymentMode = m),
+              ),
+              const SizedBox(height: 12),
+
+              // 5. Note & Group Send Switch
+              TextField(
+                controller: _noteCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Izoh (ixtiyoriy)',
+                  prefixIcon: Icon(Icons.notes_rounded),
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 6),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text(
+                  'Telegram guruhga yuborish',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                ),
+                subtitle: Text(
+                  widget.groupInfo.bound
+                      ? 'Guruh: ${widget.groupInfo.title}'
+                      : 'Hozircha guruh bog\'lanmagan (faqat bazaga tushadi)',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                value: _sendToGroup,
+                onChanged: widget.groupInfo.bound
+                    ? (v) => setState(() => _sendToGroup = v)
+                    : null,
+              ),
+
+              if (_error != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  '⚠️ $_error',
+                  style: const TextStyle(
+                    color: AppTokens.dangerRed,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: (_submitting || _aiLoading) ? null : _submit,
+                icon: _submitting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.check_circle_rounded),
+                label: Text(
+                    _submitting ? 'Saqlanmoqda...' : 'Tasdiqlash va saqlash'),
+              ),
             ],
-            const SizedBox(height: 14),
-            FilledButton.icon(
-              onPressed: _submitting ? null : _submit,
-              icon: _submitting
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white),
-                    )
-                  : const Icon(Icons.check_circle_rounded),
-              label: Text(
-                  _submitting ? 'Yuborilmoqda...' : 'Tasdiqlash va saqlash'),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -1922,7 +2189,7 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
 }
 
 // ============================================================================
-// NAKLADNOY DETAIL & EDIT SHEET (Direct Amount + Quick +/- + Inline Suppliers)
+// NAKLADNOY DETAIL & EDIT SHEET (SafeArea + Direct Amount + Inline Suppliers)
 // ============================================================================
 
 class NakladnoyDetailSheet extends StatefulWidget {
@@ -2010,8 +2277,8 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
       if (mode == 'debt') {
         updated = await widget.api.markAsDebt(_cur.id);
       } else if (_cur.isDebt) {
-        updated = await widget.api
-            .payDebt(paymentId: _cur.id, paymentMethod: mode);
+        updated =
+            await widget.api.payDebt(paymentId: _cur.id, paymentMethod: mode);
       } else {
         updated = await widget.api
             .setPaymentMethod(paymentId: _cur.id, paymentMethod: mode);
@@ -2036,14 +2303,13 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
   Widget build(BuildContext context) {
     final activeMode = _cur.isDebt ? 'debt' : _cur.paymentMethod;
 
-    return PopScope(
-      canPop: true,
-      onPopInvokedWithResult: (didPop, _) {},
+    return SafeArea(
+      top: false,
       child: Padding(
         padding: EdgeInsets.only(
           left: 18,
           right: 18,
-          bottom: MediaQuery.of(context).viewInsets.bottom + 18,
+          bottom: sheetBottomPadding(context),
         ),
         child: SingleChildScrollView(
           child: Column(
@@ -2055,7 +2321,7 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                   Text(
                     'Nakladnoy ${_cur.displayNum}',
                     style: const TextStyle(
-                        fontSize: 19, fontWeight: FontWeight.w800),
+                        fontSize: 19, fontWeight: FontWeight.w900),
                   ),
                   const Spacer(),
                   IconButton(
@@ -2066,7 +2332,6 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
               ),
               const SizedBox(height: 10),
 
-              // Photo Preview if available
               if (_cur.hasPhoto) ...[
                 ClipRRect(
                   borderRadius: BorderRadius.circular(14),
@@ -2080,14 +2345,14 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                 const SizedBox(height: 12),
               ],
 
-              // Supplier section with inline supplier chips picker
               Row(
                 children: [
                   Expanded(
                     child: TextField(
                       controller: _supCtrl,
                       decoration: const InputDecoration(
-                        labelText: '🏢 Postavshik',
+                        labelText: 'Postavshik',
+                        prefixIcon: Icon(Icons.storefront_rounded),
                         isDense: true,
                       ),
                       onSubmitted: (v) {
@@ -2148,7 +2413,6 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
               ],
               const SizedBox(height: 14),
 
-              // Direct amount editing + quick +/- buttons + Yaxlitlash (matching bot UX!)
               Row(
                 children: [
                   Expanded(
@@ -2157,11 +2421,12 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                       keyboardType: TextInputType.number,
                       style: const TextStyle(
                         fontSize: 19,
-                        fontWeight: FontWeight.w800,
+                        fontWeight: FontWeight.w900,
                         fontFeatures: AppTokens.tabularNums,
                       ),
                       decoration: const InputDecoration(
-                        labelText: "💰 Summa (so'm) — qo'lda yozing",
+                        labelText: "Summa (so'm) — qo'lda yozing",
+                        prefixIcon: Icon(Icons.payments_outlined),
                         isDense: true,
                       ),
                       onSubmitted: (v) {
@@ -2207,8 +2472,9 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                   ),
                   ActionChip(
                     label: const Text('+1 000'),
-                    onPressed:
-                        _busy ? null : () => _applyUpdate(amount: _cur.amount + 1000),
+                    onPressed: _busy
+                        ? null
+                        : () => _applyUpdate(amount: _cur.amount + 1000),
                   ),
                   ActionChip(
                     label: const Text('+10 000'),
@@ -2218,7 +2484,7 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                   ),
                   ActionChip(
                     avatar: const Icon(Icons.auto_fix_high_rounded, size: 15),
-                    label: const Text('🔄 Yaxlitlash'),
+                    label: const Text('Yaxlitlash'),
                     onPressed:
                         _busy ? null : () => _applyUpdate(roundAmount: true),
                   ),
@@ -2226,10 +2492,9 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
               ),
               const SizedBox(height: 16),
 
-              // Payment method & Debt switch
               const Text(
                 "To'lov turi va holati:",
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5),
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5),
               ),
               const SizedBox(height: 8),
               PaymentModeSelector(
@@ -2242,7 +2507,6 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
               ),
               const SizedBox(height: 16),
 
-              // Group sync / delete actions
               Row(
                 children: [
                   Expanded(

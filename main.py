@@ -30,11 +30,14 @@ logger = logging.getLogger("hisobot_bot")
 
 
 class IPv4AiohttpSession(AiohttpSession):
-    """Force IPv4 connections to api.telegram.org to avoid IPv6 timeout stalls on VPS."""
+    """Force IPv4 to api.telegram.org and recycle idle sockets to avoid silent NAT stalls on VPS."""
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._connector_init["family"] = socket.AF_INET
+        # Short keep-alive: stale pooled sockets silently dropped by NAT caused 60s+ polling hangs.
+        self._connector_init["keepalive_timeout"] = 8
+        self._connector_init["enable_cleanup_closed"] = True
 
 
 async def _register_bot_commands(bot: Bot) -> None:

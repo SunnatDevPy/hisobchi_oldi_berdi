@@ -7,6 +7,8 @@ class HeroBalanceCard extends StatelessWidget {
   final VoidCallback? onAddCash;
   final VoidCallback? onKassaDebt;
   final VoidCallback? onKassaRepay;
+  final VoidCallback? onQuickAiCamera;
+  final VoidCallback? onQuickAiGallery;
 
   const HeroBalanceCard({
     super.key,
@@ -14,241 +16,485 @@ class HeroBalanceCard extends StatelessWidget {
     this.onAddCash,
     this.onKassaDebt,
     this.onKassaRepay,
+    this.onQuickAiCamera,
+    this.onQuickAiGallery,
   });
 
   @override
   Widget build(BuildContext context) {
     final grp = summary.groupInfo;
-    return Container(
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [AppTokens.navyDark, AppTokens.navyPrimary],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: AppTokens.navyPrimary.withValues(alpha: 0.22),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Top row: Date & Telegram Group status pill
-          Row(
-            children: [
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.calendar_today_rounded,
-                        size: 13, color: Colors.white70),
-                    const SizedBox(width: 6),
-                    Text(
-                      summary.reportDate,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Spacer(),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: grp.bound
-                      ? const Color(0xFF10B981).withValues(alpha: 0.22)
-                      : const Color(0xFFF59E0B).withValues(alpha: 0.22),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: grp.bound
-                        ? const Color(0xFF34D399).withValues(alpha: 0.5)
-                        : const Color(0xFFFBBF24).withValues(alpha: 0.5),
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      grp.bound
-                          ? Icons.send_rounded
-                          : Icons.warning_amber_rounded,
-                      size: 13,
-                      color: grp.bound
-                          ? const Color(0xFF6EE7B7)
-                          : const Color(0xFFFDE68A),
-                    ),
-                    const SizedBox(width: 5),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 145),
-                      child: Text(
-                        grp.bound ? grp.title : 'Guruh ulanmagan',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: grp.bound
-                              ? const Color(0xFFD1FAE5)
-                              : const Color(0xFFFEF3C7),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+    final totalOut = summary.totalNakladnoySpent +
+        summary.totalCardSpent +
+        summary.totalTransferSpent +
+        summary.totalDebtNakladnoy;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            gradient: AppTokens.heroGradient,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: AppTokens.brand.withValues(alpha: 0.28),
+                blurRadius: 24,
+                offset: const Offset(0, 10),
               ),
             ],
           ),
-          const SizedBox(height: 18),
-          const Text(
-            "QO'LDA QOLISHI KERAK (NAQD)",
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: 11.5,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.8,
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Top header: Session date + Group badge
+              Row(
+                children: [
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.calendar_today_rounded,
+                            size: 13, color: Colors.white),
+                        const SizedBox(width: 6),
+                        Text(
+                          summary.reportDate,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: grp.bound
+                          ? const Color(0xFF10B981).withValues(alpha: 0.22)
+                          : const Color(0xFFF59E0B).withValues(alpha: 0.22),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: grp.bound
+                            ? const Color(0xFF6EE7B7).withValues(alpha: 0.5)
+                            : const Color(0xFFFCD34D).withValues(alpha: 0.5),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          grp.bound
+                              ? Icons.mark_chat_read_rounded
+                              : Icons.warning_amber_rounded,
+                          size: 13.5,
+                          color: grp.bound
+                              ? const Color(0xFF6EE7B7)
+                              : const Color(0xFFFDE68A),
+                        ),
+                        const SizedBox(width: 5),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 150),
+                          child: Text(
+                            grp.bound ? grp.title : 'Guruh ulanmagan',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: grp.bound
+                                  ? const Color(0xFFD1FAE5)
+                                  : const Color(0xFFFEF3C7),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.16),
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    child: const Icon(Icons.account_balance_wallet_rounded,
+                        size: 15, color: Colors.white),
+                  ),
+                  const SizedBox(width: 8),
+                  const Text(
+                    "QO'LDA QOLISHI KERAK (NAQD)",
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  formatUzs(summary.expectedCash, withCurrency: true),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 33,
+                    fontWeight: FontWeight.w900,
+                    fontFeatures: AppTokens.tabularNums,
+                    letterSpacing: -0.6,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Kirim vs Naqd Rasxod glass panel
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.10),
+                  ),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _HeroMetricTile(
+                            label: "Qo'ldagi jami kirim",
+                            value: formatUzs(summary.totalAvailableInflow),
+                            icon: Icons.south_west_rounded,
+                            color: const Color(0xFF6EE7B7),
+                          ),
+                        ),
+                        Container(
+                          width: 1,
+                          height: 36,
+                          color: Colors.white.withValues(alpha: 0.14),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _HeroMetricTile(
+                            label: 'Naqd nakladnoy',
+                            value: formatUzs(summary.totalNakladnoySpent),
+                            icon: Icons.north_east_rounded,
+                            color: const Color(0xFFFDA4AF),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (totalOut > 0) ...[
+                      const SizedBox(height: 12),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: SizedBox(
+                          height: 6,
+                          child: Row(
+                            children: [
+                              if (summary.totalNakladnoySpent > 0)
+                                Expanded(
+                                  flex: (summary.totalNakladnoySpent * 100 ~/
+                                          totalOut)
+                                      .clamp(1, 100),
+                                  child: Container(
+                                      color: const Color(0xFF34D399)),
+                                ),
+                              if (summary.totalCardSpent > 0)
+                                Expanded(
+                                  flex: (summary.totalCardSpent * 100 ~/
+                                          totalOut)
+                                      .clamp(1, 100),
+                                  child: Container(
+                                      color: const Color(0xFF60A5FA)),
+                                ),
+                              if (summary.totalTransferSpent > 0)
+                                Expanded(
+                                  flex: (summary.totalTransferSpent * 100 ~/
+                                          totalOut)
+                                      .clamp(1, 100),
+                                  child: Container(
+                                      color: const Color(0xFFC084FC)),
+                                ),
+                              if (summary.totalDebtNakladnoy > 0)
+                                Expanded(
+                                  flex: (summary.totalDebtNakladnoy * 100 ~/
+                                          totalOut)
+                                      .clamp(1, 100),
+                                  child: Container(
+                                      color: const Color(0xFFFBBF24)),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+
+              if (onAddCash != null) ...[
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _HeroActionBtn(
+                        icon: Icons.add_card_rounded,
+                        label: 'Pul oldim',
+                        onTap: onAddCash!,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _HeroActionBtn(
+                        icon: Icons.account_balance_rounded,
+                        label: 'Kassa qarz',
+                        onTap: onKassaDebt!,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _HeroActionBtn(
+                        icon: Icons.assignment_return_rounded,
+                        label: 'Qaytarish',
+                        onTap: onKassaRepay!,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // 4 KPI Bento Mini-Cards (Karta, O'tkazma, Qarzlar, Kechadan qoldiq)
+        Row(
+          children: [
+            Expanded(
+              child: _BentoStatCard(
+                icon: Icons.credit_card_rounded,
+                label: 'Karta orqali',
+                value: formatUzs(summary.totalCardSpent),
+                color: AppTokens.cardBlue,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _BentoStatCard(
+                icon: Icons.swap_horiz_rounded,
+                label: "O'tkazma",
+                value: formatUzs(summary.totalTransferSpent),
+                color: AppTokens.transferPurple,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _BentoStatCard(
+                icon: Icons.push_pin_rounded,
+                label: 'Jami qarzlar',
+                value: formatUzs(summary.allUnpaidDebtTotal),
+                badge: summary.allUnpaidDebtCount > 0
+                    ? '${summary.allUnpaidDebtCount} ta'
+                    : null,
+                color: AppTokens.debtAmber,
+              ),
+            ),
+          ],
+        ),
+
+        // 1-Tap Instant AI Scan Bar right on Dashboard!
+        if (onQuickAiCamera != null && onQuickAiGallery != null) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  AppTokens.brandViolet.withValues(alpha: 0.12),
+                  AppTokens.brand.withValues(alpha: 0.08),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: AppTokens.brandViolet.withValues(alpha: 0.30),
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    gradient: AppTokens.aiGradient,
+                    borderRadius: BorderRadius.circular(13),
+                  ),
+                  child: const Icon(Icons.auto_awesome_rounded,
+                      color: Colors.white, size: 20),
+                ),
+                const SizedBox(width: 11),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Tezkor AI Skaner',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 14,
+                        ),
+                      ),
+                      SizedBox(height: 2),
+                      Text(
+                        "Rasmga oling — AI o'zi to'ldiradi",
+                        style: TextStyle(fontSize: 11.5, color: Colors.grey),
+                      ),
+                    ],
+                  ),
+                ),
+                FilledButton.tonalIcon(
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(44, 42),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onPressed: onQuickAiCamera,
+                  icon: const Icon(Icons.photo_camera_rounded, size: 17),
+                  label: const Text('Kamera', style: TextStyle(fontSize: 12.5)),
+                ),
+                const SizedBox(width: 6),
+                IconButton.filledTonal(
+                  tooltip: 'Galereyadan AI skan',
+                  onPressed: onQuickAiGallery,
+                  icon: const Icon(Icons.photo_library_rounded, size: 18),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 4),
+        ],
+      ],
+    );
+  }
+}
+
+class _BentoStatCard extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final String? badge;
+  final Color color;
+
+  const _BentoStatCard({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.badge,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = isDarkCtx(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      decoration: BoxDecoration(
+        color: isDark ? AppTokens.cardDark : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isDark ? AppTokens.cardBorderDark : AppTokens.cardBorderLight,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(5),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.13),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(icon, size: 14, color: color),
+              ),
+              const Spacer(),
+              if (badge != null)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    badge!,
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      color: color,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: Theme.of(context).hintColor,
+            ),
+          ),
+          const SizedBox(height: 2),
           FittedBox(
             fit: BoxFit.scaleDown,
             alignment: Alignment.centerLeft,
             child: Text(
-              formatUzs(summary.expectedCash, withCurrency: true),
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 31,
+              value,
+              style: TextStyle(
+                fontSize: 14,
                 fontWeight: FontWeight.w800,
+                color: color,
                 fontFeatures: AppTokens.tabularNums,
-                letterSpacing: -0.5,
               ),
             ),
           ),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: _MetricMini(
-                        label: 'Jami kirim',
-                        value: formatUzs(summary.totalAvailableInflow),
-                        icon: Icons.south_west_rounded,
-                        color: const Color(0xFF34D399),
-                      ),
-                    ),
-                    Container(
-                      width: 1,
-                      height: 32,
-                      color: Colors.white.withValues(alpha: 0.12),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _MetricMini(
-                        label: 'Naqd rasxod',
-                        value: formatUzs(summary.totalNakladnoySpent),
-                        icon: Icons.north_east_rounded,
-                        color: const Color(0xFFFCA5A5),
-                      ),
-                    ),
-                  ],
-                ),
-                const Divider(color: Colors.white12, height: 18),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _MetricMini(
-                        label: '💳 Karta',
-                        value: formatUzs(summary.totalCardSpent),
-                        color: const Color(0xFF93C5FD),
-                      ),
-                    ),
-                    Expanded(
-                      child: _MetricMini(
-                        label: "🏦 O'tkazma",
-                        value: formatUzs(summary.totalTransferSpent),
-                        color: const Color(0xFFC4B5FD),
-                      ),
-                    ),
-                    Expanded(
-                      child: _MetricMini(
-                        label: '📌 Qarzlar',
-                        value: formatUzs(summary.allUnpaidDebtTotal),
-                        color: const Color(0xFFFCD34D),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          if (onAddCash != null) ...[
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                Expanded(
-                  child: _HeroActionBtn(
-                    icon: Icons.add_circle_outline_rounded,
-                    label: 'Pul oldim',
-                    onTap: onAddCash!,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _HeroActionBtn(
-                    icon: Icons.account_balance_outlined,
-                    label: 'Kassa qarz',
-                    onTap: onKassaDebt!,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _HeroActionBtn(
-                    icon: Icons.keyboard_return_rounded,
-                    label: 'Qaytarish',
-                    onTap: onKassaRepay!,
-                  ),
-                ),
-              ],
-            ),
-          ],
         ],
       ),
     );
   }
 }
 
-class _MetricMini extends StatelessWidget {
+class _HeroMetricTile extends StatelessWidget {
   final String label;
   final String value;
-  final IconData? icon;
+  final IconData icon;
   final Color color;
 
-  const _MetricMini({
+  const _HeroMetricTile({
     required this.label,
     required this.value,
-    this.icon,
+    required this.icon,
     required this.color,
   });
 
@@ -259,10 +505,8 @@ class _MetricMini extends StatelessWidget {
       children: [
         Row(
           children: [
-            if (icon != null) ...[
-              Icon(icon, size: 13, color: color),
-              const SizedBox(width: 4),
-            ],
+            Icon(icon, size: 13.5, color: color),
+            const SizedBox(width: 4),
             Flexible(
               child: Text(
                 label,
@@ -271,22 +515,24 @@ class _MetricMini extends StatelessWidget {
                 style: const TextStyle(
                   color: Colors.white70,
                   fontSize: 11.5,
-                  fontWeight: FontWeight.w500,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ),
           ],
         ),
-        const SizedBox(height: 3),
-        Text(
-          value,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: color,
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-            fontFeatures: AppTokens.tabularNums,
+        const SizedBox(height: 4),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontSize: 15.5,
+              fontWeight: FontWeight.w800,
+              fontFeatures: AppTokens.tabularNums,
+            ),
           ),
         ),
       ],
@@ -308,10 +554,10 @@ class _HeroActionBtn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.white.withValues(alpha: 0.14),
-      borderRadius: BorderRadius.circular(12),
+      color: Colors.white.withValues(alpha: 0.15),
+      borderRadius: BorderRadius.circular(13),
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(13),
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 8),
@@ -328,7 +574,7 @@ class _HeroActionBtn extends StatelessWidget {
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
@@ -340,7 +586,7 @@ class _HeroActionBtn extends StatelessWidget {
   }
 }
 
-/// 4-way payment mode selector (`cash` | `card` | `transfer` | `debt`)
+/// 4-way payment mode selector (`cash` | `card` | `transfer` | `debt`) with modern Material icons.
 class PaymentModeSelector extends StatelessWidget {
   final String selectedMode;
   final ValueChanged<String> onChanged;
@@ -354,28 +600,32 @@ class PaymentModeSelector extends StatelessWidget {
   static const List<Map<String, dynamic>> modes = [
     {
       'key': 'cash',
-      'label': '💵 Naqd',
+      'label': 'Naqd',
+      'icon': Icons.payments_rounded,
       'sub': "Qo'ldagi naqd puldan ayriladi",
       'color': AppTokens.cashGreen,
       'bg': AppTokens.cashGreenBg,
     },
     {
       'key': 'card',
-      'label': '💳 Karta',
-      'sub': 'Naqddan ayrilmaydi, faqat statistikada',
+      'label': 'Karta',
+      'icon': Icons.credit_card_rounded,
+      'sub': 'Naqddan ayrilmaydi — faqat statistikada',
       'color': AppTokens.cardBlue,
       'bg': AppTokens.cardBlueBg,
     },
     {
       'key': 'transfer',
-      'label': "🏦 O'tkazma",
+      'label': "O'tkazma",
+      'icon': Icons.account_balance_rounded,
       'sub': 'Perechesleniya — naqddan ayrilmaydi',
       'color': AppTokens.transferPurple,
       'bg': AppTokens.transferPurpleBg,
     },
     {
       'key': 'debt',
-      'label': '📌 Qarzga',
+      'label': 'Qarzga',
+      'icon': Icons.push_pin_rounded,
       'sub': "Pul berilmadi — to'lanmagan qarzga yoziladi",
       'color': AppTokens.debtAmber,
       'bg': AppTokens.debtAmberBg,
@@ -399,21 +649,25 @@ class PaymentModeSelector extends StatelessWidget {
           physics: const NeverScrollableScrollPhysics(),
           mainAxisSpacing: 8,
           crossAxisSpacing: 8,
-          childAspectRatio: 2.9,
+          childAspectRatio: 2.85,
           children: modes.map((m) {
             final key = m['key'] as String;
             final isSelected = key == selectedMode;
             final c = m['color'] as Color;
+            final ic = m['icon'] as IconData;
             return InkWell(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(14),
               onTap: () => onChanged(key),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 160),
                 decoration: BoxDecoration(
                   color: isSelected
                       ? c.withValues(alpha: 0.14)
-                      : Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
-                  borderRadius: BorderRadius.circular(12),
+                      : Theme.of(context)
+                          .colorScheme
+                          .surfaceContainerHighest
+                          .withValues(alpha: 0.45),
+                  borderRadius: BorderRadius.circular(14),
                   border: Border.all(
                     color: isSelected ? c : Colors.transparent,
                     width: 1.8,
@@ -424,10 +678,12 @@ class PaymentModeSelector extends StatelessWidget {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    if (isSelected) ...[
-                      Icon(Icons.check_circle_rounded, size: 17, color: c),
-                      const SizedBox(width: 6),
-                    ],
+                    Icon(
+                      ic,
+                      size: 18,
+                      color: isSelected ? c : Theme.of(context).hintColor,
+                    ),
+                    const SizedBox(width: 7),
                     Flexible(
                       child: Text(
                         m['label'] as String,
@@ -439,6 +695,10 @@ class PaymentModeSelector extends StatelessWidget {
                         ),
                       ),
                     ),
+                    if (isSelected) ...[
+                      const SizedBox(width: 4),
+                      Icon(Icons.check_circle_rounded, size: 15, color: c),
+                    ],
                   ],
                 ),
               ),
@@ -479,32 +739,48 @@ class NakladnoyListCard extends StatelessWidget {
     this.onQuickPay,
   });
 
-  (String, Color, Color) _badgeSpec() {
+  (String, IconData, Color, Color) _badgeSpec() {
     if (item.isDebt) {
-      return ('📌 Qarzga', AppTokens.debtAmber, AppTokens.debtAmberBg);
+      return (
+        'Qarzga',
+        Icons.push_pin_rounded,
+        AppTokens.debtAmber,
+        AppTokens.debtAmberBg
+      );
     }
     switch (item.paymentMethod) {
       case 'card':
-        return ('💳 Karta', AppTokens.cardBlue, AppTokens.cardBlueBg);
+        return (
+          'Karta',
+          Icons.credit_card_rounded,
+          AppTokens.cardBlue,
+          AppTokens.cardBlueBg
+        );
       case 'transfer':
         return (
-          "🏦 O'tkazma",
+          "O'tkazma",
+          Icons.account_balance_rounded,
           AppTokens.transferPurple,
           AppTokens.transferPurpleBg
         );
       default:
-        return ('💵 Naqd', AppTokens.cashGreen, AppTokens.cashGreenBg);
+        return (
+          'Naqd',
+          Icons.payments_rounded,
+          AppTokens.cashGreen,
+          AppTokens.cashGreenBg
+        );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final (badgeText, badgeColor, badgeBg) = _badgeSpec();
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final (badgeText, badgeIcon, badgeColor, badgeBg) = _badgeSpec();
+    final isDark = isDarkCtx(context);
 
     return Card(
       child: InkWell(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(AppTokens.radius),
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
@@ -516,26 +792,22 @@ class NakladnoyListCard extends StatelessWidget {
                 children: [
                   Container(
                     padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
                     decoration: BoxDecoration(
-                      color: isDark
-                          ? const Color(0xFF1E293B)
-                          : const Color(0xFFF1F5F9),
-                      borderRadius: BorderRadius.circular(8),
+                      color: badgeColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
                       item.displayNum,
                       style: TextStyle(
                         fontSize: 12,
-                        fontWeight: FontWeight.w700,
+                        fontWeight: FontWeight.w800,
                         fontFeatures: AppTokens.tabularNums,
-                        color: isDark
-                            ? const Color(0xFF93C5FD)
-                            : AppTokens.navyPrimary,
+                        color: badgeColor,
                       ),
                     ),
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 11),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -544,12 +816,16 @@ class NakladnoyListCard extends StatelessWidget {
                           item.supplierName,
                           style: const TextStyle(
                             fontSize: 15.5,
-                            fontWeight: FontWeight.w700,
+                            fontWeight: FontWeight.w800,
                           ),
                         ),
-                        const SizedBox(height: 3),
+                        const SizedBox(height: 4),
                         Row(
                           children: [
+                            Icon(Icons.schedule_rounded,
+                                size: 12.5,
+                                color: Theme.of(context).hintColor),
+                            const SizedBox(width: 3),
                             Text(
                               item.reportDate != null
                                   ? '${item.reportDate} • ${item.timeHm}'
@@ -563,7 +839,7 @@ class NakladnoyListCard extends StatelessWidget {
                             Icon(
                               item.inGroup
                                   ? Icons.cloud_done_rounded
-                                  : Icons.save_outlined,
+                                  : Icons.storage_rounded,
                               size: 13.5,
                               color: item.inGroup
                                   ? AppTokens.cashGreen
@@ -574,7 +850,7 @@ class NakladnoyListCard extends StatelessWidget {
                               item.inGroup ? 'Guruhda' : 'Bazada',
                               style: TextStyle(
                                 fontSize: 11.5,
-                                fontWeight: FontWeight.w600,
+                                fontWeight: FontWeight.w700,
                                 color: item.inGroup
                                     ? AppTokens.cashGreen
                                     : Theme.of(context).hintColor,
@@ -582,8 +858,8 @@ class NakladnoyListCard extends StatelessWidget {
                             ),
                             if (item.hasPhoto) ...[
                               const SizedBox(width: 8),
-                              const Icon(Icons.photo_camera_rounded,
-                                  size: 13.5, color: AppTokens.cardBlue),
+                              const Icon(Icons.image_rounded,
+                                  size: 14, color: AppTokens.cardBlue),
                             ],
                           ],
                         ),
@@ -597,7 +873,7 @@ class NakladnoyListCard extends StatelessWidget {
                         formatUzs(item.amount, withCurrency: true),
                         style: TextStyle(
                           fontSize: 16,
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w900,
                           fontFeatures: AppTokens.tabularNums,
                           color: item.isDebt ? AppTokens.debtAmber : null,
                         ),
@@ -605,20 +881,27 @@ class NakladnoyListCard extends StatelessWidget {
                       const SizedBox(height: 5),
                       Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3),
+                            horizontal: 8, vertical: 3.5),
                         decoration: BoxDecoration(
                           color: isDark
                               ? badgeColor.withValues(alpha: 0.18)
                               : badgeBg,
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: Text(
-                          badgeText,
-                          style: TextStyle(
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w700,
-                            color: badgeColor,
-                          ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(badgeIcon, size: 12, color: badgeColor),
+                            const SizedBox(width: 4),
+                            Text(
+                              badgeText,
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w800,
+                                color: badgeColor,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
@@ -640,6 +923,9 @@ class NakladnoyListCard extends StatelessWidget {
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.tonalIcon(
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(80, 44),
+                    ),
                     onPressed: onQuickPay,
                     icon: const Icon(Icons.check_circle_outline_rounded,
                         size: 18),

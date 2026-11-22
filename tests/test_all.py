@@ -1600,6 +1600,41 @@ def test_mobile_apk_rest_api_and_group_posting(tmp_path: Path, monkeypatch):
                 assert r_xlsx.status_code == 200
                 assert len(r_xlsx.content) > 1000
 
+                # 8b. AI photo extraction resolves canonical supplier & rounds amount
+                async def fake_extract(raw, mime_type="image/jpeg", caption=None):
+                    return {
+                        "supplier_name": "coca cola",
+                        "amount": 192_640.0,
+                        "is_clear": True,
+                        "notes": "",
+                        "error_code": None,
+                    }
+
+                monkeypatch.setattr(api_app_mod, "extract_nakladnoy_from_image", fake_extract)
+                r_ai = await client.post(
+                    "/ai/extract",
+                    headers=headers,
+                    files={"photo": ("n.jpg", b"\xff\xd8\xff\xe0fake", "image/jpeg")},
+                )
+                assert r_ai.status_code == 200
+                ai = r_ai.json()
+                assert ai["ok"] is True
+                assert ai["supplier_name"] == "Coca Cola"
+                assert ai["amount"] == 192_000.0
+                assert ai["original_amount"] == 192_640.0
+                assert 1_200_000.0 in ai["recent_amounts"]
+
+                # 8c. Round amount via PATCH (sync rounding helper)
+                r_edit = await client.patch(
+                    f"/nakladnoy/{nak1['id']}", headers=headers, json={"amount": 1_200_640}
+                )
+                assert r_edit.status_code == 200
+                r_round = await client.patch(
+                    f"/nakladnoy/{nak1['id']}", headers=headers, json={"round_amount": True}
+                )
+                assert r_round.status_code == 200
+                assert r_round.json()["amount"] == 1_200_000.0
+
                 # 9. Close day
                 r_close = await client.post(
                     "/day/close",

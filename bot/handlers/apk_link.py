@@ -16,13 +16,16 @@ from aiogram.types import (
     Message,
 )
 
+from pathlib import Path
+
 from api.auth import (
     create_login_code,
     format_login_code_display,
     list_active_tokens,
     revoke_token_by_id,
 )
-from api.deps import APK_BINARY_PATH
+
+APK_BINARY_PATH = Path("data/hisobchi.apk")
 from bot.auth import ROLE_LABELS, deny_if_unauthorized, get_user_role, is_admin_role
 from bot.handlers.wallet_nakladnoy import _safe_cb_answer, _safe_edit_text
 from config import get_settings

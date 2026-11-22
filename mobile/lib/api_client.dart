@@ -437,6 +437,7 @@ class HisobchiApiClient {
     String note = '',
     bool sendToGroup = true,
     File? photoFile,
+    double? originalAmount,
   }) async {
     final req = http.MultipartRequest('POST', _uri('/nakladnoy'));
     if (accessToken != null) {
@@ -447,6 +448,9 @@ class HisobchiApiClient {
     req.fields['payment_mode'] = paymentMode;
     req.fields['note'] = note.trim();
     req.fields['send_to_group'] = sendToGroup ? 'true' : 'false';
+    if (originalAmount != null) {
+      req.fields['original_amount'] = originalAmount.toStringAsFixed(0);
+    }
 
     if (photoFile != null && await photoFile.exists()) {
       req.files.add(
@@ -568,4 +572,54 @@ class HisobchiApiClient {
 
   String photoUrlFor(int paymentId) =>
       '$baseUrl/nakladnoy/$paymentId/photo?token=${Uri.encodeComponent(accessToken ?? '')}';
+
+  /// Send nakladnoy photo to server-side Gemini Vision; returns supplier & amount guess.
+  Future<AiExtractResult> extractFromPhoto(File photoFile) async {
+    final req = http.MultipartRequest('POST', _uri('/ai/extract'));
+    if (accessToken != null) {
+      req.headers['Authorization'] = 'Bearer $accessToken';
+    }
+    req.files.add(await http.MultipartFile.fromPath('photo', photoFile.path));
+    final streamed = await _http.send(req).timeout(const Duration(seconds: 45));
+    final res = await http.Response.fromStream(streamed);
+    return AiExtractResult.fromJson(_decodeJson(res));
+  }
+}
+
+class AiExtractResult {
+  final bool ok;
+  final String? supplierName;
+  final String? supplierSuggestion;
+  final double? amount;
+  final double? originalAmount;
+  final bool isClear;
+  final List<double> recentAmounts;
+  final String? errorCode;
+  final String message;
+
+  const AiExtractResult({
+    required this.ok,
+    this.supplierName,
+    this.supplierSuggestion,
+    this.amount,
+    this.originalAmount,
+    required this.isClear,
+    required this.recentAmounts,
+    this.errorCode,
+    required this.message,
+  });
+
+  factory AiExtractResult.fromJson(Map<String, dynamic> j) => AiExtractResult(
+        ok: j['ok'] == true,
+        supplierName: j['supplier_name']?.toString(),
+        supplierSuggestion: j['supplier_suggestion']?.toString(),
+        amount: (j['amount'] as num?)?.toDouble(),
+        originalAmount: (j['original_amount'] as num?)?.toDouble(),
+        isClear: j['is_clear'] == true,
+        recentAmounts: ((j['recent_amounts'] as List?) ?? const [])
+            .map((e) => (e as num).toDouble())
+            .toList(),
+        errorCode: j['error_code']?.toString(),
+        message: (j['message'] ?? '').toString(),
+      );
 }

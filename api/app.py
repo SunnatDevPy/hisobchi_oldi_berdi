@@ -76,6 +76,7 @@ from database.crud import (
 from database.models import CashTransaction, NakladnoyPayment
 from database.session import async_session_maker
 from services.excel_export import build_range_excel, build_session_excel, build_sverka_excel
+from services.gemini_ai import extract_nakladnoy_from_image
 
 
 def _serialize_cash_tx(tx: CashTransaction) -> CashTxOut:
@@ -320,6 +321,55 @@ def create_api_app() -> FastAPI:
             amounts = await get_recent_amounts_for_supplier(db, canonical, limit=6)
         return {"supplier": canonical, "amounts": [float(a) for a in amounts]}
 
+    @app.post("/ai/extract")
+    async def ai_extract_nakladnoy(
+        photo: UploadFile = File(...),
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> dict:
+        """Read supplier & total amount from a nakladnoy photo via Gemini Vision (same engine as bot)."""
+        raw = await photo.read()
+        if not raw:
+            raise HTTPException(status_code=400, detail="Rasm bo'sh")
+        if len(raw) > 15 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Rasm hajmi 15 MB dan oshmasligi kerak")
+
+        res = await extract_nakladnoy_from_image(raw, mime_type=photo.content_type or "image/jpeg")
+        err = res.get("error_code")
+        supplier_raw = res.get("supplier_name")
+        amount_raw = res.get("amount")
+
+        canonical: Optional[str] = None
+        suggestion: Optional[str] = None
+        amounts: list[float] = []
+        rounded: Optional[float] = None
+        async with async_session_maker() as db:
+            if supplier_raw:
+                canonical, suggestion = await resolve_supplier_name(db, str(supplier_raw))
+                if canonical:
+                    amounts = [
+                        float(a) for a in await get_recent_amounts_for_supplier(db, canonical, limit=6)
+                    ]
+            if amount_raw:
+                r_mode = await get_app_setting(db, "round_mode", "floor_1000")
+                rounded = round_nakladnoy_amount(float(amount_raw), r_mode)
+
+        messages = {
+            "no_key": "AI kaliti sozlanmagan",
+            "rate_limit": "AI limiti tugadi, birozdan keyin urinib ko'ring",
+            "api_error": "AI javob bermadi, qo'lda kiriting",
+        }
+        return {
+            "ok": err is None and bool(canonical or rounded),
+            "supplier_name": canonical or (str(supplier_raw) if supplier_raw else None),
+            "supplier_suggestion": suggestion,
+            "amount": rounded,
+            "original_amount": float(amount_raw) if amount_raw else None,
+            "is_clear": bool(res.get("is_clear")),
+            "recent_amounts": amounts,
+            "error_code": err,
+            "message": messages.get(err or "", ""),
+        }
+
     @app.post("/nakladnoy")
     async def create_nakladnoy(
         supplier_name: str = Form(...),
@@ -327,6 +377,7 @@ def create_api_app() -> FastAPI:
         payment_mode: str = Form(default="cash"),  # cash | card | transfer | debt
         note: str = Form(default=""),
         send_to_group: bool = Form(default=True),
+        original_amount: Optional[float] = Form(default=None),
         photo: Optional[UploadFile] = File(default=None),
         user: AuthenticatedUser = Depends(require_write_user),
     ) -> dict:
@@ -355,6 +406,11 @@ def create_api_app() -> FastAPI:
                 supplier_name=canonical,
                 amount=amount,
                 note=note.strip() or None,
+                original_amount=(
+                    original_amount
+                    if original_amount and round(original_amount) != round(amount)
+                    else None
+                ),
             )
             confirmed = await confirm_nakladnoy(
                 db,
@@ -452,8 +508,24 @@ def create_api_app() -> FastAPI:
     ) -> NakladnoyOut:
         async with async_session_maker() as db:
             if payload.round_amount:
-                res = await round_nakladnoy_amount(db, payment_id, user_id=user.user_id)
-                updated = res[0] if res else None
+                cur_pay = await get_nakladnoy(db, payment_id)
+                if cur_pay is None or cur_pay.status == "deleted":
+                    raise HTTPException(status_code=404, detail="Nakladnoy topilmadi")
+                r_mode = await get_app_setting(db, "round_mode", "floor_1000")
+                if r_mode == "none":
+                    r_mode = "floor_1000"
+                new_amt = round_nakladnoy_amount(float(cur_pay.amount), r_mode)
+                updated = await update_nakladnoy(
+                    db,
+                    payment_id=payment_id,
+                    amount=new_amt,
+                    user_id=user.user_id,
+                    original_amount=(
+                        float(cur_pay.original_amount)
+                        if cur_pay.original_amount is not None
+                        else float(cur_pay.amount)
+                    ),
+                )
             else:
                 canonical_sup = None
                 if payload.supplier_name is not None:
