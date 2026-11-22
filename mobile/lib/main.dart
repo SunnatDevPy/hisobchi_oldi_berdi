@@ -22,6 +22,135 @@ double sheetBottomPadding(BuildContext context) {
   return (insets > navBar ? insets : navBar) + 24;
 }
 
+/// Opens a searchable bottom picker of all known suppliers.
+Future<String?> showSupplierPickerDialog(
+  BuildContext context,
+  List<String> suppliers, {
+  String current = '',
+}) async {
+  var query = '';
+  return showModalBottomSheet<String>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setModalState) {
+        final filtered = suppliers
+            .where((s) =>
+                query.isEmpty || s.toLowerCase().contains(query.toLowerCase()))
+            .toList();
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: 18,
+              right: 18,
+              bottom: sheetBottomPadding(ctx),
+            ),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.sizeOf(ctx).height * 0.68,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.storefront_rounded,
+                          color: AppTokens.brand),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Postavshik tanlash (${suppliers.length} ta)',
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    autofocus: true,
+                    onChanged: (v) => setModalState(() => query = v.trim()),
+                    decoration: const InputDecoration(
+                      hintText: 'Postavshik nomini qidiring...',
+                      prefixIcon: Icon(Icons.search_rounded),
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  if (query.isNotEmpty &&
+                      !suppliers.any(
+                          (s) => s.toLowerCase() == query.toLowerCase()))
+                    ListTile(
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      tileColor: AppTokens.brand.withValues(alpha: 0.12),
+                      leading: const Icon(Icons.add_business_rounded,
+                          color: AppTokens.brand),
+                      title: Text(
+                        'Yangi qo\'shish: "$query"',
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      onTap: () => Navigator.pop(ctx, query),
+                    ),
+                  Expanded(
+                    child: filtered.isEmpty
+                        ? Center(
+                            child: Text(
+                              'Postavshik topilmadi',
+                              style: TextStyle(color: textSecondaryOf(ctx)),
+                            ),
+                          )
+                        : ListView.separated(
+                            shrinkWrap: true,
+                            itemCount: filtered.length,
+                            separatorBuilder: (_, __) =>
+                                const Divider(height: 1),
+                            itemBuilder: (_, i) {
+                              final name = filtered[i];
+                              final isCur = name.toLowerCase() ==
+                                  current.trim().toLowerCase();
+                              return ListTile(
+                                dense: true,
+                                leading: Icon(
+                                  isCur
+                                      ? Icons.check_circle_rounded
+                                      : Icons.apartment_rounded,
+                                  color: isCur
+                                      ? AppTokens.cashGreen
+                                      : textSecondaryOf(ctx),
+                                  size: 20,
+                                ),
+                                title: Text(
+                                  name,
+                                  style: TextStyle(
+                                    fontWeight: isCur
+                                        ? FontWeight.w900
+                                        : FontWeight.w700,
+                                  ),
+                                ),
+                                onTap: () => Navigator.pop(ctx, name),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    ),
+  );
+}
+
 class HisobchiApp extends StatefulWidget {
   final HisobchiApiClient? apiOverride;
 
@@ -178,6 +307,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final (errFg, errBg, errBorder) =
+        AppTokens.semanticSurface(context, AppTokens.dangerRed);
+
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -353,18 +485,16 @@ class _LoginScreenState extends State<LoginScreen> {
                             Container(
                               padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
-                                color: AppTokens.dangerRedBg,
+                                color: errBg,
                                 borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                    color: AppTokens.dangerRed
-                                        .withValues(alpha: 0.4)),
+                                border: Border.all(color: errBorder),
                               ),
                               child: Text(
                                 _error!,
-                                style: const TextStyle(
-                                  color: AppTokens.dangerRed,
+                                style: TextStyle(
+                                  color: errFg,
                                   fontSize: 13,
-                                  fontWeight: FontWeight.w600,
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
                             ),
@@ -407,7 +537,7 @@ class _LoginScreenState extends State<LoginScreen> {
           height: 22,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: AppTokens.brand.withValues(alpha: 0.12),
+            color: AppTokens.brand.withValues(alpha: 0.14),
             shape: BoxShape.circle,
           ),
           child: Text(
@@ -432,7 +562,11 @@ class _LoginScreenState extends State<LoginScreen> {
 }
 
 // ============================================================================
-// MAIN 4-TAB WORKSPACE
+// MAIN 4-TAB WORKSPACE:
+// 0: Dashboard (Haqiqiy Analitik Dashboard + Pul Oldi-Berdi Tarixi)
+// 1: Nakladnoylar (Bugungi Nakladnoylar Ro'yxati + Dropdown Filter/Saralash)
+// 2: Qarzlar (To'lanmagan Qarzlar + Postavshik Dropdown Filter)
+// 3: Smena & Excel (Kunni Yakunlash + Excel Hisobotlar Dropdown + Sozlamalar)
 // ============================================================================
 
 class MainWorkspaceScreen extends StatefulWidget {
@@ -457,10 +591,14 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   List<NakladnoyItem> _allDebts = [];
   bool _loading = true;
   String? _error;
+
+  // Nakladnoylar tab filter & sort dropdown states
   String _filterMode = 'all'; // all | cash | card | transfer | debt
+  String _sortMode = 'newest'; // newest | amount_desc | supplier_az
   String _searchQuery = '';
-  bool _showCashHistory = false;
-  final ImagePicker _quickPicker = ImagePicker();
+
+  // Qarzlar tab supplier dropdown filter
+  String _debtSupplierFilter = 'all';
 
   @override
   void initState() {
@@ -517,19 +655,33 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     );
   }
 
-  Future<void> _openCashDialog(String sourceType) async {
+  Future<void> _openCashDialog(
+    String sourceType, {
+    CashTxItem? existing,
+  }) async {
     final titles = {
-      'main': 'Pul oldim (Asosiy kirim)',
-      'kassa_debt': 'Kassadan qarz oldim',
-      'kassa_repay': 'Kassaga qaytardim',
+      'main': existing != null
+          ? 'Olingan pulni tahrirlash'
+          : 'Pul oldim (Asosiy kirim)',
+      'kassa_debt': existing != null
+          ? 'Kassa qarzini tahrirlash'
+          : 'Kassadan qarz oldim',
+      'kassa_repay': existing != null
+          ? 'Qaytarilgan pulni tahrirlash'
+          : 'Kassaga qaytardim',
     };
     final icons = {
       'main': Icons.add_card_rounded,
       'kassa_debt': Icons.account_balance_rounded,
       'kassa_repay': Icons.assignment_return_rounded,
     };
-    final amtCtrl = TextEditingController();
-    final noteCtrl = TextEditingController();
+    final amtCtrl = TextEditingController(
+      text: existing != null
+          ? UzsAmountInputFormatter.formatDigits(
+              existing.amount.round().toString())
+          : '',
+    );
+    final noteCtrl = TextEditingController(text: existing?.note ?? '');
 
     final confirmed = await showModalBottomSheet<bool>(
       context: context,
@@ -569,14 +721,15 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                 controller: amtCtrl,
                 autofocus: true,
                 keyboardType: TextInputType.number,
+                inputFormatters: const [UzsAmountInputFormatter()],
                 style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w800,
+                  fontSize: 21,
+                  fontWeight: FontWeight.w900,
                   fontFeatures: AppTokens.tabularNums,
                 ),
                 decoration: const InputDecoration(
                   labelText: "Summa (so'm)",
-                  hintText: 'Masalan: 5 000 000',
+                  hintText: '5 000 000',
                   prefixIcon: Icon(Icons.payments_outlined),
                 ),
               ),
@@ -584,7 +737,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
               TextField(
                 controller: noteCtrl,
                 decoration: const InputDecoration(
-                  labelText: 'Izoh (ixtiyoriy)',
+                  labelText: 'Izoh (kimdan / nima uchun)',
                   prefixIcon: Icon(Icons.notes_rounded),
                 ),
               ),
@@ -592,7 +745,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
               FilledButton.icon(
                 onPressed: () => Navigator.pop(ctx, true),
                 icon: const Icon(Icons.check_rounded),
-                label: const Text('Saqlash'),
+                label: Text(existing != null ? 'Yangilash' : 'Saqlash'),
               ),
             ],
           ),
@@ -607,32 +760,25 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
         return;
       }
       try {
-        await widget.api.addCash(
-          amount: val,
-          sourceType: sourceType,
-          note: noteCtrl.text,
-        );
-        _showSnack('✅ Kassa amali saqlandi!');
+        if (existing != null) {
+          await widget.api.updateCash(
+            txId: existing.id,
+            amount: val,
+            note: noteCtrl.text,
+          );
+          _showSnack('✅ Kassa amali yangilandi!');
+        } else {
+          await widget.api.addCash(
+            amount: val,
+            sourceType: sourceType,
+            note: noteCtrl.text,
+          );
+          _showSnack('✅ Kassa amali saqlandi!');
+        }
         await _refreshAll();
       } catch (e) {
         _showSnack(e.toString(), isError: true);
       }
-    }
-  }
-
-  /// 1-Tap AI Camera / Gallery directly from Dashboard!
-  Future<void> _quickAiScan(ImageSource source) async {
-    try {
-      final xfile = await _quickPicker.pickImage(
-        source: source,
-        maxWidth: 1600,
-        maxHeight: 1600,
-        imageQuality: 85,
-      );
-      if (xfile == null || !mounted) return;
-      await _openAddNakladnoySheet(initialPhoto: File(xfile.path));
-    } catch (e) {
-      _showSnack('Rasm olishda xatolik: $e', isError: true);
     }
   }
 
@@ -737,6 +883,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   @override
   Widget build(BuildContext context) {
     final debtCount = _summary?.allUnpaidDebtCount ?? _allDebts.length;
+    final nakCount = _summary?.nakladnoys.length ?? 0;
 
     return Scaffold(
       appBar: AppBar(
@@ -752,19 +899,10 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                   size: 19, color: Colors.white),
             ),
             const SizedBox(width: 10),
-            const Text(
-              'Hisobchi',
-              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 19),
-            ),
+            const Text('Hisobchi'),
           ],
         ),
         actions: [
-          if (widget.api.canWrite)
-            IconButton(
-              tooltip: 'AI Kamera Skaner',
-              onPressed: () => _quickAiScan(ImageSource.camera),
-              icon: const Icon(Icons.document_scanner_rounded),
-            ),
           IconButton(
             tooltip: 'Yangilash',
             onPressed: _refreshAll,
@@ -777,14 +915,12 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
           ),
         ],
       ),
-      floatingActionButton: _tabIndex <= 1 && widget.api.canWrite
-          ? FloatingActionButton.extended(
+      // Compact "+" icon FAB (no "+ Nakladnoy" text label)
+      floatingActionButton: _tabIndex <= 2 && widget.api.canWrite
+          ? FloatingActionButton(
+              tooltip: 'Yangi Nakladnoy qo\'shish',
               onPressed: () => _openAddNakladnoySheet(),
-              icon: const Icon(Icons.add_rounded),
-              label: const Text(
-                'Nakladnoy',
-                style: TextStyle(fontWeight: FontWeight.w800),
-              ),
+              child: const Icon(Icons.add_rounded, size: 30),
             )
           : null,
       bottomNavigationBar: SafeArea(
@@ -800,6 +936,19 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
             ),
             NavigationDestination(
               icon: Badge(
+                isLabelVisible: nakCount > 0,
+                label: Text('$nakCount'),
+                child: const Icon(Icons.receipt_long_outlined),
+              ),
+              selectedIcon: Badge(
+                isLabelVisible: nakCount > 0,
+                label: Text('$nakCount'),
+                child: const Icon(Icons.receipt_long_rounded),
+              ),
+              label: 'Nakladnoylar',
+            ),
+            NavigationDestination(
+              icon: Badge(
                 isLabelVisible: debtCount > 0,
                 label: Text('$debtCount'),
                 child: const Icon(Icons.push_pin_outlined),
@@ -812,14 +961,9 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
               label: 'Qarzlar',
             ),
             const NavigationDestination(
-              icon: Icon(Icons.analytics_outlined),
-              selectedIcon: Icon(Icons.analytics_rounded),
-              label: 'Hisobot',
-            ),
-            const NavigationDestination(
-              icon: Icon(Icons.lock_clock_outlined),
-              selectedIcon: Icon(Icons.lock_clock_rounded),
-              label: 'Smena',
+              icon: Icon(Icons.assessment_outlined),
+              selectedIcon: Icon(Icons.assessment_rounded),
+              label: 'Smena & Excel',
             ),
           ],
         ),
@@ -832,9 +976,9 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                   index: _tabIndex,
                   children: [
                     _buildDashboardTab(),
+                    _buildNakladnoylarTab(),
                     _buildDebtsTab(),
-                    _buildReportsTab(),
-                    _buildCloseDayTab(),
+                    _buildSmenaAndReportsTab(),
                   ],
                 ),
     );
@@ -868,10 +1012,56 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   }
 
   // --------------------------------------------------------------------------
-  // TAB 1: DASHBOARD & TODAY'S FEED
+  // TAB 1: HAQIQIY ANALITIK DASHBOARD & PUL OLDI-BERDI TARIXI
   // --------------------------------------------------------------------------
 
   Widget _buildDashboardTab() {
+    final s = _summary!;
+    return RefreshIndicator(
+      onRefresh: _refreshAll,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 110),
+        children: [
+          HeroBalanceCard(
+            summary: s,
+            onAddCash:
+                widget.api.canWrite ? () => _openCashDialog('main') : null,
+            onKassaDebt: widget.api.canWrite
+                ? () => _openCashDialog('kassa_debt')
+                : null,
+            onKassaRepay: widget.api.canWrite
+                ? () => _openCashDialog('kassa_repay')
+                : null,
+          ),
+          const SizedBox(height: 16),
+          DashboardAnalyticsSection(
+            summary: s,
+            canWrite: widget.api.canWrite,
+            onTapPaymentFilter: (mode) {
+              setState(() {
+                _filterMode = mode;
+                _tabIndex = 1;
+              });
+            },
+            onOpenNakladnoyTab: () => setState(() => _tabIndex = 1),
+            onEditCashTx: (tx) =>
+                _openCashDialog(tx.sourceType, existing: tx),
+            onDeleteCashTx: (tx) async {
+              await widget.api.deleteCash(tx.id);
+              _showSnack("Kassa amali o'chirildi");
+              await _refreshAll();
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --------------------------------------------------------------------------
+  // TAB 2: DEDICATED NAKLADNOYLAR RO'YXATI (With Dropdown Filter & Sort)
+  // --------------------------------------------------------------------------
+
+  Widget _buildNakladnoylarTab() {
     final s = _summary!;
     final filtered = s.nakladnoys.where((n) {
       if (_filterMode == 'cash' && (n.isDebt || n.paymentMethod != 'cash')) {
@@ -896,157 +1086,121 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
       return true;
     }).toList();
 
+    if (_sortMode == 'amount_desc') {
+      filtered.sort((a, b) => b.amount.compareTo(a.amount));
+    } else if (_sortMode == 'supplier_az') {
+      filtered.sort((a, b) =>
+          a.supplierName.toLowerCase().compareTo(b.supplierName.toLowerCase()));
+    } else {
+      filtered.sort((a, b) => b.id.compareTo(a.id));
+    }
+
+    final filteredSum =
+        filtered.fold<double>(0, (prev, elem) => prev + elem.amount);
+
     return RefreshIndicator(
       onRefresh: _refreshAll,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 110),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 110),
         children: [
-          HeroBalanceCard(
-            summary: s,
-            onAddCash:
-                widget.api.canWrite ? () => _openCashDialog('main') : null,
-            onKassaDebt: widget.api.canWrite
-                ? () => _openCashDialog('kassa_debt')
-                : null,
-            onKassaRepay: widget.api.canWrite
-                ? () => _openCashDialog('kassa_repay')
-                : null,
-            onQuickAiCamera: widget.api.canWrite
-                ? () => _quickAiScan(ImageSource.camera)
-                : null,
-            onQuickAiGallery: widget.api.canWrite
-                ? () => _quickAiScan(ImageSource.gallery)
-                : null,
-          ),
-          const SizedBox(height: 14),
-
-          // Collapsible Cash Transactions Section
-          if (s.cashTransactions.isNotEmpty)
-            Card(
-              child: Column(
-                children: [
-                  ListTile(
-                    onTap: () =>
-                        setState(() => _showCashHistory = !_showCashHistory),
-                    leading: Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: AppTokens.cashGreen.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: const Icon(Icons.paid_rounded,
-                          color: AppTokens.cashGreen, size: 20),
-                    ),
-                    title: Text(
-                      'Kassa kirim-chiqimlari (${s.cashTransactions.length} ta)',
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w800, fontSize: 14.5),
-                    ),
-                    subtitle: Text(
-                      "Kechadan qoldiq: ${formatUzs(s.openingBalance, withCurrency: true)}",
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                    trailing: Icon(_showCashHistory
-                        ? Icons.expand_less_rounded
-                        : Icons.expand_more_rounded),
-                  ),
-                  if (_showCashHistory)
-                    ...s.cashTransactions.map((tx) {
-                      final labels = {
-                        'main': 'Olingan pul',
-                        'kassa_debt': 'Kassadan qarz',
-                        'kassa_repay': 'Kassaga qaytarildi',
-                      };
-                      final isOut = tx.sourceType == 'kassa_repay';
-                      return ListTile(
-                        dense: true,
-                        title: Text(
-                          '${labels[tx.sourceType] ?? tx.sourceType} • ${tx.timeHm}',
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        subtitle: tx.note.isNotEmpty ? Text(tx.note) : null,
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              '${isOut ? "-" : "+"}${formatUzs(tx.amount)}',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 14,
-                                fontFeatures: AppTokens.tabularNums,
-                                color: isOut
-                                    ? AppTokens.dangerRed
-                                    : AppTokens.cashGreen,
-                              ),
-                            ),
-                            if (widget.api.canWrite)
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline_rounded,
-                                    size: 18),
-                                onPressed: () async {
-                                  await widget.api.deleteCash(tx.id);
-                                  _showSnack("Kassa amali o'chirildi");
-                                  await _refreshAll();
-                                },
-                              ),
-                          ],
-                        ),
-                      );
-                    }),
-                ],
-              ),
-            ),
-
-          const SizedBox(height: 16),
+          // Header strip
           Row(
             children: [
-              Text(
-                'Bugungi nakladnoylar (${s.nakladnoys.length} ta)',
-                style: const TextStyle(
-                  fontSize: 16.5,
-                  fontWeight: FontWeight.w900,
+              Expanded(
+                child: Text(
+                  'Nakladnoylar (${filtered.length} ta)',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ),
-              const Spacer(),
-              if (s.totalKassaDebtOutstanding > 0)
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: AppTokens.debtAmber.withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    'Kassa qarz: ${formatUzsCompact(s.totalKassaDebtOutstanding)}',
-                    style: const TextStyle(
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w800,
-                      color: AppTokens.debtAmber,
-                    ),
-                  ),
+              Text(
+                formatUzs(filteredSum, withCurrency: true),
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                  color: AppTokens.brand,
+                  fontFeatures: AppTokens.tabularNums,
                 ),
+              ),
             ],
           ),
           const SizedBox(height: 10),
 
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                _filterChip('all', 'Barchasi (${s.nakladnoys.length})'),
-                const SizedBox(width: 6),
-                _filterChip('cash', 'Naqd'),
-                const SizedBox(width: 6),
-                _filterChip('card', 'Karta'),
-                const SizedBox(width: 6),
-                _filterChip('transfer', "O'tkazma"),
-                const SizedBox(width: 6),
-                _filterChip('debt', 'Qarzga'),
-              ],
-            ),
+          // Filter & Sort Dropdown Row
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  initialValue: _filterMode,
+                  isDense: true,
+                  decoration: const InputDecoration(
+                    labelText: "To'lov turi",
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  ),
+                  items: [
+                    DropdownMenuItem(
+                      value: 'all',
+                      child: Text('Barchasi (${s.nakladnoys.length})'),
+                    ),
+                    const DropdownMenuItem(
+                      value: 'cash',
+                      child: Text('💵 Naqd to\'lov'),
+                    ),
+                    const DropdownMenuItem(
+                      value: 'card',
+                      child: Text('💳 Karta orqali'),
+                    ),
+                    const DropdownMenuItem(
+                      value: 'transfer',
+                      child: Text("🏦 O'tkazma"),
+                    ),
+                    const DropdownMenuItem(
+                      value: 'debt',
+                      child: Text('📌 Qarzga'),
+                    ),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) setState(() => _filterMode = v);
+                  },
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  initialValue: _sortMode,
+                  isDense: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Saralash',
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'newest',
+                      child: Text('Yangilari tepada'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'amount_desc',
+                      child: Text('Summasi katta'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'supplier_az',
+                      child: Text('Postavshik (A-Z)'),
+                    ),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) setState(() => _sortMode = v);
+                  },
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 10),
 
+          // Search Box
           TextField(
             onChanged: (v) => setState(() => _searchQuery = v.trim()),
             decoration: const InputDecoration(
@@ -1064,26 +1218,26 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                 child: Column(
                   children: [
                     Icon(Icons.receipt_long_outlined,
-                        size: 44, color: Theme.of(context).hintColor),
+                        size: 44, color: textSecondaryOf(context)),
                     const SizedBox(height: 10),
                     const Text(
-                      'Hozircha nakladnoylar yo\'q',
+                      'Nakladnoylar topilmadi',
                       style:
                           TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      "Yuqoridagi 'Tezkor AI Skaner' yoki '+ Nakladnoy' tugmasini bosing.",
+                      "O'ng pastdagi '+' tugmasini bosib yangi nakladnoy qo'shing.",
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                          fontSize: 13, color: Theme.of(context).hintColor),
+                          fontSize: 13, color: textSecondaryOf(context)),
                     ),
                   ],
                 ),
               ),
             )
           else
-            ...filtered.reversed.map(
+            ...filtered.map(
               (item) => Padding(
                 padding: const EdgeInsets.only(bottom: 10),
                 child: NakladnoyListCard(
@@ -1100,22 +1254,30 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     );
   }
 
-  Widget _filterChip(String key, String label) {
-    final selected = _filterMode == key;
-    return ChoiceChip(
-      label: Text(label),
-      selected: selected,
-      onSelected: (_) => setState(() => _filterMode = key),
-    );
-  }
-
   // --------------------------------------------------------------------------
-  // TAB 2: UNPAID DEBTS
+  // TAB 3: UNPAID DEBTS (With Supplier Dropdown Filter)
   // --------------------------------------------------------------------------
 
   Widget _buildDebtsTab() {
+    final debtSuppliers = _allDebts
+        .map((e) => e.supplierName)
+        .toSet()
+        .toList()
+      ..sort();
+    final activeSupFilter =
+        (_debtSupplierFilter == 'all' || debtSuppliers.contains(_debtSupplierFilter))
+            ? _debtSupplierFilter
+            : 'all';
+
+    final visibleDebts = activeSupFilter == 'all'
+        ? _allDebts
+        : _allDebts.where((d) => d.supplierName == activeSupFilter).toList();
+
     final totalDebt =
-        _allDebts.fold<double>(0, (acc, item) => acc + item.amount);
+        visibleDebts.fold<double>(0, (acc, item) => acc + item.amount);
+    final (amberFg, amberBg, amberBorder) =
+        AppTokens.semanticSurface(context, AppTokens.debtAmber);
+
     return RefreshIndicator(
       onRefresh: _refreshAll,
       child: ListView(
@@ -1124,34 +1286,33 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
           Container(
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
-              color: AppTokens.debtAmber.withValues(alpha: 0.14),
+              color: amberBg,
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(
-                  color: AppTokens.debtAmber.withValues(alpha: 0.45)),
+              border: Border.all(color: amberBorder),
             ),
             child: Row(
               children: [
-                const Icon(Icons.push_pin_rounded,
-                    color: AppTokens.debtAmber, size: 30),
+                Icon(Icons.push_pin_rounded, color: amberFg, size: 30),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        "To'lanmagan nakladnoy qarzlari (${_allDebts.length} ta)",
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w700,
+                        "To'lanmagan nakladnoy qarzlari (${visibleDebts.length} ta)",
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
                           fontSize: 13.5,
+                          color: textPrimaryOf(context),
                         ),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         formatUzs(totalDebt, withCurrency: true),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 23,
                           fontWeight: FontWeight.w900,
-                          color: AppTokens.debtAmber,
+                          color: amberFg,
                           fontFeatures: AppTokens.tabularNums,
                         ),
                       ),
@@ -1161,8 +1322,34 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
               ],
             ),
           ),
+          if (debtSuppliers.length > 1) ...[
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: activeSupFilter,
+              decoration: const InputDecoration(
+                labelText: 'Postavshik bo\'yicha saralash',
+                prefixIcon: Icon(Icons.filter_list_rounded),
+                isDense: true,
+              ),
+              items: [
+                DropdownMenuItem(
+                  value: 'all',
+                  child: Text('Barcha postavshiklar (${_allDebts.length} ta)'),
+                ),
+                ...debtSuppliers.map(
+                  (s) => DropdownMenuItem(
+                    value: s,
+                    child: Text(s),
+                  ),
+                ),
+              ],
+              onChanged: (v) {
+                if (v != null) setState(() => _debtSupplierFilter = v);
+              },
+            ),
+          ],
           const SizedBox(height: 14),
-          if (_allDebts.isEmpty)
+          if (visibleDebts.isEmpty)
             const Card(
               child: Padding(
                 padding: EdgeInsets.all(32),
@@ -1181,7 +1368,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
               ),
             )
           else
-            ..._allDebts.map(
+            ...visibleDebts.map(
               (item) => Padding(
                 padding: const EdgeInsets.only(bottom: 10),
                 child: NakladnoyListCard(
@@ -1199,158 +1386,12 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   }
 
   // --------------------------------------------------------------------------
-  // TAB 3: EXCEL EXPORTS
+  // TAB 4: SMENA YOPISH + EXCEL HISOBOTLAR (Combined in 1 Clean Tab)
   // --------------------------------------------------------------------------
 
-  Future<void> _downloadAndShareExcel({
-    required String endpoint,
-    required String filename,
-    Map<String, String>? query,
-  }) async {
-    _showSnack('📥 Excel tayyorlanmoqda...');
-    try {
-      final bytes =
-          await widget.api.downloadExcelBytes(endpoint, query: query);
-      final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/$filename');
-      await file.writeAsBytes(bytes, flush: true);
-      await Share.shareXFiles(
-        [XFile(file.path)],
-        text: 'Hisobchi Excel hisobot: $filename',
-      );
-    } catch (e) {
-      _showSnack('Excel yuklashda xatolik: $e', isError: true);
-    }
-  }
-
-  Widget _buildReportsTab() {
-    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
-    final weekAgo = DateFormat('yyyy-MM-dd')
-        .format(DateTime.now().subtract(const Duration(days: 6)));
-    final monthStart = DateFormat('yyyy-MM-01').format(DateTime.now());
-
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
-      children: [
-        const Text(
-          'Excel hisobotlar va Sverka',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          'Barcha hisobotlar Telegram botdagi kabi Xulosa, Nakladnoylar, Karta/Perechesleniya va Qarzlar varaqlarini o\'z ichiga oladi.',
-          style: TextStyle(fontSize: 13, color: Theme.of(context).hintColor),
-        ),
-        const SizedBox(height: 16),
-        _reportTile(
-          icon: Icons.today_rounded,
-          color: AppTokens.cashGreen,
-          title: 'Bugungi kunlik hisobot (.xlsx)',
-          subtitle: 'Joriy ochiq sessiya: ${_summary?.reportDate ?? today}',
-          onTap: () => _downloadAndShareExcel(
-            endpoint: '/export/session',
-            filename: 'Hisobot_${_summary?.reportDate ?? today}.xlsx',
-          ),
-        ),
-        const SizedBox(height: 10),
-        _reportTile(
-          icon: Icons.date_range_rounded,
-          color: AppTokens.cardBlue,
-          title: 'Oxirgi 7 kunlik hisobot (.xlsx)',
-          subtitle: '$weekAgo — $today',
-          onTap: () => _downloadAndShareExcel(
-            endpoint: '/export/range',
-            query: {'date_from': weekAgo, 'date_to': today},
-            filename: 'Hisobot_7kun_${weekAgo}_$today.xlsx',
-          ),
-        ),
-        const SizedBox(height: 10),
-        _reportTile(
-          icon: Icons.calendar_month_rounded,
-          color: AppTokens.transferPurple,
-          title: 'Joriy oy hisoboti (.xlsx)',
-          subtitle: '$monthStart — $today',
-          onTap: () => _downloadAndShareExcel(
-            endpoint: '/export/range',
-            query: {'date_from': monthStart, 'date_to': today},
-            filename: 'Hisobot_Oy_${monthStart}_$today.xlsx',
-          ),
-        ),
-        const SizedBox(height: 10),
-        _reportTile(
-          icon: Icons.edit_calendar_rounded,
-          color: AppTokens.brand,
-          title: 'Ixtiyoriy sana oralig\'i (.xlsx)',
-          subtitle: 'Boshlanish va tugash sanasini tanlash',
-          onTap: () async {
-            final picked = await showDateRangePicker(
-              context: context,
-              firstDate: DateTime(2024, 1, 1),
-              lastDate: DateTime.now().add(const Duration(days: 1)),
-            );
-            if (picked != null) {
-              final d1 = DateFormat('yyyy-MM-dd').format(picked.start);
-              final d2 = DateFormat('yyyy-MM-dd').format(picked.end);
-              await _downloadAndShareExcel(
-                endpoint: '/export/range',
-                query: {'date_from': d1, 'date_to': d2},
-                filename: 'Hisobot_${d1}_$d2.xlsx',
-              );
-            }
-          },
-        ),
-        const SizedBox(height: 10),
-        _reportTile(
-          icon: Icons.apartment_rounded,
-          color: AppTokens.debtAmber,
-          title: 'Postavshiklar Sverkasi (.xlsx)',
-          subtitle: 'Barcha postavshiklar bo\'yicha oylik va umumiy sverka',
-          onTap: () => _downloadAndShareExcel(
-            endpoint: '/export/sverka',
-            filename: 'Sverka_$today.xlsx',
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _reportTile({
-    required IconData icon,
-    required Color color,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
-  }) {
-    return Card(
-      child: ListTile(
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        leading: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.14),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(icon, color: color),
-        ),
-        title: Text(
-          title,
-          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
-        ),
-        subtitle: Text(subtitle, style: const TextStyle(fontSize: 12.5)),
-        trailing: const Icon(Icons.ios_share_rounded),
-        onTap: onTap,
-      ),
-    );
-  }
-
-  // --------------------------------------------------------------------------
-  // TAB 4: DAY CLOSE & ACCOUNT/GROUP SETTINGS
-  // --------------------------------------------------------------------------
-
-  Widget _buildCloseDayTab() {
+  Widget _buildSmenaAndReportsTab() {
     final s = _summary!;
-    return _CloseDaySubView(
+    return _SmenaAndReportsView(
       summary: s,
       api: widget.api,
       onClosed: _refreshAll,
@@ -1360,14 +1401,14 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   }
 }
 
-class _CloseDaySubView extends StatefulWidget {
+class _SmenaAndReportsView extends StatefulWidget {
   final StatusSummary summary;
   final HisobchiApiClient api;
   final Future<void> Function() onClosed;
   final VoidCallback onLoggedOut;
   final void Function(String, {bool isError}) showSnack;
 
-  const _CloseDaySubView({
+  const _SmenaAndReportsView({
     required this.summary,
     required this.api,
     required this.onClosed,
@@ -1376,12 +1417,14 @@ class _CloseDaySubView extends StatefulWidget {
   });
 
   @override
-  State<_CloseDaySubView> createState() => _CloseDaySubViewState();
+  State<_SmenaAndReportsView> createState() => _SmenaAndReportsViewState();
 }
 
-class _CloseDaySubViewState extends State<_CloseDaySubView> {
+class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
   final TextEditingController _countedCtrl = TextEditingController();
   bool _closing = false;
+  String _selectedReportType = 'today'; // today | week | month | custom | sverka
+  bool _downloadingExcel = false;
 
   @override
   void dispose() {
@@ -1410,15 +1453,78 @@ class _CloseDaySubViewState extends State<_CloseDaySubView> {
     }
   }
 
+  Future<void> _runSelectedExcelExport() async {
+    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    final weekAgo = DateFormat('yyyy-MM-dd')
+        .format(DateTime.now().subtract(const Duration(days: 6)));
+    final monthStart = DateFormat('yyyy-MM-01').format(DateTime.now());
+
+    String endpoint = '/export/session';
+    String filename = 'Hisobot_${widget.summary.reportDate}.xlsx';
+    Map<String, String>? query;
+
+    if (_selectedReportType == 'week') {
+      endpoint = '/export/range';
+      query = {'date_from': weekAgo, 'date_to': today};
+      filename = 'Hisobot_7kun_${weekAgo}_$today.xlsx';
+    } else if (_selectedReportType == 'month') {
+      endpoint = '/export/range';
+      query = {'date_from': monthStart, 'date_to': today};
+      filename = 'Hisobot_Oy_${monthStart}_$today.xlsx';
+    } else if (_selectedReportType == 'sverka') {
+      endpoint = '/export/sverka';
+      filename = 'Sverka_$today.xlsx';
+    } else if (_selectedReportType == 'custom') {
+      final picked = await showDateRangePicker(
+        context: context,
+        firstDate: DateTime(2024, 1, 1),
+        lastDate: DateTime.now().add(const Duration(days: 1)),
+      );
+      if (picked == null) return;
+      final d1 = DateFormat('yyyy-MM-dd').format(picked.start);
+      final d2 = DateFormat('yyyy-MM-dd').format(picked.end);
+      endpoint = '/export/range';
+      query = {'date_from': d1, 'date_to': d2};
+      filename = 'Hisobot_${d1}_$d2.xlsx';
+    }
+
+    setState(() => _downloadingExcel = true);
+    widget.showSnack('📥 Excel tayyorlanmoqda...');
+    try {
+      final bytes =
+          await widget.api.downloadExcelBytes(endpoint, query: query);
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/$filename');
+      await file.writeAsBytes(bytes, flush: true);
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: 'Hisobchi Excel hisobot: $filename',
+      );
+    } catch (e) {
+      widget.showSnack('Excel yuklashda xatolik: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => _downloadingExcel = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final expected = widget.summary.expectedCash;
     final counted = parseUzsInput(_countedCtrl.text);
     final diff = counted != null ? counted - expected : null;
 
+    Color diffBase = AppTokens.cashGreen;
+    if (diff != null) {
+      if (diff > 0) diffBase = AppTokens.cardBlue;
+      if (diff < 0) diffBase = AppTokens.dangerRed;
+    }
+    final (diffFg, diffBg, diffBorder) =
+        AppTokens.semanticSurface(context, diffBase);
+
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 48),
       children: [
+        // 1. SMENA YOPISH CARD
         Card(
           child: Padding(
             padding: const EdgeInsets.all(18),
@@ -1429,10 +1535,12 @@ class _CloseDaySubViewState extends State<_CloseDaySubView> {
                   children: [
                     Icon(Icons.lock_clock_rounded, color: AppTokens.brand),
                     SizedBox(width: 8),
-                    Text(
-                      'Kunni yakunlash (Smena yopish)',
-                      style:
-                          TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                    Expanded(
+                      child: Text(
+                        'Kunni yakunlash (Smena yopish)',
+                        style: TextStyle(
+                            fontSize: 17, fontWeight: FontWeight.w900),
+                      ),
                     ),
                   ],
                 ),
@@ -1440,7 +1548,7 @@ class _CloseDaySubViewState extends State<_CloseDaySubView> {
                 Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
-                    color: AppTokens.brand.withValues(alpha: 0.08),
+                    color: AppTokens.brand.withValues(alpha: 0.10),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
@@ -1448,7 +1556,7 @@ class _CloseDaySubViewState extends State<_CloseDaySubView> {
                     children: [
                       const Text(
                         "Qo'lda bo'lishi kerak:",
-                        style: TextStyle(fontWeight: FontWeight.w600),
+                        style: TextStyle(fontWeight: FontWeight.w700),
                       ),
                       Text(
                         formatUzs(expected, withCurrency: true),
@@ -1465,10 +1573,11 @@ class _CloseDaySubViewState extends State<_CloseDaySubView> {
                 TextField(
                   controller: _countedCtrl,
                   keyboardType: TextInputType.number,
+                  inputFormatters: const [UzsAmountInputFormatter()],
                   onChanged: (_) => setState(() {}),
                   style: const TextStyle(
-                    fontSize: 19,
-                    fontWeight: FontWeight.w800,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
                     fontFeatures: AppTokens.tabularNums,
                   ),
                   decoration: InputDecoration(
@@ -1477,7 +1586,9 @@ class _CloseDaySubViewState extends State<_CloseDaySubView> {
                     prefixIcon: const Icon(Icons.calculate_outlined),
                     suffixIcon: TextButton(
                       onPressed: () {
-                        _countedCtrl.text = expected.round().toString();
+                        _countedCtrl.text =
+                            UzsAmountInputFormatter.formatDigits(
+                                expected.round().toString());
                         setState(() {});
                       },
                       child: const Text('Teng'),
@@ -1489,12 +1600,9 @@ class _CloseDaySubViewState extends State<_CloseDaySubView> {
                   Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: diff == 0
-                          ? AppTokens.cashGreenBg
-                          : (diff > 0
-                              ? AppTokens.cardBlueBg
-                              : AppTokens.dangerRedBg),
+                      color: diffBg,
                       borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: diffBorder),
                     ),
                     child: Text(
                       diff == 0
@@ -1503,12 +1611,8 @@ class _CloseDaySubViewState extends State<_CloseDaySubView> {
                               ? "➕ Ortiqcha: +${formatUzs(diff, withCurrency: true)}"
                               : "⚠️ Kamomad: ${formatUzs(diff, withCurrency: true)}"),
                       style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        color: diff == 0
-                            ? AppTokens.cashGreen
-                            : (diff > 0
-                                ? AppTokens.cardBlue
-                                : AppTokens.dangerRed),
+                        fontWeight: FontWeight.w800,
+                        color: diffFg,
                       ),
                     ),
                   ),
@@ -1528,6 +1632,91 @@ class _CloseDaySubViewState extends State<_CloseDaySubView> {
         ),
         const SizedBox(height: 14),
 
+        // 2. EXCEL HISOBOTLAR & SVERKA (With Dropdown Selector)
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.table_view_rounded, color: AppTokens.cashGreen),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Excel Hisobot va Sverka yuklash',
+                        style: TextStyle(
+                            fontSize: 17, fontWeight: FontWeight.w900),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  "Kerakli davrni tanlab, tayyor Excel (.xlsx) faylni yuklab oling yoki Telegramga ulashing.",
+                  style: TextStyle(
+                      fontSize: 12.5, color: textSecondaryOf(context)),
+                ),
+                const SizedBox(height: 14),
+                DropdownButtonFormField<String>(
+                  initialValue: _selectedReportType,
+                  decoration: const InputDecoration(
+                    labelText: 'Hisobot turini tanlang',
+                    prefixIcon: Icon(Icons.description_outlined),
+                  ),
+                  items: [
+                    DropdownMenuItem(
+                      value: 'today',
+                      child: Text(
+                          '📊 Bugungi kunlik hisobot (${widget.summary.reportDate})'),
+                    ),
+                    const DropdownMenuItem(
+                      value: 'week',
+                      child: Text('📅 Oxirgi 7 kunlik hisobot'),
+                    ),
+                    const DropdownMenuItem(
+                      value: 'month',
+                      child: Text('🗓 Joriy oy hisoboti'),
+                    ),
+                    const DropdownMenuItem(
+                      value: 'custom',
+                      child: Text("📆 Ixtiyoriy sana oralig'i..."),
+                    ),
+                    const DropdownMenuItem(
+                      value: 'sverka',
+                      child: Text('🏢 Postavshiklar Sverkasi'),
+                    ),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) setState(() => _selectedReportType = v);
+                  },
+                ),
+                const SizedBox(height: 14),
+                FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                      backgroundColor: AppTokens.cashGreen),
+                  onPressed:
+                      _downloadingExcel ? null : _runSelectedExcelExport,
+                  icon: _downloadingExcel
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.ios_share_rounded),
+                  label: Text(_downloadingExcel
+                      ? 'Tayyorlanmoqda...'
+                      : 'Excel yuklab olish va ulashish'),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+
+        // 3. TELEGRAM GROUP & ACCOUNT SETTINGS
         Card(
           child: Padding(
             padding: const EdgeInsets.all(18),
@@ -1541,7 +1730,7 @@ class _CloseDaySubViewState extends State<_CloseDaySubView> {
                     Text(
                       'Telegram guruh va Bot sozlamalari',
                       style:
-                          TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
                     ),
                   ],
                 ),
@@ -1569,7 +1758,7 @@ class _CloseDaySubViewState extends State<_CloseDaySubView> {
                   style: TextStyle(
                       fontSize: 12.5,
                       height: 1.4,
-                      color: Theme.of(context).hintColor),
+                      color: textSecondaryOf(context)),
                 ),
                 const SizedBox(height: 14),
                 SizedBox(
@@ -1598,14 +1787,14 @@ class _CloseDaySubViewState extends State<_CloseDaySubView> {
     return Row(
       children: [
         Text(label,
-            style: const TextStyle(fontSize: 13.5, color: Colors.grey)),
+            style: TextStyle(fontSize: 13.5, color: textSecondaryOf(context))),
         const SizedBox(width: 8),
         Expanded(
           child: Text(
             val,
             textAlign: TextAlign.end,
             style: const TextStyle(
-                fontSize: 13.5, fontWeight: FontWeight.w700),
+                fontSize: 13.5, fontWeight: FontWeight.w800),
           ),
         ),
       ],
@@ -1614,7 +1803,12 @@ class _CloseDaySubViewState extends State<_CloseDaySubView> {
 }
 
 // ============================================================================
-// ADD NAKLADNOY SHEET (Auto-AI OCR on photo pick + Supplier chips + 4 Modes)
+// ADD NAKLADNOY SHEET:
+// - Auto-AI OCR on photo pick
+// - Space-formatted amount input (UzsAmountInputFormatter)
+// - NO -10 000 / +10 000 buttons
+// - Searchable Supplier Dropdown/Picker + Quick Chips
+// - "Guruhga yuborish" switch default ON right above "Tasdiqlash va saqlash"
 // ============================================================================
 
 class AddNakladnoySheet extends StatefulWidget {
@@ -1642,7 +1836,7 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
   List<String> _allSuppliers = [];
   List<double> _recentAmounts = [];
   String _paymentMode = 'cash'; // cash | card | transfer | debt
-  bool _sendToGroup = true;
+  bool _sendToGroup = true; // Default ON as requested
   File? _photoFile;
   double? _originalAmount;
   String? _supplierSuggestion;
@@ -1654,8 +1848,7 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
   @override
   void initState() {
     super.initState();
-    _sendToGroup =
-        widget.groupInfo.bound && widget.groupInfo.apkPostToGroup;
+    _sendToGroup = true;
     _loadSuppliers();
     if (widget.initialPhoto != null) {
       _photoFile = widget.initialPhoto;
@@ -1690,13 +1883,6 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
     } catch (_) {}
   }
 
-  void _adjustAmount(double delta) {
-    final cur = parseUzsInput(_amtCtrl.text) ?? 0;
-    final next = (cur + delta).clamp(0, 999999999999).toDouble();
-    _amtCtrl.text = next > 0 ? next.round().toString() : '';
-    setState(() {});
-  }
-
   /// Automatically calls server Gemini Vision OCR the moment a photo is picked!
   Future<void> _runAiExtract(File file) async {
     setState(() {
@@ -1713,7 +1899,8 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
           _supCtrl.text = res.supplierName!.trim();
         }
         if (res.amount != null && res.amount! > 0) {
-          _amtCtrl.text = res.amount!.round().toString();
+          _amtCtrl.text = UzsAmountInputFormatter.formatDigits(
+              res.amount!.round().toString());
         }
         _originalAmount = res.originalAmount;
         _supplierSuggestion = res.supplierSuggestion;
@@ -1809,7 +1996,7 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
     final q = _supCtrl.text.trim().toLowerCase();
     final matchingSuppliers = _allSuppliers
         .where((s) => q.isEmpty || s.toLowerCase().contains(q))
-        .take(24)
+        .take(20)
         .toList();
 
     return SafeArea(
@@ -1852,7 +2039,7 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
               ),
               const SizedBox(height: 12),
 
-              // 1. TOP AI PHOTO SCANNER BOX (Upload -> Instant AI Auto-Fill!)
+              // 1. TOP AI PHOTO SCANNER BOX
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
@@ -1878,7 +2065,7 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
                                 : () => _pickPhoto(ImageSource.camera),
                             icon: const Icon(Icons.photo_camera_rounded,
                                 size: 18),
-                            label: const Text('AI Kamera'),
+                            label: const Text('Kamera (AI)'),
                           ),
                         ),
                         const SizedBox(width: 10),
@@ -1892,7 +2079,7 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
                                 : () => _pickPhoto(ImageSource.gallery),
                             icon: const Icon(Icons.photo_library_rounded,
                                 size: 18),
-                            label: const Text('AI Galereya'),
+                            label: const Text('Galereya (AI)'),
                           ),
                         ),
                       ],
@@ -1914,7 +2101,7 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
                             Positioned.fill(
                               child: Container(
                                 decoration: BoxDecoration(
-                                  color: Colors.black.withValues(alpha: 0.58),
+                                  color: Colors.black.withValues(alpha: 0.60),
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 alignment: Alignment.center,
@@ -1977,7 +2164,7 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
                         _aiBadgeText!,
                         style: TextStyle(
                           fontSize: 12.5,
-                          fontWeight: FontWeight.w700,
+                          fontWeight: FontWeight.w800,
                           color: _aiBadgeText!.startsWith('✨')
                               ? AppTokens.cashGreen
                               : AppTokens.debtAmber,
@@ -1989,24 +2176,49 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
               ),
               const SizedBox(height: 14),
 
-              // 2. Supplier field + fuzzy suggestion + inline supplier chips
-              TextField(
-                controller: _supCtrl,
-                onChanged: (_) => setState(() {}),
-                decoration: InputDecoration(
-                  labelText: 'Postavshik nomi',
-                  hintText: 'Tanlang yoki yangi nom yozing...',
-                  prefixIcon: const Icon(Icons.storefront_rounded),
-                  suffixIcon: _supCtrl.text.isNotEmpty
-                      ? IconButton(
-                          icon: const Icon(Icons.clear_rounded),
-                          onPressed: () {
-                            _supCtrl.clear();
-                            setState(() => _recentAmounts = []);
-                          },
-                        )
-                      : null,
-                ),
+              // 2. Supplier field + Dropdown Picker Button + horizontal chips
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _supCtrl,
+                      onChanged: (_) => setState(() {}),
+                      decoration: InputDecoration(
+                        labelText: 'Postavshik nomi',
+                        hintText: 'Tanlang yoki yozing...',
+                        prefixIcon: const Icon(Icons.storefront_rounded),
+                        suffixIcon: _supCtrl.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear_rounded),
+                                onPressed: () {
+                                  _supCtrl.clear();
+                                  setState(() => _recentAmounts = []);
+                                },
+                              )
+                            : null,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(64, 52),
+                    ),
+                    onPressed: () async {
+                      final picked = await showSupplierPickerDialog(
+                        context,
+                        _allSuppliers,
+                        current: _supCtrl.text,
+                      );
+                      if (picked != null && picked.trim().isNotEmpty) {
+                        await _selectSupplier(picked.trim());
+                      }
+                    },
+                    icon: const Icon(Icons.arrow_drop_down_circle_outlined,
+                        size: 19),
+                    label: const Text("Ro'yxat"),
+                  ),
+                ],
               ),
               if (_supplierSuggestion != null &&
                   _supplierSuggestion!.toLowerCase() !=
@@ -2036,14 +2248,14 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
                           _supCtrl.text.trim().toLowerCase();
                       return ActionChip(
                         backgroundColor: isSel
-                            ? AppTokens.brand.withValues(alpha: 0.16)
+                            ? AppTokens.brand.withValues(alpha: 0.22)
                             : null,
                         label: Text(
                           name,
                           style: TextStyle(
                             fontSize: 12.5,
                             fontWeight:
-                                isSel ? FontWeight.w800 : FontWeight.w600,
+                                isSel ? FontWeight.w900 : FontWeight.w700,
                           ),
                         ),
                         onPressed: () => _selectSupplier(name),
@@ -2054,66 +2266,49 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
               ],
               const SizedBox(height: 14),
 
-              // 3. Amount field + recent amounts + quick +/- chips
+              // 3. Space-formatted Amount field (NO -10 000 / +10 000 buttons!)
               TextField(
                 controller: _amtCtrl,
                 keyboardType: TextInputType.number,
+                inputFormatters: const [UzsAmountInputFormatter()],
                 onChanged: (_) => setState(() {}),
                 style: const TextStyle(
-                  fontSize: 20,
+                  fontSize: 21,
                   fontWeight: FontWeight.w900,
                   fontFeatures: AppTokens.tabularNums,
                 ),
-                decoration: InputDecoration(
+                decoration: const InputDecoration(
                   labelText: "Summa (so'm)",
-                  hintText: 'Masalan: 1 554 000',
-                  prefixIcon: const Icon(Icons.payments_outlined),
-                  helperText: parseUzsInput(_amtCtrl.text) != null
-                      ? formatUzs(parseUzsInput(_amtCtrl.text),
-                          withCurrency: true)
-                      : null,
+                  hintText: '1 554 000',
+                  prefixIcon: Icon(Icons.payments_outlined),
                 ),
               ),
-              const SizedBox(height: 8),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    ..._recentAmounts.map(
-                      (a) => Padding(
-                        padding: const EdgeInsets.only(right: 6),
-                        child: ActionChip(
-                          avatar: const Icon(Icons.history_rounded, size: 15),
-                          label: Text(formatUzs(a)),
-                          onPressed: () {
-                            _amtCtrl.text = a.round().toString();
-                            setState(() {});
-                          },
-                        ),
-                      ),
-                    ),
-                    ActionChip(
-                      label: const Text('−10 000'),
-                      onPressed: () => _adjustAmount(-10000),
-                    ),
-                    const SizedBox(width: 6),
-                    ActionChip(
-                      label: const Text('−1 000'),
-                      onPressed: () => _adjustAmount(-1000),
-                    ),
-                    const SizedBox(width: 6),
-                    ActionChip(
-                      label: const Text('+1 000'),
-                      onPressed: () => _adjustAmount(1000),
-                    ),
-                    const SizedBox(width: 6),
-                    ActionChip(
-                      label: const Text('+10 000'),
-                      onPressed: () => _adjustAmount(10000),
-                    ),
-                  ],
+              if (_recentAmounts.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: _recentAmounts
+                        .map(
+                          (a) => Padding(
+                            padding: const EdgeInsets.only(right: 6),
+                            child: ActionChip(
+                              avatar:
+                                  const Icon(Icons.history_rounded, size: 15),
+                              label: Text(formatUzs(a)),
+                              onPressed: () {
+                                _amtCtrl.text =
+                                    UzsAmountInputFormatter.formatDigits(
+                                        a.round().toString());
+                                setState(() {});
+                              },
+                            ),
+                          ),
+                        )
+                        .toList(),
+                  ),
                 ),
-              ),
+              ],
               const SizedBox(height: 14),
 
               // 4. Payment mode selector
@@ -2128,7 +2323,7 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
               ),
               const SizedBox(height: 12),
 
-              // 5. Note & Group Send Switch
+              // 5. Note
               TextField(
                 controller: _noteCtrl,
                 decoration: const InputDecoration(
@@ -2137,23 +2332,24 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
                   isDense: true,
                 ),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 8),
+
+              // 6. Guruhga yuborish toggle (Default ON, always toggleable right above Confirm)
               SwitchListTile.adaptive(
                 contentPadding: EdgeInsets.zero,
                 title: const Text(
-                  'Telegram guruhga yuborish',
-                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                  '📤 Guruhga yuborish',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14.5),
                 ),
                 subtitle: Text(
                   widget.groupInfo.bound
-                      ? 'Guruh: ${widget.groupInfo.title}'
-                      : 'Hozircha guruh bog\'lanmagan (faqat bazaga tushadi)',
-                  style: const TextStyle(fontSize: 12),
+                      ? 'Telegram guruh: ${widget.groupInfo.title}'
+                      : 'Guruh bog\'langan bo\'lsa avtomatik yuboriladi',
+                  style: TextStyle(
+                      fontSize: 12, color: textSecondaryOf(context)),
                 ),
                 value: _sendToGroup,
-                onChanged: widget.groupInfo.bound
-                    ? (v) => setState(() => _sendToGroup = v)
-                    : null,
+                onChanged: (v) => setState(() => _sendToGroup = v),
               ),
 
               if (_error != null) ...[
@@ -2166,7 +2362,7 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
                   ),
                 ),
               ],
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               FilledButton.icon(
                 onPressed: (_submitting || _aiLoading) ? null : _submit,
                 icon: _submitting
@@ -2189,7 +2385,10 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
 }
 
 // ============================================================================
-// NAKLADNOY DETAIL & EDIT SHEET (SafeArea + Direct Amount + Inline Suppliers)
+// NAKLADNOY DETAIL & EDIT SHEET:
+// - Space-formatted amount input (UzsAmountInputFormatter)
+// - NO -10 000 / +10 000 buttons (only clean direct typing + Yaxlitlash)
+// - Searchable Supplier Picker Modal
 // ============================================================================
 
 class NakladnoyDetailSheet extends StatefulWidget {
@@ -2211,7 +2410,6 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
   late TextEditingController _supCtrl;
   late TextEditingController _amtCtrl;
   List<String> _suppliers = [];
-  bool _showSupplierPicker = false;
   bool _busy = false;
   bool _changed = false;
 
@@ -2220,7 +2418,10 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
     super.initState();
     _cur = widget.item;
     _supCtrl = TextEditingController(text: _cur.supplierName);
-    _amtCtrl = TextEditingController(text: _cur.amount.round().toString());
+    _amtCtrl = TextEditingController(
+      text: UzsAmountInputFormatter.formatDigits(
+          _cur.amount.round().toString()),
+    );
     _loadSuppliers();
   }
 
@@ -2255,9 +2456,9 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
         setState(() {
           _cur = updated;
           _supCtrl.text = updated.supplierName;
-          _amtCtrl.text = updated.amount.round().toString();
+          _amtCtrl.text = UzsAmountInputFormatter.formatDigits(
+              updated.amount.round().toString());
           _changed = true;
-          _showSupplierPicker = false;
         });
       }
     } catch (e) {
@@ -2345,6 +2546,7 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                 const SizedBox(height: 12),
               ],
 
+              // Supplier field + Searchable Dropdown Modal Picker
               Row(
                 children: [
                   Expanded(
@@ -2364,10 +2566,19 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                   ),
                   const SizedBox(width: 8),
                   OutlinedButton.icon(
-                    onPressed: () => setState(
-                        () => _showSupplierPicker = !_showSupplierPicker),
-                    icon: const Icon(Icons.list_rounded, size: 18),
-                    label: const Text('Ro\'yxat'),
+                    onPressed: () async {
+                      final picked = await showSupplierPickerDialog(
+                        context,
+                        _suppliers,
+                        current: _supCtrl.text,
+                      );
+                      if (picked != null && picked.trim().isNotEmpty) {
+                        await _applyUpdate(supplier: picked.trim());
+                      }
+                    },
+                    icon: const Icon(Icons.arrow_drop_down_circle_outlined,
+                        size: 18),
+                    label: const Text("Ro'yxat"),
                   ),
                   const SizedBox(width: 6),
                   FilledButton.tonal(
@@ -2382,50 +2593,23 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                   ),
                 ],
               ),
-              if (_showSupplierPicker && _suppliers.isNotEmpty) ...[
-                const SizedBox(height: 10),
-                Container(
-                  constraints: const BoxConstraints(maxHeight: 170),
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .surfaceContainerHighest
-                        .withValues(alpha: 0.4),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: SingleChildScrollView(
-                    child: Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: _suppliers
-                          .map(
-                            (s) => ActionChip(
-                              label: Text(s,
-                                  style: const TextStyle(fontSize: 12.5)),
-                              onPressed: () => _applyUpdate(supplier: s),
-                            ),
-                          )
-                          .toList(),
-                    ),
-                  ),
-                ),
-              ],
               const SizedBox(height: 14),
 
+              // Space-formatted Amount field + Yaxlitlash + Yangilash
               Row(
                 children: [
                   Expanded(
                     child: TextField(
                       controller: _amtCtrl,
                       keyboardType: TextInputType.number,
+                      inputFormatters: const [UzsAmountInputFormatter()],
                       style: const TextStyle(
-                        fontSize: 19,
+                        fontSize: 20,
                         fontWeight: FontWeight.w900,
                         fontFeatures: AppTokens.tabularNums,
                       ),
                       decoration: const InputDecoration(
-                        labelText: "Summa (so'm) — qo'lda yozing",
+                        labelText: "Summa (so'm)",
                         prefixIcon: Icon(Icons.payments_outlined),
                         isDense: true,
                       ),
@@ -2438,6 +2622,13 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                     ),
                   ),
                   const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed:
+                        _busy ? null : () => _applyUpdate(roundAmount: true),
+                    icon: const Icon(Icons.auto_fix_high_rounded, size: 17),
+                    label: const Text('Yaxlit'),
+                  ),
+                  const SizedBox(width: 6),
                   FilledButton(
                     onPressed: _busy
                         ? null
@@ -2447,46 +2638,7 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                               _applyUpdate(amount: parsed);
                             }
                           },
-                    child: const Text('Yangilash'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  ActionChip(
-                    label: const Text('−10 000'),
-                    onPressed: _busy
-                        ? null
-                        : () => _applyUpdate(
-                            amount: (_cur.amount - 10000).clamp(1000, 1e12)),
-                  ),
-                  ActionChip(
-                    label: const Text('−1 000'),
-                    onPressed: _busy
-                        ? null
-                        : () => _applyUpdate(
-                            amount: (_cur.amount - 1000).clamp(1000, 1e12)),
-                  ),
-                  ActionChip(
-                    label: const Text('+1 000'),
-                    onPressed: _busy
-                        ? null
-                        : () => _applyUpdate(amount: _cur.amount + 1000),
-                  ),
-                  ActionChip(
-                    label: const Text('+10 000'),
-                    onPressed: _busy
-                        ? null
-                        : () => _applyUpdate(amount: _cur.amount + 10000),
-                  ),
-                  ActionChip(
-                    avatar: const Icon(Icons.auto_fix_high_rounded, size: 15),
-                    label: const Text('Yaxlitlash'),
-                    onPressed:
-                        _busy ? null : () => _applyUpdate(roundAmount: true),
+                    child: const Text('Saqlash'),
                   ),
                 ],
               ),

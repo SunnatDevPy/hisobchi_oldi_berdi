@@ -9,6 +9,7 @@ void main() {
     expect(formatUzs(0), '0');
     expect(parseUzsInput('1 554 000'), 1554000);
     expect(parseUzsInput('260000'), 260000);
+    expect(UzsAmountInputFormatter.formatDigits('1554000'), '1 554 000');
   });
 
   testWidgets('LoginScreen renders instructions and 8-digit code input',

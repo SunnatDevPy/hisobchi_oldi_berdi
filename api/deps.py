@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Optional
@@ -23,6 +24,7 @@ from database.crud import (
 )
 from database.models import NakladnoyPayment
 from database.session import async_session_maker
+from services.gemini_ai import compress_image_for_ocr
 
 
 logger = logging.getLogger("hisobot_bot.api.deps")
@@ -50,9 +52,10 @@ def get_local_photo_path(payment_id: int) -> Path:
 
 
 def save_local_photo(payment_id: int, photo_bytes: bytes) -> Path:
-    """Persist uploaded photo bytes to data/apk_photos/nak_<id>.jpg."""
+    """Normalize (strip broken Xiaomi/MediaTek EXIF) and persist photo bytes to data/apk_photos/nak_<id>.jpg."""
+    clean_bytes, _ = compress_image_for_ocr(photo_bytes, max_side=1600, quality=88)
     path = get_local_photo_path(payment_id)
-    path.write_bytes(photo_bytes)
+    path.write_bytes(clean_bytes)
     return path
 
 
@@ -109,19 +112,36 @@ async def post_nakladnoy_to_telegram_group(
         except Exception:
             photo_bytes = None
 
-    caption = render_nakladnoy_group_caption(payment, tag="📱 [APK]", session_seq=session_seq)
+    if photo_bytes:
+        photo_bytes, _ = await asyncio.to_thread(
+            compress_image_for_ocr, photo_bytes, 1600, 88
+        )
+
+    caption = render_nakladnoy_group_caption(payment, tag="", session_seq=session_seq)
     try:
         tg_file_id: Optional[str] = None
         if photo_bytes:
             inp = BufferedInputFile(photo_bytes, filename=f"nakladnoy_{payment.id}.jpg")
-            sent = await bot.send_photo(
-                chat_id=grp.chat_id,
-                photo=inp,
-                caption=caption,
-                parse_mode="HTML",
-            )
-            if sent.photo:
-                tg_file_id = sent.photo[-1].file_id
+            try:
+                sent = await bot.send_photo(
+                    chat_id=grp.chat_id,
+                    photo=inp,
+                    caption=caption,
+                    parse_mode="HTML",
+                )
+                if sent.photo:
+                    tg_file_id = sent.photo[-1].file_id
+            except Exception as photo_exc:
+                logger.warning(
+                    "send_photo failed for payment_id=%s (%s), falling back to text message",
+                    payment.id,
+                    photo_exc,
+                )
+                sent = await bot.send_message(
+                    chat_id=grp.chat_id,
+                    text=caption,
+                    parse_mode="HTML",
+                )
         elif payment.photo_file_id:
             sent = await bot.send_photo(
                 chat_id=grp.chat_id,
