@@ -602,6 +602,41 @@ class HisobchiApiClient {
     throw const ApiException('APK yuklab olishda xatolik');
   }
 
+  Future<File> downloadApkToFileWithProgress({
+    required File targetFile,
+    required void Function(int receivedBytes, int totalBytes) onProgress,
+    int fallbackTotalBytes = 0,
+  }) async {
+    final req = http.Request('GET', _uri('/download/hisobchi.apk'));
+    final streamed =
+        await _http.send(req).timeout(const Duration(seconds: 180));
+    if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
+      throw ApiException(
+        'APK yuklab olishda xatolik (HTTP ${streamed.statusCode})',
+        statusCode: streamed.statusCode,
+      );
+    }
+    final total = (streamed.contentLength != null && streamed.contentLength! > 0)
+        ? streamed.contentLength!
+        : fallbackTotalBytes;
+    final sink = targetFile.openWrite();
+    var received = 0;
+    try {
+      await for (final chunk in streamed.stream) {
+        sink.add(chunk);
+        received += chunk.length;
+        onProgress(received, total);
+      }
+      await sink.flush();
+    } finally {
+      await sink.close();
+    }
+    if (received < 100 * 1024) {
+      throw const ApiException('Yuklangan APK fayl to\'liq emas');
+    }
+    return targetFile;
+  }
+
   // Stage 1: History sessions, detail, reopen & global search
   Future<List<HistorySessionItem>> getHistorySessions({int limit = 25}) async {
     final res = await _http

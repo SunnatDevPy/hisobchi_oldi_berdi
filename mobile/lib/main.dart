@@ -911,19 +911,31 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     );
   }
 
-  Future<void> _downloadAndShareApkUpdate() async {
+  static const MethodChannel _installerChannel =
+      MethodChannel('uz.hisobchi.hisobchi_app/installer');
+
+  Future<void> _downloadAndShareApkUpdate({bool manualCheck = false}) async {
     if (_updatingApk) return;
-    final ver = _remoteVersion?.version ?? kAppVersion;
     setState(() => _updatingApk = true);
-    _showSnack('📥 Yangi versiya (v$ver) yuklab olinmoqda...');
     try {
-      final bytes = await widget.api.downloadLatestApkBytes();
-      final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/Hisobchi_v$ver.apk');
-      await file.writeAsBytes(bytes, flush: true);
-      await Share.shareXFiles(
-        [XFile(file.path)],
-        text: "Hisobchi v$ver yangi versiyasi — ustiga bosib o'rnating",
+      final verInfo = await widget.api.checkApkVersion();
+      if (mounted) {
+        setState(() => _remoteVersion = verInfo);
+      }
+      if (manualCheck && verInfo.build <= kAppBuildNumber) {
+        _showSnack(
+            '✅ Sizda eng so\'nggi versiya o\'rnatilgan (v$kAppVersion #$kAppBuildNumber)');
+        return;
+      }
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => _InAppUpdateProgressDialog(
+          api: widget.api,
+          versionInfo: verInfo,
+          installerChannel: _installerChannel,
+        ),
       );
     } catch (e) {
       _showSnack('Yangilashda xatolik: $e', isError: true);
@@ -2000,6 +2012,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
       onOpenHistorySessions: _openHistorySessionsSheet,
       onOpenLiveSverka: _openLiveSverkaSheet,
       onOpenPrixod: _openPrixodSheet,
+      onCheckUpdate: () => _downloadAndShareApkUpdate(manualCheck: true),
     );
   }
 }
@@ -2013,6 +2026,7 @@ class _SmenaAndReportsView extends StatefulWidget {
   final VoidCallback onOpenHistorySessions;
   final VoidCallback onOpenLiveSverka;
   final VoidCallback onOpenPrixod;
+  final VoidCallback onCheckUpdate;
 
   const _SmenaAndReportsView({
     required this.summary,
@@ -2023,6 +2037,7 @@ class _SmenaAndReportsView extends StatefulWidget {
     required this.onOpenHistorySessions,
     required this.onOpenLiveSverka,
     required this.onOpenPrixod,
+    required this.onCheckUpdate,
   });
 
   @override
@@ -2417,6 +2432,15 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                       color: textSecondaryOf(context)),
                 ),
                 const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.tonalIcon(
+                    onPressed: widget.onCheckUpdate,
+                    icon: const Icon(Icons.system_update_rounded),
+                    label: const Text("Ilova ichida yangilanishni tekshirish"),
+                  ),
+                ),
+                const SizedBox(height: 10),
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton.icon(
@@ -4899,6 +4923,234 @@ class _PrixodItogSheetState extends State<PrixodItogSheet> {
           ),
         ),
       ),
+    );
+  }
+}
+
+// ============================================================================
+// IN-APP DIRECT APK UPDATER DIALOG (0%..100% Streaming + Native PackageInstaller)
+// ============================================================================
+
+class _InAppUpdateProgressDialog extends StatefulWidget {
+  final HisobchiApiClient api;
+  final ApkVersionInfo versionInfo;
+  final MethodChannel installerChannel;
+
+  const _InAppUpdateProgressDialog({
+    required this.api,
+    required this.versionInfo,
+    required this.installerChannel,
+  });
+
+  @override
+  State<_InAppUpdateProgressDialog> createState() =>
+      _InAppUpdateProgressDialogState();
+}
+
+class _InAppUpdateProgressDialogState
+    extends State<_InAppUpdateProgressDialog> {
+  int _receivedBytes = 0;
+  int _totalBytes = 0;
+  bool _downloading = true;
+  File? _downloadedFile;
+  String? _statusMessage;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _totalBytes = widget.versionInfo.sizeBytes;
+    _startDownloadAndInstall();
+  }
+
+  Future<void> _startDownloadAndInstall() async {
+    setState(() {
+      _downloading = true;
+      _error = null;
+      _statusMessage = 'Yangi versiya yuklab olinmoqda...';
+    });
+    try {
+      final dir = await getTemporaryDirectory();
+      final target =
+          File('${dir.path}/Hisobchi_v${widget.versionInfo.version}.apk');
+      if (await target.exists()) {
+        await target.delete();
+      }
+      final savedFile = await widget.api.downloadApkToFileWithProgress(
+        targetFile: target,
+        fallbackTotalBytes: widget.versionInfo.sizeBytes,
+        onProgress: (rec, tot) {
+          if (mounted) {
+            setState(() {
+              _receivedBytes = rec;
+              if (tot > 0) _totalBytes = tot;
+            });
+          }
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _downloading = false;
+        _downloadedFile = savedFile;
+        _statusMessage = "Yuklab olindi! O'rnatish oynasi ochilmoqda...";
+      });
+      await _triggerNativeInstall(savedFile);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _downloading = false;
+          _error = e.toString();
+        });
+      }
+    }
+  }
+
+  Future<void> _triggerNativeInstall(File file) async {
+    try {
+      final res = await widget.installerChannel.invokeMethod<String>(
+        'installApk',
+        {'path': file.path},
+      );
+      if (!mounted) return;
+      if (res == 'PERMISSION_REQUESTED') {
+        setState(() {
+          _statusMessage =
+              "⚙️ Telefon sozlamalarida «Hisobchi» ilovasiga o'rnatish ruxsatini yoqing — qaytishingiz bilan o'rnatish avtomatik boshlanadi.";
+        });
+      } else {
+        setState(() {
+          _statusMessage =
+              "✅ Android o'rnatish oynasida «Yangilash (Update)» tugmasini bosing.";
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = "O'rnatish oynasini ochishda xatolik: $e");
+      }
+    }
+  }
+
+  String _formatMb(int bytes) => (bytes / (1024 * 1024)).toStringAsFixed(1);
+
+  @override
+  Widget build(BuildContext context) {
+    final ratio = _totalBytes > 0
+        ? (_receivedBytes / _totalBytes).clamp(0.0, 1.0)
+        : null;
+    final pct = ratio != null ? (ratio * 100).round() : 0;
+
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+      title: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              gradient: AppTokens.aiGradient,
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: const Icon(Icons.system_update_rounded,
+                color: Colors.white, size: 20),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Hisobchi v${widget.versionInfo.version}',
+              style:
+                  const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+            ),
+          ),
+        ],
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_downloading) ...[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Yuklanmoqda: $pct%',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 15,
+                    color: AppTokens.brand,
+                    fontFeatures: AppTokens.tabularNums,
+                  ),
+                ),
+                Text(
+                  _totalBytes > 0
+                      ? '${_formatMb(_receivedBytes)} / ${_formatMb(_totalBytes)} MB'
+                      : '${_formatMb(_receivedBytes)} MB',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: textSecondaryOf(context),
+                    fontFeatures: AppTokens.tabularNums,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LinearProgressIndicator(
+                value: ratio,
+                minHeight: 10,
+                backgroundColor: AppTokens.brand.withValues(alpha: 0.14),
+                valueColor:
+                    const AlwaysStoppedAnimation<Color>(AppTokens.brand),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              _statusMessage ?? '',
+              style: TextStyle(
+                fontSize: 12.5,
+                color: textSecondaryOf(context),
+              ),
+            ),
+          ] else if (_error != null) ...[
+            Text(
+              '⚠️ $_error',
+              style: const TextStyle(
+                color: AppTokens.dangerRed,
+                fontWeight: FontWeight.w700,
+                fontSize: 13.5,
+              ),
+            ),
+          ] else ...[
+            Text(
+              _statusMessage ?? "✅ Yuklab olindi!",
+              style: const TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 13.5,
+                height: 1.4,
+              ),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        if (!_downloading && _downloadedFile != null)
+          FilledButton.icon(
+            onPressed: () => _triggerNativeInstall(_downloadedFile!),
+            icon: const Icon(Icons.install_mobile_rounded, size: 18),
+            label: const Text("O'rnatish (Yangilash)"),
+          ),
+        if (!_downloading && _error != null)
+          FilledButton.icon(
+            onPressed: _startDownloadAndInstall,
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('Qayta urinish'),
+          ),
+        if (!_downloading)
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Yopish'),
+          ),
+      ],
     );
   }
 }
