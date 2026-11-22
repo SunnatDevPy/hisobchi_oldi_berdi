@@ -109,6 +109,11 @@ def more_menu_kb(role: str = ROLE_ADMIN) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📜 History / Qidiruv", callback_data="set:history"),
         ]
     )
+    rows.append(
+        [
+            InlineKeyboardButton(text="📱 Mobil ilova (APK)", callback_data="apk:home"),
+        ]
+    )
     if role == ROLE_ADMIN:
         rows.append(
             [InlineKeyboardButton(text="⚙️ Sozlamalar (Admin)", callback_data="more:settings")]

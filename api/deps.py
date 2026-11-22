@@ -28,6 +28,7 @@ from database.session import async_session_maker
 logger = logging.getLogger("hisobot_bot.api.deps")
 
 APK_PHOTOS_DIR = Path("data/apk_photos")
+APK_BINARY_PATH = Path("data/hisobchi.apk")
 _ACTIVE_BOT: Optional[Bot] = None
 
 

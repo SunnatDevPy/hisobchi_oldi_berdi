@@ -202,7 +202,7 @@ class HisobchiApiClient {
   static const String _prefToken = 'hisobchi_access_token';
   static const String _prefRole = 'hisobchi_role';
   static const String _prefUserId = 'hisobchi_user_id';
-  static const String defaultBaseUrl = 'https://hisobchi.yourdomain.uz';
+  static const String defaultBaseUrl = 'https://hisobchi.okaposai.uz';
 
   String baseUrl;
   String? accessToken;

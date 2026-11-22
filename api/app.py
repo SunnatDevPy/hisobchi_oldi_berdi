@@ -19,6 +19,7 @@ from api.auth import (
     revoke_raw_token,
 )
 from api.deps import (
+    APK_BINARY_PATH,
     get_bot,
     get_local_photo_path,
     has_local_photo,
@@ -152,6 +153,19 @@ def create_api_app() -> FastAPI:
     @app.get("/health")
     async def health() -> dict:
         return {"status": "ok", "service": "hisobchi-api"}
+
+    @app.get("/download/hisobchi.apk")
+    async def download_apk_binary():
+        if not APK_BINARY_PATH.is_file():
+            raise HTTPException(
+                status_code=404,
+                detail="APK fayli serverda topilmadi (data/hisobchi.apk)",
+            )
+        return FileResponse(
+            APK_BINARY_PATH,
+            media_type="application/vnd.android.package-archive",
+            filename="Hisobchi.apk",
+        )
 
     @app.post("/auth/login", response_model=LoginResponse)
     async def auth_login(payload: LoginRequest, request: Request) -> LoginResponse:

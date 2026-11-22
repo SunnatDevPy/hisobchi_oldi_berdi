@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     API_ENABLED: bool = True
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8088
-    API_PUBLIC_URL: str = ""
+    API_PUBLIC_URL: str = "https://hisobchi.okaposai.uz"
 
     @field_validator("DATABASE_URL")
     @classmethod

@@ -8,7 +8,13 @@ from typing import Optional
 
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    CallbackQuery,
+    FSInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from api.auth import (
     create_login_code,
@@ -16,6 +22,7 @@ from api.auth import (
     list_active_tokens,
     revoke_token_by_id,
 )
+from api.deps import APK_BINARY_PATH
 from bot.auth import ROLE_LABELS, deny_if_unauthorized, get_user_role, is_admin_role
 from bot.handlers.wallet_nakladnoy import _safe_cb_answer, _safe_edit_text
 from config import get_settings
@@ -33,19 +40,39 @@ def _apk_panel_kb(post_to_group_on: bool, device_count: int, is_admin: bool) -> 
         if post_to_group_on
         else "📤 Guruhga yuborish: 🔕 O'chirilgan"
     )
-    rows = [
-        [InlineKeyboardButton(text="🔑 Yangi kod olish", callback_data="apk:new_code")],
+    pub_url = (get_settings().API_PUBLIC_URL or "https://hisobchi.okaposai.uz").strip().rstrip("/")
+    rows: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton(
-                text=f"📱 Ulangan qurilmalar ({device_count})",
-                callback_data="apk:devices",
+                text="📥 APK ilovani yuklab olish (Telegramda)",
+                callback_data="apk:download_file",
             )
         ],
     ]
+    if pub_url.startswith("https://") or pub_url.startswith("http://"):
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🌐 Brauzerdan yuklab olish (Tezkor)",
+                    url=f"{pub_url}/download/hisobchi.apk",
+                )
+            ]
+        )
+    rows.extend(
+        [
+            [InlineKeyboardButton(text="🔑 Yangi kod olish", callback_data="apk:new_code")],
+            [
+                InlineKeyboardButton(
+                    text=f"📱 Ulangan qurilmalar ({device_count})",
+                    callback_data="apk:devices",
+                )
+            ],
+        ]
+    )
     if is_admin:
         rows.append([InlineKeyboardButton(text=grp_label, callback_data="apk:toggle_grp")])
         rows.append(
-            [InlineKeyboardButton(text="🔗 Nakladnoy guruhini sozlash", callback_data="settings:groups")]
+            [InlineKeyboardButton(text="🔗 Nakladnoy guruhini sozlash", callback_data="set:groups")]
         )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -122,6 +149,76 @@ async def cb_apk_new_code(cb: CallbackQuery) -> None:
     text, kb = await _render_apk_home(uid, code=code)
     if cb.message:
         await _safe_edit_text(cb.message, text, reply_markup=kb)
+
+
+@router.callback_query(F.data == "apk:download_file")
+async def cb_apk_download_file(cb: CallbackQuery) -> None:
+    """Send Hisobchi.apk directly in Telegram chat (with cached file_id for instant delivery)."""
+    if await deny_if_unauthorized(cb):
+        return
+    pub_url = (get_settings().API_PUBLIC_URL or "https://hisobchi.okaposai.uz").strip().rstrip("/")
+    dl_link = f"{pub_url}/download/hisobchi.apk"
+    if not APK_BINARY_PATH.is_file():
+        await _safe_cb_answer(cb, "APK fayli yuklanmoqda...", show_alert=False)
+        if cb.message:
+            await cb.message.answer(
+                f"📥 <b>Hisobchi APK yuklab olish:</b>\n👉 <a href=\"{html.escape(dl_link)}\">{html.escape(dl_link)}</a>",
+                parse_mode="HTML",
+            )
+        return
+
+    await _safe_cb_answer(cb, "📥 APK yuborilmoqda...")
+    stat = APK_BINARY_PATH.stat()
+    sig = f"{stat.st_size}:{int(stat.st_mtime)}"
+
+    async with async_session_maker() as db:
+        cached_sig = await get_app_setting(db, "apk_tg_file_sig", "")
+        cached_fid = await get_app_setting(db, "apk_tg_file_id", "")
+
+    uid = cb.from_user.id if cb.from_user else 0
+    code = create_login_code(uid)
+    caption = (
+        "📱 <b>Hisobchi Mobil Ilovasi (Android APK)</b>\n\n"
+        f"🌐 Server: <code>{html.escape(pub_url)}</code>\n"
+        f"🔑 Kirish kodi (5 daqiqa): <code>{code}</code>\n\n"
+        "<i>Faylni yuklab olib telefoningizga o'rnating va yuqoridagi 8 xonali kodni kiriting.</i>"
+    )
+
+    if cb.message:
+        try:
+            if cached_fid and cached_sig == sig:
+                await cb.message.answer_document(
+                    document=cached_fid,
+                    caption=caption,
+                    parse_mode="HTML",
+                )
+                return
+        except Exception:
+            pass
+
+        try:
+            wait_msg = await cb.message.answer("⏳ <i>APK fayli Telegramga yuklanmoqda (10-15 soniya)...</i>", parse_mode="HTML")
+            sent = await cb.message.answer_document(
+                document=FSInputFile(APK_BINARY_PATH, filename="Hisobchi.apk"),
+                caption=caption,
+                parse_mode="HTML",
+            )
+            try:
+                await wait_msg.delete()
+            except Exception:
+                pass
+            if sent.document and sent.document.file_id:
+                async with async_session_maker() as db:
+                    await set_app_setting(db, "apk_tg_file_sig", sig)
+                    await set_app_setting(db, "apk_tg_file_id", sent.document.file_id)
+        except Exception as exc:
+            logger.warning("Failed to send APK document via Telegram: %s", exc)
+            await cb.message.answer(
+                f"📥 <b>Hisobchi APK to'g'ridan-to'g'ri yuklab olish havolasi:</b>\n"
+                f"👉 <a href=\"{html.escape(dl_link)}\">{html.escape(dl_link)}</a>\n\n"
+                f"🔑 Kirish kodi: <code>{code}</code>",
+                parse_mode="HTML",
+            )
 
 
 @router.callback_query(F.data == "apk:toggle_grp")

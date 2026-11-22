@@ -33,6 +33,9 @@ services:
       - "127.0.0.1:8088:8088"
     volumes:
       - ./data:/app/data
+    networks:
+      - default
+      - okapos_default
     logging:
       driver: "json-file"
       options:
@@ -41,3 +44,7 @@ services:
 
 volumes:
   hisobchi_pgdata:
+
+networks:
+  okapos_default:
+    external: true
