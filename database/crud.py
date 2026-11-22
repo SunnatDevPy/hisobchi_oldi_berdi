@@ -1611,26 +1611,73 @@ async def get_period_statistics(db: AsyncSession, date_from: str, date_to: str) 
         if tx.source_type == "main":
             by_day_cash_in[r_date] = by_day_cash_in.get(r_date, 0.0) + float(tx.amount)
 
-    cal_keys: set[str] = set(by_day.keys()) | set(by_day_cash_in.keys())
-    try:
-        d_start = datetime.strptime(date_from, "%Y-%m-%d").date()
-        d_end = datetime.strptime(date_to, "%Y-%m-%d").date()
-        span = (d_end - d_start).days
-        if 0 <= span <= 90:
-            for offset in range(span + 1):
-                cal_keys.add((d_start + timedelta(days=offset)).strftime("%Y-%m-%d"))
-    except Exception:
-        pass
-    all_day_keys = sorted(cal_keys)
-    daily_series = [
-        {
-            "date": d,
-            "spent": float(by_day.get(d, 0.0)),
-            "cash_in": float(by_day_cash_in.get(d, 0.0)),
-            "count": int(by_day_count.get(d, 0)),
-        }
-        for d in all_day_keys
-    ]
+    is_single_day = date_from == date_to
+    if is_single_day:
+        by_hour_spent: Dict[int, float] = {}
+        by_hour_count: Dict[int, int] = {}
+        by_hour_cash_in: Dict[int, float] = {}
+        for pay, _ in nak_rows:
+            hr_str = format_local_dt(pay.created_at, "%H")
+            hr = int(hr_str) if hr_str.isdigit() else 12
+            by_hour_spent[hr] = by_hour_spent.get(hr, 0.0) + float(pay.amount)
+            by_hour_count[hr] = by_hour_count.get(hr, 0) + 1
+        for tx, _ in cash_rows:
+            if tx.source_type == "main":
+                hr_str = format_local_dt(tx.created_at, "%H")
+                hr = int(hr_str) if hr_str.isdigit() else 12
+                by_hour_cash_in[hr] = by_hour_cash_in.get(hr, 0.0) + float(tx.amount)
+
+        active_hours = set(by_hour_spent.keys()) | set(by_hour_cash_in.keys())
+        is_today = date_from == today_iso()
+        if active_hours:
+            start_hr = max(0, min(8, min(active_hours)))
+            end_hr = (
+                min(23, max(max(active_hours), now_local().hour))
+                if is_today
+                else min(23, max(max(active_hours), 20))
+            )
+            if end_hr - start_hr < 5:
+                end_hr = min(23, start_hr + 5)
+            if end_hr - start_hr < 5:
+                start_hr = max(0, end_hr - 5)
+        else:
+            start_hr = 8
+            end_hr = max(14, min(20, now_local().hour)) if is_today else 20
+
+        daily_series = [
+            {
+                "date": f"{h:02d}:00",
+                "label": f"{h:02d}:00–{h:02d}:59",
+                "full_date": date_from,
+                "spent": float(by_hour_spent.get(h, 0.0)),
+                "cash_in": float(by_hour_cash_in.get(h, 0.0)),
+                "count": int(by_hour_count.get(h, 0)),
+            }
+            for h in range(start_hr, end_hr + 1)
+        ]
+        granularity = "hourly"
+    else:
+        cal_keys: set[str] = set(by_day.keys()) | set(by_day_cash_in.keys())
+        try:
+            d_start = datetime.strptime(date_from, "%Y-%m-%d").date()
+            d_end = datetime.strptime(date_to, "%Y-%m-%d").date()
+            span = (d_end - d_start).days
+            if 0 <= span <= 90:
+                for offset in range(span + 1):
+                    cal_keys.add((d_start + timedelta(days=offset)).strftime("%Y-%m-%d"))
+        except Exception:
+            pass
+        all_day_keys = sorted(cal_keys)
+        daily_series = [
+            {
+                "date": d,
+                "spent": float(by_day.get(d, 0.0)),
+                "cash_in": float(by_day_cash_in.get(d, 0.0)),
+                "count": int(by_day_count.get(d, 0)),
+            }
+            for d in all_day_keys
+        ]
+        granularity = "daily"
 
     active_days = len(by_day)
     avg_daily = (total_spent / active_days) if active_days else 0.0
@@ -1645,6 +1692,7 @@ async def get_period_statistics(db: AsyncSession, date_from: str, date_to: str) 
     return {
         "date_from": date_from,
         "date_to": date_to,
+        "granularity": granularity,
         "total_spent": total_spent,
         "cash_spent": pm_totals["cash"],
         "card_spent": pm_totals["card"],

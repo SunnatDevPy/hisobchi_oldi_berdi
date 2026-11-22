@@ -993,16 +993,23 @@ def create_api_app() -> FastAPI:
         days: int = Query(default=7, ge=1, le=365),
         date_from: Optional[str] = Query(default=None),
         date_to: Optional[str] = Query(default=None),
+        preset: Optional[str] = Query(default=None),
         user: AuthenticatedUser = Depends(get_current_user),
     ) -> dict:
-        d_to = (date_to or today_iso()).strip()
-        d_from = (
-            date_from.strip()
-            if date_from
-            else (now_local() - timedelta(days=max(days - 1, 0))).strftime("%Y-%m-%d")
-        )
-        if d_from > d_to:
-            d_from, d_to = d_to, d_from
+        clean_preset = (preset or "").strip().lower()
+        if not date_from and not date_to and clean_preset == "today":
+            d_from = d_to = today_iso()
+        elif not date_from and not date_to and clean_preset == "yesterday":
+            d_from = d_to = (now_local() - timedelta(days=1)).strftime("%Y-%m-%d")
+        else:
+            d_to = (date_to or today_iso()).strip()
+            d_from = (
+                date_from.strip()
+                if date_from
+                else (now_local() - timedelta(days=max(days - 1, 0))).strftime("%Y-%m-%d")
+            )
+            if d_from > d_to:
+                d_from, d_to = d_to, d_from
         async with async_session_maker() as db:
             st = await get_period_statistics(db, d_from, d_to)
         top_sups = [
@@ -1013,6 +1020,7 @@ def create_api_app() -> FastAPI:
         return {
             "date_from": st["date_from"],
             "date_to": st["date_to"],
+            "granularity": st.get("granularity", "daily"),
             "total_spent": float(st["total_spent"]),
             "cash_spent": float(st.get("cash_spent", 0.0)),
             "card_spent": float(st.get("card_spent", 0.0)),

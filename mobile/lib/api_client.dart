@@ -682,10 +682,12 @@ class HisobchiApiClient {
     int days = 7,
     String? dateFrom,
     String? dateTo,
+    String? preset,
   }) async {
     final q = <String, String>{'days': '$days'};
     if (dateFrom != null && dateFrom.isNotEmpty) q['date_from'] = dateFrom;
     if (dateTo != null && dateTo.isNotEmpty) q['date_to'] = dateTo;
+    if (preset != null && preset.isNotEmpty) q['preset'] = preset;
     final res = await _http
         .get(_uri('/stats/period', q), headers: _headers())
         .timeout(const Duration(seconds: 15));

@@ -940,12 +940,16 @@ def test_nakladnoy_card_and_transfer_do_not_deduct_cash_and_show_in_stats(tmp_pa
         s_restored = await compute_session_summary(db_session, sess1.id)
         assert s_restored.expected_cash == 9_000_000.0
 
-        # Period statistics breakdown & Sverka + Session Excel
+        # Period statistics breakdown & hourly single-day series + Sverka + Session Excel
         st = await get_period_statistics(db_session, "2026-11-22", "2026-11-22")
         assert st["cash_spent"] == 1_000_000.0
         assert st["card_spent"] == 2_000_000.0
         assert st["transfer_spent"] == 3_000_000.0
         assert st["total_spent"] == 6_000_000.0
+        assert st["granularity"] == "hourly"
+        assert len(st["daily_series"]) >= 6
+        assert all(":" in pt["date"] and "–" in pt["label"] for pt in st["daily_series"])
+        assert abs(sum(pt["spent"] for pt in st["daily_series"]) - 6_000_000.0) < 0.01
         stats_txt = _render_period_stats_text("Statistika", st)
         assert "Karta" in stats_txt and "Perechesleniya" in stats_txt
 
@@ -1720,11 +1724,31 @@ def test_mobile_apk_rest_api_and_group_posting(tmp_path: Path, monkeypatch):
                 assert r_up_photo.status_code == 200
                 assert r_up_photo.json()["has_photo"] is True
 
-                # 8f. Period stats & Live Sverka + Sverka Excel export (Stage 2)
+                # 8f. Period stats (daily vs 1-day hourly presets) & Live Sverka + Sverka Excel export (Stage 2)
                 r_pstats = await client.get("/stats/period?days=7", headers=headers)
                 assert r_pstats.status_code == 200
                 assert r_pstats.json()["total_spent"] > 0
+                assert r_pstats.json()["granularity"] == "daily"
                 assert len(r_pstats.json()["daily_series"]) >= 7
+
+                r_today = await client.get("/stats/period?preset=today", headers=headers)
+                assert r_today.status_code == 200
+                assert r_today.json()["granularity"] == "hourly"
+                assert len(r_today.json()["daily_series"]) >= 6
+                assert ":" in r_today.json()["daily_series"][0]["date"]
+
+                r_yday = await client.get("/stats/period?preset=yesterday", headers=headers)
+                assert r_yday.status_code == 200
+                assert r_yday.json()["granularity"] == "hourly"
+                assert len(r_yday.json()["daily_series"]) >= 6
+
+                r_oneday = await client.get(
+                    "/stats/period?date_from=2026-11-22&date_to=2026-11-22",
+                    headers=headers,
+                )
+                assert r_oneday.status_code == 200
+                assert r_oneday.json()["granularity"] == "hourly"
+                assert len(r_oneday.json()["daily_series"]) >= 6
 
                 # 8f2. Supplier configs & round-mode settings
                 r_sup_save = await client.post(

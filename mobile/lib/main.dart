@@ -745,8 +745,11 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   StatusSummary? _viewedSessionSummary;
   bool _switchingSession = false;
   List<Map<String, dynamic>> _dailySeries = [];
+  String _seriesGranularity = 'daily';
   String _activePeriodKey = '7d';
   String _periodLabel = 'Oxirgi 7 kunlik dinamika';
+  String? _customDateFrom;
+  String? _customDateTo;
 
   ApkVersionInfo? _remoteVersion;
   bool _updatingApk = false;
@@ -755,6 +758,31 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   void initState() {
     super.initState();
     _refreshAll();
+  }
+
+  Future<Map<String, dynamic>> _fetchPeriodStatsForKey(String key) {
+    if (key == 'today') {
+      return widget.api.getPeriodStats(days: 1, preset: 'today');
+    }
+    if (key == 'yesterday') {
+      return widget.api.getPeriodStats(days: 1, preset: 'yesterday');
+    }
+    if (key == '14d') {
+      return widget.api.getPeriodStats(days: 14);
+    }
+    if (key == '30d') {
+      return widget.api.getPeriodStats(days: 30);
+    }
+    if (key == 'custom' &&
+        _customDateFrom != null &&
+        _customDateTo != null) {
+      return widget.api.getPeriodStats(
+        days: 30,
+        dateFrom: _customDateFrom,
+        dateTo: _customDateTo,
+      );
+    }
+    return widget.api.getPeriodStats(days: 7);
   }
 
   Future<void> _refreshAll() async {
@@ -776,14 +804,13 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
         hist = await widget.api.getHistorySessions(limit: 30);
       } catch (_) {}
       List<Map<String, dynamic>> series = _dailySeries;
+      String granularity = _seriesGranularity;
       try {
-        final days = _activePeriodKey == '14d'
-            ? 14
-            : (_activePeriodKey == '30d' ? 30 : 7);
-        final p = await widget.api.getPeriodStats(days: days);
+        final p = await _fetchPeriodStatsForKey(_activePeriodKey);
         series = ((p['daily_series'] as List?) ?? const [])
             .map((e) => Map<String, dynamic>.from(e as Map))
             .toList();
+        granularity = (p['granularity'] ?? 'daily').toString();
       } catch (_) {}
       StatusSummary? refreshedViewed;
       if (_viewedSessionSummary != null) {
@@ -798,6 +825,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
           _allDebts = results[1] as List<NakladnoyItem>;
           _historySessions = hist;
           _dailySeries = series;
+          _seriesGranularity = granularity;
           if (_viewedSessionSummary != null) {
             _viewedSessionSummary = refreshedViewed;
           }
@@ -846,23 +874,37 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   }
 
   Future<void> _selectTrendPeriodKey(String key) async {
-    final days = key == '14d' ? 14 : (key == '30d' ? 30 : 7);
-    final label = key == '14d'
-        ? 'Oxirgi 14 kunlik dinamika'
-        : (key == '30d'
-            ? 'Oxirgi 30 kunlik dinamika'
-            : 'Oxirgi 7 kunlik dinamika');
+    final String label;
+    switch (key) {
+      case 'today':
+        label = 'Bugun • Soatlik dinamika';
+        break;
+      case 'yesterday':
+        label = 'Kecha • Soatlik dinamika';
+        break;
+      case '14d':
+        label = 'Oxirgi 14 kunlik dinamika';
+        break;
+      case '30d':
+        label = 'Oxirgi 30 kunlik dinamika';
+        break;
+      default:
+        label = 'Oxirgi 7 kunlik dinamika';
+    }
     setState(() {
       _activePeriodKey = key;
       _periodLabel = label;
     });
     try {
-      final p = await widget.api.getPeriodStats(days: days);
+      final p = await _fetchPeriodStatsForKey(key);
       if (mounted) {
         setState(() {
           _dailySeries = ((p['daily_series'] as List?) ?? const [])
               .map((e) => Map<String, dynamic>.from(e as Map))
               .toList();
+          _seriesGranularity = (p['granularity'] ??
+                  ((key == 'today' || key == 'yesterday') ? 'hourly' : 'daily'))
+              .toString();
         });
       }
     } catch (e) {
@@ -879,9 +921,13 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     if (picked == null) return;
     final dFrom = DateFormat('yyyy-MM-dd').format(picked.start);
     final dTo = DateFormat('yyyy-MM-dd').format(picked.end);
+    final isOneDay = dFrom == dTo;
     setState(() {
+      _customDateFrom = dFrom;
+      _customDateTo = dTo;
       _activePeriodKey = 'custom';
-      _periodLabel = '$dFrom — $dTo dinamikasi';
+      _periodLabel =
+          isOneDay ? '$dFrom • Soatlik dinamika' : '$dFrom — $dTo dinamikasi';
     });
     try {
       final p = await widget.api.getPeriodStats(
@@ -894,6 +940,8 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
           _dailySeries = ((p['daily_series'] as List?) ?? const [])
               .map((e) => Map<String, dynamic>.from(e as Map))
               .toList();
+          _seriesGranularity =
+              (p['granularity'] ?? (isOneDay ? 'hourly' : 'daily')).toString();
         });
       }
     } catch (e) {
@@ -1497,6 +1545,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
             summary: s,
             canWrite: !isViewingPast && widget.api.canWrite,
             dailySeries: _dailySeries,
+            seriesGranularity: _seriesGranularity,
             periodLabel: _periodLabel,
             activePeriodKey: _activePeriodKey,
             onSelectPeriodKey: _selectTrendPeriodKey,
@@ -1561,36 +1610,32 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                             fontSize: 13.5,
                           ),
                         )
-                      : DropdownButtonHideUnderline(
-                          child: DropdownButton<int>(
-                            value: sessions.any((e) => e.id == currentId)
-                                ? currentId
-                                : sessions.first.id,
-                            isExpanded: true,
-                            isDense: true,
-                            icon: const Icon(
-                                Icons.keyboard_arrow_down_rounded),
-                            items: sessions.map((s) {
-                              final isCurOpen =
-                                  s.id == _summary?.sessionId;
-                              return DropdownMenuItem<int>(
-                                value: s.id,
-                                child: Text(
-                                  '${isCurOpen ? "🟢 " : "📅 "}${s.reportDate} • Smena #${s.id}${isCurOpen ? " (Faol)" : ""}',
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontWeight: isCurOpen
-                                        ? FontWeight.w900
-                                        : FontWeight.w700,
-                                    fontSize: 13.5,
-                                  ),
-                                ),
-                              );
-                            }).toList(),
-                            onChanged: _switchingSession
-                                ? null
-                                : (val) => _selectDashboardSession(val),
-                          ),
+                      : HisobchiCustomDropdown<int>(
+                          value: sessions.any((e) => e.id == currentId)
+                              ? currentId
+                              : sessions.first.id,
+                          compact: true,
+                          searchable: sessions.length >= 8,
+                          enabled: !_switchingSession,
+                          sheetTitle: 'Smena / sanani tanlang',
+                          options: sessions.map((s) {
+                            final isCurOpen = s.id == _summary?.sessionId;
+                            return CustomDropdownOption<int>(
+                              value: s.id,
+                              label: '${s.reportDate} • Smena #${s.id}',
+                              subtitle: isCurOpen
+                                  ? "Bugungi faol ochiq smena"
+                                  : "Kutilgan naqd: ${formatUzs(s.expectedCash, withCurrency: true)}",
+                              icon: isCurOpen
+                                  ? Icons.radio_button_checked_rounded
+                                  : Icons.calendar_today_rounded,
+                              accentColor: isCurOpen
+                                  ? AppTokens.cashGreen
+                                  : AppTokens.brand,
+                              badge: isCurOpen ? 'Faol' : '#${s.id}',
+                            );
+                          }).toList(),
+                          onChanged: (val) => _selectDashboardSession(val),
                         ),
                 ),
                 IconButton(
@@ -1703,76 +1748,106 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
           ),
           const SizedBox(height: 10),
 
-          // Filter & Sort Dropdown Row
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: _filterMode,
-                  isDense: true,
-                  decoration: const InputDecoration(
+          // Filter & Sort Custom Dropdown Row
+          Builder(builder: (context) {
+            final cashCnt = s.nakladnoys
+                .where((n) => !n.isDebt && n.paymentMethod == 'cash')
+                .length;
+            final cardCnt = s.nakladnoys
+                .where((n) => !n.isDebt && n.paymentMethod == 'card')
+                .length;
+            final transferCnt = s.nakladnoys
+                .where((n) => !n.isDebt && n.paymentMethod == 'transfer')
+                .length;
+            final debtCnt = s.nakladnoys.where((n) => n.isDebt).length;
+
+            return Row(
+              children: [
+                Expanded(
+                  child: HisobchiCustomDropdown<String>(
+                    value: _filterMode,
                     labelText: "To'lov turi",
-                    contentPadding:
-                        EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    sheetTitle: "To'lov turi bo'yicha filtrlash",
+                    options: [
+                      CustomDropdownOption<String>(
+                        value: 'all',
+                        label: 'Barchasi',
+                        subtitle: "Hamma to'lov turlari",
+                        icon: Icons.apps_rounded,
+                        accentColor: AppTokens.brand,
+                        badge: '${s.nakladnoys.length}',
+                      ),
+                      CustomDropdownOption<String>(
+                        value: 'cash',
+                        label: 'Naqd',
+                        subtitle: "Qo'ldagi naqd puldan",
+                        icon: Icons.payments_rounded,
+                        accentColor: AppTokens.cashGreen,
+                        badge: '$cashCnt',
+                      ),
+                      CustomDropdownOption<String>(
+                        value: 'card',
+                        label: 'Karta',
+                        subtitle: "Plastik karta orqali",
+                        icon: Icons.credit_card_rounded,
+                        accentColor: AppTokens.cardBlue,
+                        badge: '$cardCnt',
+                      ),
+                      CustomDropdownOption<String>(
+                        value: 'transfer',
+                        label: "O'tkazma",
+                        subtitle: "Perechesleniya orqali",
+                        icon: Icons.account_balance_rounded,
+                        accentColor: AppTokens.transferPurple,
+                        badge: '$transferCnt',
+                      ),
+                      CustomDropdownOption<String>(
+                        value: 'debt',
+                        label: 'Qarzga',
+                        subtitle: "Hali to'lanmagan qarzlar",
+                        icon: Icons.push_pin_rounded,
+                        accentColor: AppTokens.debtAmber,
+                        badge: '$debtCnt',
+                      ),
+                    ],
+                    onChanged: (v) => setState(() => _filterMode = v),
                   ),
-                  items: [
-                    DropdownMenuItem(
-                      value: 'all',
-                      child: Text('Barchasi (${s.nakladnoys.length})'),
-                    ),
-                    const DropdownMenuItem(
-                      value: 'cash',
-                      child: Text('💵 Naqd to\'lov'),
-                    ),
-                    const DropdownMenuItem(
-                      value: 'card',
-                      child: Text('💳 Karta orqali'),
-                    ),
-                    const DropdownMenuItem(
-                      value: 'transfer',
-                      child: Text("🏦 O'tkazma"),
-                    ),
-                    const DropdownMenuItem(
-                      value: 'debt',
-                      child: Text('📌 Qarzga'),
-                    ),
-                  ],
-                  onChanged: (v) {
-                    if (v != null) setState(() => _filterMode = v);
-                  },
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: _sortMode,
-                  isDense: true,
-                  decoration: const InputDecoration(
+                const SizedBox(width: 10),
+                Expanded(
+                  child: HisobchiCustomDropdown<String>(
+                    value: _sortMode,
                     labelText: 'Saralash',
-                    contentPadding:
-                        EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    sheetTitle: 'Nakladnoylarni saralash',
+                    options: const [
+                      CustomDropdownOption<String>(
+                        value: 'newest',
+                        label: 'Yangilari tepada',
+                        subtitle: "Oxirgi kiritilganlar birinchi",
+                        icon: Icons.schedule_rounded,
+                        accentColor: AppTokens.brand,
+                      ),
+                      CustomDropdownOption<String>(
+                        value: 'amount_desc',
+                        label: 'Summasi katta',
+                        subtitle: "Eng yirik summadan kichigiga",
+                        icon: Icons.trending_down_rounded,
+                        accentColor: AppTokens.cashGreen,
+                      ),
+                      CustomDropdownOption<String>(
+                        value: 'supplier_az',
+                        label: 'Postavshik (A-Z)',
+                        subtitle: "Alifbo tartibida guruhlash",
+                        icon: Icons.sort_by_alpha_rounded,
+                        accentColor: AppTokens.cardBlue,
+                      ),
+                    ],
+                    onChanged: (v) => setState(() => _sortMode = v),
                   ),
-                  items: const [
-                    DropdownMenuItem(
-                      value: 'newest',
-                      child: Text('Yangilari tepada'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'amount_desc',
-                      child: Text('Summasi katta'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'supplier_az',
-                      child: Text('Postavshik (A-Z)'),
-                    ),
-                  ],
-                  onChanged: (v) {
-                    if (v != null) setState(() => _sortMode = v);
-                  },
                 ),
-              ),
-            ],
-          ),
+              ],
+            );
+          }),
           const SizedBox(height: 10),
 
           // Search Box + Global Search across all past days
@@ -2086,29 +2161,48 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
           ),
           if (debtSuppliers.length > 1) ...[
             const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: activeSupFilter,
-              decoration: const InputDecoration(
-                labelText: 'Postavshik bo\'yicha saralash',
-                prefixIcon: Icon(Icons.filter_list_rounded),
-                isDense: true,
-              ),
-              items: [
-                DropdownMenuItem(
-                  value: 'all',
-                  child: Text('Barcha postavshiklar (${_allDebts.length} ta)'),
-                ),
-                ...debtSuppliers.map(
-                  (s) => DropdownMenuItem(
-                    value: s,
-                    child: Text(s),
+            Builder(builder: (context) {
+              final allDebtSum = _allDebts.fold<double>(
+                  0, (prev, elem) => prev + elem.amount);
+              final bySup = <String, ({int cnt, double sum})>{};
+              for (final d in _allDebts) {
+                final cur = bySup[d.supplierName];
+                bySup[d.supplierName] = (
+                  cnt: (cur?.cnt ?? 0) + 1,
+                  sum: (cur?.sum ?? 0) + d.amount,
+                );
+              }
+              return HisobchiCustomDropdown<String>(
+                value: activeSupFilter,
+                labelText: "Postavshik bo'yicha saralash",
+                sheetTitle: 'Qarz postavshikni tanlang',
+                searchable: debtSuppliers.length >= 6,
+                options: [
+                  CustomDropdownOption<String>(
+                    value: 'all',
+                    label: 'Barcha postavshiklar',
+                    subtitle: formatUzs(allDebtSum, withCurrency: true),
+                    icon: Icons.groups_rounded,
+                    accentColor: AppTokens.debtAmber,
+                    badge: '${_allDebts.length} ta',
                   ),
-                ),
-              ],
-              onChanged: (v) {
-                if (v != null) setState(() => _debtSupplierFilter = v);
-              },
-            ),
+                  ...debtSuppliers.map((sup) {
+                    final st = bySup[sup];
+                    return CustomDropdownOption<String>(
+                      value: sup,
+                      label: sup,
+                      subtitle: st != null
+                          ? formatUzs(st.sum, withCurrency: true)
+                          : null,
+                      icon: Icons.storefront_rounded,
+                      accentColor: AppTokens.brand,
+                      badge: '${st?.cnt ?? 0} ta',
+                    );
+                  }),
+                ],
+                onChanged: (v) => setState(() => _debtSupplierFilter = v),
+              );
+            }),
           ],
           const SizedBox(height: 14),
           if (visibleDebts.isEmpty)
@@ -2470,38 +2564,48 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                       fontSize: 12.5, color: textSecondaryOf(context)),
                 ),
                 const SizedBox(height: 14),
-                DropdownButtonFormField<String>(
-                  initialValue: _selectedReportType,
-                  decoration: const InputDecoration(
-                    labelText: 'Hisobot turini tanlang',
-                    prefixIcon: Icon(Icons.description_outlined),
-                  ),
-                  items: [
-                    DropdownMenuItem(
+                HisobchiCustomDropdown<String>(
+                  value: _selectedReportType,
+                  labelText: 'Hisobot turini tanlang',
+                  sheetTitle: 'Excel hisobot turini tanlang',
+                  options: [
+                    CustomDropdownOption<String>(
                       value: 'today',
-                      child: Text(
-                          '📊 Bugungi kunlik hisobot (${widget.summary.reportDate})'),
+                      label: 'Bugungi kunlik hisobot',
+                      subtitle: 'Sana: ${widget.summary.reportDate}',
+                      icon: Icons.today_rounded,
+                      accentColor: AppTokens.cashGreen,
                     ),
-                    const DropdownMenuItem(
+                    const CustomDropdownOption<String>(
                       value: 'week',
-                      child: Text('📅 Oxirgi 7 kunlik hisobot'),
+                      label: 'Oxirgi 7 kunlik hisobot',
+                      subtitle: "Haftalik kirim-chiqim jadvali",
+                      icon: Icons.date_range_rounded,
+                      accentColor: AppTokens.brand,
                     ),
-                    const DropdownMenuItem(
+                    const CustomDropdownOption<String>(
                       value: 'month',
-                      child: Text('🗓 Joriy oy hisoboti'),
+                      label: 'Joriy oy hisoboti',
+                      subtitle: "Oy boshidan bugungacha barcha kunlar",
+                      icon: Icons.calendar_month_rounded,
+                      accentColor: AppTokens.cardBlue,
                     ),
-                    const DropdownMenuItem(
+                    const CustomDropdownOption<String>(
                       value: 'custom',
-                      child: Text("📆 Ixtiyoriy sana oralig'i..."),
+                      label: "Ixtiyoriy sana oralig'i...",
+                      subtitle: "Kalendardan boshlanish va tugash sanasi",
+                      icon: Icons.edit_calendar_rounded,
+                      accentColor: AppTokens.brandViolet,
                     ),
-                    const DropdownMenuItem(
+                    const CustomDropdownOption<String>(
                       value: 'sverka',
-                      child: Text('🏢 Postavshiklar Sverkasi'),
+                      label: 'Postavshiklar Sverkasi',
+                      subtitle: "Har bir postavshik bo'yicha oylik balans",
+                      icon: Icons.account_balance_wallet_rounded,
+                      accentColor: AppTokens.debtAmber,
                     ),
                   ],
-                  onChanged: (v) {
-                    if (v != null) setState(() => _selectedReportType = v);
-                  },
+                  onChanged: (v) => setState(() => _selectedReportType = v),
                 ),
                 const SizedBox(height: 14),
                 FilledButton.icon(
@@ -4018,8 +4122,6 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
   @override
   Widget build(BuildContext context) {
     final activeMode = _cur.isDebt ? 'debt' : _cur.paymentMethod;
-    final (lockFg, lockBg, lockBorder) =
-        AppTokens.semanticSurface(context, AppTokens.debtAmber);
 
     return SafeArea(
       top: false,
@@ -4052,34 +4154,6 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
               const SizedBox(height: 10),
 
               if (_isReadOnly) ...[
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: lockBg,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: lockBorder),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.lock_outline_rounded, size: 18, color: lockFg),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          (_cur.isClosedSession || widget.readOnly)
-                              ? "🔒 Yopilgan kun — Faqat ko'rish rejimi"
-                              : "🔒 Faqat ko'rish rejimi",
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800,
-                            color: lockFg,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
                 if (_cur.hasPhoto) ...[
                   _buildPhotoPreview(),
                   const SizedBox(height: 12),
@@ -4536,11 +4610,13 @@ class _HistorySessionsSheetState extends State<HistorySessionsSheet> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  "Holati: ${isClosed ? '🔒 Yopilgan (Faqat ko\'rish)' : '🟢 Ochiq smena'}",
-                  style: const TextStyle(fontWeight: FontWeight.w800),
-                ),
-                const SizedBox(height: 6),
+                if (!isClosed) ...[
+                  const Text(
+                    '🟢 Ochiq faol smena',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 6),
+                ],
                 Text(
                   "Boshlang'ich qoldiq: ${formatUzs(d.openingBalance, withCurrency: true)}\n"
                   "Jami kirim: ${formatUzs(d.mainCashIn, withCurrency: true)}\n"
@@ -6087,38 +6163,42 @@ class _SupplierAndRoundingSettingsSheetState
                                 ],
                               ),
                               const SizedBox(height: 10),
-                              DropdownButtonFormField<String>(
-                                initialValue: (_roundMode == 'nearest_1000' ||
+                              HisobchiCustomDropdown<String>(
+                                value: (_roundMode == 'nearest_1000' ||
                                         _roundMode == 'none')
                                     ? _roundMode
                                     : 'floor_1000',
-                                isDense: true,
-                                decoration: const InputDecoration(
-                                  labelText: 'Yaxlitlash turi',
-                                ),
-                                items: const [
-                                  DropdownMenuItem(
+                                labelText: 'Yaxlitlash turi',
+                                sheetTitle: 'AI summa yaxlitlash qoidasi',
+                                enabled: widget.api.canWrite && !_saving,
+                                options: const [
+                                  CustomDropdownOption<String>(
                                     value: 'floor_1000',
-                                    child: Text(
-                                        "1 000 so'mga pastga (192 640 → 192 000)"),
+                                    label: "1 000 so'mga pastga",
+                                    subtitle: 'Masalan: 192 640 → 192 000',
+                                    icon: Icons.south_east_rounded,
+                                    accentColor: AppTokens.brand,
                                   ),
-                                  DropdownMenuItem(
+                                  CustomDropdownOption<String>(
                                     value: 'nearest_1000',
-                                    child: Text(
-                                        "1 000 so'mga yaqiniga (192 640 → 193 000)"),
+                                    label: "1 000 so'mga yaqiniga",
+                                    subtitle: 'Masalan: 192 640 → 193 000',
+                                    icon: Icons.swap_vert_rounded,
+                                    accentColor: AppTokens.cashGreen,
                                   ),
-                                  DropdownMenuItem(
+                                  CustomDropdownOption<String>(
                                     value: 'none',
-                                    child: Text('Yaxlitlanmasin (Aniq summa)'),
+                                    label: 'Yaxlitlanmasin',
+                                    subtitle: 'Rasmdagi aniq summa saqlanadi',
+                                    icon: Icons.adjust_rounded,
+                                    accentColor: AppTokens.cardBlue,
                                   ),
                                 ],
-                                onChanged: (widget.api.canWrite && !_saving)
-                                    ? (v) {
-                                        if (v != null && v != _roundMode) {
-                                          _changeRoundMode(v);
-                                        }
-                                      }
-                                    : null,
+                                onChanged: (v) {
+                                  if (v != _roundMode) {
+                                    _changeRoundMode(v);
+                                  }
+                                },
                               ),
                             ],
                           ),

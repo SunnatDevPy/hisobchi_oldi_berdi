@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'api_client.dart';
 import 'theme.dart';
 
@@ -402,8 +403,9 @@ class DashboardAnalyticsSection extends StatefulWidget {
   final StatusSummary summary;
   final bool canWrite;
   final List<Map<String, dynamic>> dailySeries;
+  final String seriesGranularity; // 'daily' | 'hourly'
   final String periodLabel;
-  final String activePeriodKey; // '7d' | '14d' | '30d' | 'custom'
+  final String activePeriodKey; // 'today' | 'yesterday' | '7d' | '14d' | '30d' | 'custom'
   final ValueChanged<String> onSelectPeriodKey;
   final VoidCallback onPickCustomDateRange;
   final ValueChanged<String> onTapPaymentFilter;
@@ -417,6 +419,7 @@ class DashboardAnalyticsSection extends StatefulWidget {
     required this.summary,
     required this.canWrite,
     this.dailySeries = const [],
+    this.seriesGranularity = 'daily',
     this.periodLabel = 'Oxirgi 7 kun',
     this.activePeriodKey = '7d',
     required this.onSelectPeriodKey,
@@ -489,6 +492,7 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
         // 2. CHIZIQLI STATISTIKA (Smooth Bezier Line & Area Trend Chart with Date Range Selector)
         _TrendLineStatisticsCard(
           dailySeries: widget.dailySeries,
+          seriesGranularity: widget.seriesGranularity,
           periodLabel: widget.periodLabel,
           activePeriodKey: widget.activePeriodKey,
           selectedIdx: _selectedTrendIdx,
@@ -1013,6 +1017,8 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
               if (ev.cashTx != null && widget.canWrite) ...[
                 const SizedBox(width: 2),
                 PopupMenuButton<String>(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
                   icon: Icon(Icons.more_vert_rounded,
                       size: 18, color: textSecondaryOf(context)),
                   onSelected: (v) {
@@ -1501,6 +1507,7 @@ class _DonutRingPainter extends CustomPainter {
 
 class _TrendLineStatisticsCard extends StatelessWidget {
   final List<Map<String, dynamic>> dailySeries;
+  final String seriesGranularity;
   final String periodLabel;
   final String activePeriodKey;
   final int? selectedIdx;
@@ -1510,6 +1517,7 @@ class _TrendLineStatisticsCard extends StatelessWidget {
 
   const _TrendLineStatisticsCard({
     required this.dailySeries,
+    this.seriesGranularity = 'daily',
     required this.periodLabel,
     required this.activePeriodKey,
     required this.selectedIdx,
@@ -1518,15 +1526,31 @@ class _TrendLineStatisticsCard extends StatelessWidget {
     required this.onPickCustomDateRange,
   });
 
+  int? _defaultActiveIdx(List<Map<String, dynamic>> pts, bool isHourly) {
+    if (pts.isEmpty) return null;
+    if (isHourly) {
+      for (var i = pts.length - 1; i >= 0; i--) {
+        final sp = ((pts[i]['spent'] as num?) ?? 0).toDouble();
+        final ci = ((pts[i]['cash_in'] as num?) ?? 0).toDouble();
+        if (sp > 0 || ci > 0) return i;
+      }
+    }
+    return pts.length - 1;
+  }
+
   @override
   Widget build(BuildContext context) {
     final pts = dailySeries;
+    final isHourly = seriesGranularity == 'hourly' ||
+        (pts.isNotEmpty && pts.first['date'].toString().contains(':'));
     final activeIdx = (selectedIdx != null &&
             selectedIdx! >= 0 &&
             selectedIdx! < pts.length)
         ? selectedIdx!
-        : (pts.isNotEmpty ? pts.length - 1 : null);
+        : _defaultActiveIdx(pts, isHourly);
     final selectedPt = activeIdx != null ? pts[activeIdx] : null;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final isCustom = activePeriodKey == 'custom';
 
     return Card(
       child: Padding(
@@ -1551,7 +1575,9 @@ class _TrendLineStatisticsCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Chiziqli Statistika (Kunlik dinamika)',
+                        isHourly
+                            ? 'Chiziqli Statistika (Soatlik)'
+                            : 'Chiziqli Statistika (Kunlik)',
                         style: TextStyle(
                           fontSize: 15.5,
                           fontWeight: FontWeight.w900,
@@ -1568,81 +1594,145 @@ class _TrendLineStatisticsCard extends StatelessWidget {
                     ],
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 12),
-
-            // Period Selector Pills (7 kun | 14 kun | 30 kun | 📆 Sana..Sana)
-            Row(
-              children: [
-                _periodBtn(context, '7d', '7 kun'),
-                const SizedBox(width: 6),
-                _periodBtn(context, '14d', '14 kun'),
-                const SizedBox(width: 6),
-                _periodBtn(context, '30d', '30 kun'),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: activePeriodKey == 'custom'
-                      ? FilledButton.icon(
-                          style: FilledButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 8),
-                            minimumSize: const Size(60, 36),
-                          ),
-                          onPressed: onPickCustomDateRange,
-                          icon: const Icon(Icons.date_range_rounded, size: 15),
-                          label: const Text('Sana',
-                              style: TextStyle(fontSize: 12)),
-                        )
-                      : OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 8),
-                            minimumSize: const Size(60, 36),
-                          ),
-                          onPressed: onPickCustomDateRange,
-                          icon: const Icon(Icons.date_range_rounded, size: 15),
-                          label: const Text('Sana',
-                              style: TextStyle(fontSize: 12)),
+                Material(
+                  color: isCustom
+                      ? AppTokens.brand
+                      : (isDark
+                          ? AppTokens.surfaceDark.withValues(alpha: 0.7)
+                          : AppTokens.surfaceLight),
+                  borderRadius: BorderRadius.circular(10),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(10),
+                    onTap: onPickCustomDateRange,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 7),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: isCustom
+                              ? AppTokens.brand
+                              : (isDark
+                                  ? AppTokens.cardBorderDark
+                                  : AppTokens.cardBorderLight),
                         ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.date_range_rounded,
+                            size: 15,
+                            color: isCustom
+                                ? Colors.white
+                                : textSecondaryOf(context),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Sana',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              color: isCustom
+                                  ? Colors.white
+                                  : textPrimaryOf(context),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
               ],
             ),
             const SizedBox(height: 12),
 
-            if (selectedPt != null)
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-                decoration: BoxDecoration(
-                  color: AppTokens.brand.withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.calendar_today_rounded,
-                        size: 14, color: AppTokens.brand),
-                    const SizedBox(width: 6),
-                    Text(
-                      selectedPt['date'].toString(),
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w900,
-                        fontSize: 12.5,
-                      ),
-                    ),
-                    const Spacer(),
-                    Text(
-                      "Rasxod: ${formatUzs(selectedPt['spent'] as num?)} (${selectedPt['count']} ta)",
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w900,
-                        fontSize: 12.5,
-                        color: AppTokens.brand,
-                        fontFeatures: AppTokens.tabularNums,
-                      ),
-                    ),
-                  ],
-                ),
+            // Horizontally scrollable Period Presets (Bugun | Kecha | 7 kun | 14 kun | 30 kun)
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _periodPill(context, 'today', 'Bugun', Icons.today_rounded),
+                  const SizedBox(width: 6),
+                  _periodPill(context, 'yesterday', 'Kecha',
+                      Icons.history_toggle_off_rounded),
+                  const SizedBox(width: 6),
+                  _periodPill(context, '7d', '7 kun', null),
+                  const SizedBox(width: 6),
+                  _periodPill(context, '14d', '14 kun', null),
+                  const SizedBox(width: 6),
+                  _periodPill(context, '30d', '30 kun', null),
+                ],
               ),
+            ),
+            const SizedBox(height: 12),
+
+            if (selectedPt != null) ...[
+              Builder(builder: (context) {
+                final ptLabel =
+                    (selectedPt['label'] ?? selectedPt['date']).toString();
+                final cashInVal =
+                    ((selectedPt['cash_in'] as num?) ?? 0).toDouble();
+                return Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                  decoration: BoxDecoration(
+                    color: AppTokens.brand.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        isHourly
+                            ? Icons.schedule_rounded
+                            : Icons.calendar_today_rounded,
+                        size: 15,
+                        color: AppTokens.brand,
+                      ),
+                      const SizedBox(width: 7),
+                      Text(
+                        ptLabel,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 12.5,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              "Rasxod: ${formatUzs(selectedPt['spent'] as num?)} (${selectedPt['count']} ta)",
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w900,
+                                fontSize: 12.5,
+                                color: AppTokens.brand,
+                                fontFeatures: AppTokens.tabularNums,
+                              ),
+                            ),
+                            if (cashInVal > 0)
+                              Text(
+                                "Kirim: +${formatUzs(cashInVal)} so'm",
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 11.5,
+                                  color: AppTokens.cashGreen,
+                                  fontFeatures: AppTokens.tabularNums,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ],
             const SizedBox(height: 12),
 
             if (pts.isEmpty)
@@ -1659,18 +1749,26 @@ class _TrendLineStatisticsCard extends StatelessWidget {
                 height: 165,
                 child: LayoutBuilder(
                   builder: (ctx, constraints) {
+                    void handleDx(double dx) {
+                      if (pts.isEmpty) return;
+                      if (pts.length == 1) {
+                        onSelectIdx(0);
+                        return;
+                      }
+                      const hPad = 14.0;
+                      final chartW = (constraints.maxWidth - hPad * 2)
+                          .clamp(1.0, double.infinity);
+                      final rel = ((dx - hPad) / chartW).clamp(0.0, 1.0);
+                      final idx = (rel * (pts.length - 1))
+                          .round()
+                          .clamp(0, pts.length - 1);
+                      onSelectIdx(idx);
+                    }
+
                     return GestureDetector(
-                      onTapDown: (details) {
-                        if (pts.length <= 1) {
-                          onSelectIdx(0);
-                          return;
-                        }
-                        final step = constraints.maxWidth / (pts.length - 1);
-                        final idx = (details.localPosition.dx / step)
-                            .round()
-                            .clamp(0, pts.length - 1);
-                        onSelectIdx(idx);
-                      },
+                      onTapDown: (d) => handleDx(d.localPosition.dx),
+                      onHorizontalDragUpdate: (d) =>
+                          handleDx(d.localPosition.dx),
                       child: CustomPaint(
                         size: Size(constraints.maxWidth, 165),
                         painter: _SmoothLineChartPainter(
@@ -1701,7 +1799,9 @@ class _TrendLineStatisticsCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 5),
                 Text(
-                  'Kunlik nakladnoy rasxod',
+                  isHourly
+                      ? 'Soatlik nakladnoy rasxod'
+                      : 'Kunlik nakladnoy rasxod',
                   style: TextStyle(
                     fontSize: 11.5,
                     fontWeight: FontWeight.w700,
@@ -1734,28 +1834,58 @@ class _TrendLineStatisticsCard extends StatelessWidget {
     );
   }
 
-  Widget _periodBtn(BuildContext context, String key, String label) {
+  Widget _periodPill(
+      BuildContext context, String key, String label, IconData? icon) {
     final sel = activePeriodKey == key;
-    return Expanded(
-      child: sel
-          ? FilledButton(
-              style: FilledButton.styleFrom(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-                minimumSize: const Size(50, 36),
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 160),
+      decoration: BoxDecoration(
+        color: sel
+            ? AppTokens.brand
+            : (isDark
+                ? AppTokens.surfaceDark.withValues(alpha: 0.65)
+                : AppTokens.surfaceLight),
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(
+          color: sel
+              ? AppTokens.brand
+              : (isDark ? AppTokens.cardBorderDark : AppTokens.cardBorderLight),
+        ),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(11),
+        onTap: sel
+            ? null
+            : () {
+                HapticFeedback.selectionClick();
+                onSelectPeriodKey(key);
+              },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7.5),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[
+                Icon(
+                  icon,
+                  size: 14,
+                  color: sel ? Colors.white : textSecondaryOf(context),
+                ),
+                const SizedBox(width: 5),
+              ],
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w800,
+                  color: sel ? Colors.white : textPrimaryOf(context),
+                ),
               ),
-              onPressed: () {},
-              child: Text(label, style: const TextStyle(fontSize: 12)),
-            )
-          : OutlinedButton(
-              style: OutlinedButton.styleFrom(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-                minimumSize: const Size(50, 36),
-              ),
-              onPressed: () => onSelectPeriodKey(key),
-              child: Text(label, style: const TextStyle(fontSize: 12)),
-            ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1922,7 +2052,10 @@ class _SmoothLineChartPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _SmoothLineChartPainter oldDelegate) =>
-      oldDelegate.points != points || oldDelegate.selectedIdx != selectedIdx;
+      oldDelegate.points != points ||
+      oldDelegate.selectedIdx != selectedIdx ||
+      oldDelegate.lineColor != lineColor ||
+      oldDelegate.labelColor != labelColor;
 }
 
 class _MiniKassaCol extends StatelessWidget {
@@ -2422,6 +2555,456 @@ class NakladnoyListCard extends StatelessWidget {
               ],
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// HISOBCHI CUSTOM DROPDOWN PICKER (Modern Rounded Modal Sheet Selector)
+// ============================================================================
+
+class CustomDropdownOption<T> {
+  final T value;
+  final String label;
+  final String? subtitle;
+  final IconData? icon;
+  final Color? accentColor;
+  final String? badge;
+
+  const CustomDropdownOption({
+    required this.value,
+    required this.label,
+    this.subtitle,
+    this.icon,
+    this.accentColor,
+    this.badge,
+  });
+}
+
+class HisobchiCustomDropdown<T> extends StatelessWidget {
+  final T value;
+  final List<CustomDropdownOption<T>> options;
+  final ValueChanged<T> onChanged;
+  final String? labelText;
+  final String? sheetTitle;
+  final String? placeholder;
+  final bool compact;
+  final bool enabled;
+  final bool searchable;
+
+  const HisobchiCustomDropdown({
+    super.key,
+    required this.value,
+    required this.options,
+    required this.onChanged,
+    this.labelText,
+    this.sheetTitle,
+    this.placeholder,
+    this.compact = false,
+    this.enabled = true,
+    this.searchable = false,
+  });
+
+  CustomDropdownOption<T>? get _selectedOption {
+    for (final opt in options) {
+      if (opt.value == value) return opt;
+    }
+    return options.isNotEmpty ? options.first : null;
+  }
+
+  Future<void> _openPickerSheet(BuildContext context) async {
+    if (!enabled || options.isEmpty) return;
+    HapticFeedback.selectionClick();
+    final showSearch = searchable || options.length >= 8;
+    final result = await showModalBottomSheet<T>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _CustomDropdownSheet<T>(
+        title: sheetTitle ?? labelText ?? 'Tanlang',
+        currentValue: value,
+        options: options,
+        searchable: showSearch,
+      ),
+    );
+    if (result != null) {
+      HapticFeedback.selectionClick();
+      onChanged(result);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final sel = _selectedOption;
+    final accent = sel?.accentColor ?? AppTokens.brand;
+    final (fg, bg, border) = AppTokens.semanticSurface(context, accent);
+    final surfaceBg = isDark ? AppTokens.cardDark : Colors.white;
+    final defaultBorder =
+        isDark ? AppTokens.cardBorderDark : AppTokens.cardBorderLight;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (labelText != null && !compact) ...[
+          Padding(
+            padding: const EdgeInsets.only(left: 4, bottom: 5),
+            child: Text(
+              labelText!,
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w800,
+                color: textSecondaryOf(context),
+              ),
+            ),
+          ),
+        ],
+        AnimatedOpacity(
+          duration: const Duration(milliseconds: 140),
+          opacity: enabled ? 1.0 : 0.55,
+          child: Material(
+            color: surfaceBg,
+            borderRadius: BorderRadius.circular(14),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: enabled ? () => _openPickerSheet(context) : null,
+              child: Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: compact ? 10 : 12,
+                  vertical: compact ? 8 : 10.5,
+                ),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: sel != null
+                        ? accent.withValues(alpha: isDark ? 0.34 : 0.24)
+                        : defaultBorder,
+                    width: 1.2,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    if (sel?.icon != null) ...[
+                      Container(
+                        width: compact ? 26 : 30,
+                        height: compact ? 26 : 30,
+                        decoration: BoxDecoration(
+                          color: bg,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: border),
+                        ),
+                        child: Icon(
+                          sel!.icon,
+                          size: compact ? 15 : 17,
+                          color: fg,
+                        ),
+                      ),
+                      const SizedBox(width: 9),
+                    ],
+                    Expanded(
+                      child: Text(
+                        sel?.label ?? placeholder ?? 'Tanlang',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: compact ? 13 : 13.5,
+                          fontWeight: FontWeight.w800,
+                          color: textPrimaryOf(context),
+                        ),
+                      ),
+                    ),
+                    if (sel?.badge != null && sel!.badge!.isNotEmpty) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 7, vertical: 2.5),
+                        decoration: BoxDecoration(
+                          color: bg,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: border),
+                        ),
+                        child: Text(
+                          sel.badge!,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w900,
+                            color: fg,
+                            fontFeatures: AppTokens.tabularNums,
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.all(3),
+                      decoration: BoxDecoration(
+                        color: isDark
+                            ? AppTokens.surfaceDark.withValues(alpha: 0.7)
+                            : AppTokens.surfaceLight,
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                      child: Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        size: compact ? 17 : 19,
+                        color: textSecondaryOf(context),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CustomDropdownSheet<T> extends StatefulWidget {
+  final String title;
+  final T currentValue;
+  final List<CustomDropdownOption<T>> options;
+  final bool searchable;
+
+  const _CustomDropdownSheet({
+    required this.title,
+    required this.currentValue,
+    required this.options,
+    required this.searchable,
+  });
+
+  @override
+  State<_CustomDropdownSheet<T>> createState() =>
+      _CustomDropdownSheetState<T>();
+}
+
+class _CustomDropdownSheetState<T> extends State<_CustomDropdownSheet<T>> {
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final sheetBg = isDark ? AppTokens.cardDark : Colors.white;
+    final maxH = MediaQuery.sizeOf(context).height * 0.74;
+    final insets = MediaQuery.viewInsetsOf(context).bottom;
+    final navBar = MediaQuery.viewPaddingOf(context).bottom;
+    final bottomPad = (insets > navBar ? insets : navBar) + 18;
+
+    final filtered = _query.isEmpty
+        ? widget.options
+        : widget.options.where((o) {
+            final q = _query.toLowerCase();
+            return o.label.toLowerCase().contains(q) ||
+                (o.subtitle?.toLowerCase().contains(q) ?? false);
+          }).toList();
+
+    return SafeArea(
+      top: false,
+      child: Container(
+        constraints: BoxConstraints(maxHeight: maxH),
+        decoration: BoxDecoration(
+          color: sheetBg,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          border: Border(
+            top: BorderSide(
+              color: isDark
+                  ? AppTokens.cardBorderDark
+                  : AppTokens.cardBorderLight,
+            ),
+          ),
+        ),
+        padding: EdgeInsets.fromLTRB(18, 10, 18, bottomPad),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: textSecondaryOf(context).withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    widget.title,
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w900,
+                      color: textPrimaryOf(context),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              ],
+            ),
+            if (widget.searchable) ...[
+              const SizedBox(height: 8),
+              TextField(
+                controller: _searchCtrl,
+                onChanged: (v) => setState(() => _query = v.trim()),
+                decoration: InputDecoration(
+                  hintText: 'Qidirish...',
+                  prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                  isDense: true,
+                  suffixIcon: _query.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear_rounded, size: 18),
+                          onPressed: () {
+                            _searchCtrl.clear();
+                            setState(() => _query = '');
+                          },
+                        )
+                      : null,
+                ),
+              ),
+            ],
+            const SizedBox(height: 10),
+            if (filtered.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 28),
+                child: Text(
+                  "Mos variant topilmadi",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: textSecondaryOf(context)),
+                ),
+              )
+            else
+              Flexible(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: filtered.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 7),
+                  itemBuilder: (ctx, i) {
+                    final opt = filtered[i];
+                    final isSel = opt.value == widget.currentValue;
+                    final accent = opt.accentColor ?? AppTokens.brand;
+                    final (fg, bg, border) =
+                        AppTokens.semanticSurface(ctx, accent);
+                    final idleBg = isDark
+                        ? AppTokens.surfaceDark.withValues(alpha: 0.55)
+                        : AppTokens.surfaceLight;
+                    final idleBorder = isDark
+                        ? AppTokens.cardBorderDark
+                        : AppTokens.cardBorderLight;
+
+                    return Material(
+                      color: isSel ? bg : idleBg,
+                      borderRadius: BorderRadius.circular(14),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(14),
+                        onTap: () => Navigator.pop(ctx, opt.value),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 11),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: isSel ? border : idleBorder,
+                              width: isSel ? 1.5 : 1.0,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              if (opt.icon != null) ...[
+                                Container(
+                                  width: 34,
+                                  height: 34,
+                                  decoration: BoxDecoration(
+                                    color: bg,
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(color: border),
+                                  ),
+                                  child: Icon(opt.icon, size: 18, color: fg),
+                                ),
+                                const SizedBox(width: 11),
+                              ],
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      opt.label,
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: isSel
+                                            ? FontWeight.w900
+                                            : FontWeight.w700,
+                                        color: isSel
+                                            ? fg
+                                            : textPrimaryOf(ctx),
+                                      ),
+                                    ),
+                                    if (opt.subtitle != null &&
+                                        opt.subtitle!.isNotEmpty) ...[
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        opt.subtitle!,
+                                        style: TextStyle(
+                                          fontSize: 11.5,
+                                          color: textSecondaryOf(ctx),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                              if (opt.badge != null &&
+                                  opt.badge!.isNotEmpty) ...[
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: bg,
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: border),
+                                  ),
+                                  child: Text(
+                                    opt.badge!,
+                                    style: TextStyle(
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w900,
+                                      color: fg,
+                                      fontFeatures: AppTokens.tabularNums,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                              if (isSel) ...[
+                                const SizedBox(width: 8),
+                                Icon(Icons.check_circle_rounded,
+                                    color: fg, size: 20),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+          ],
         ),
       ),
     );
