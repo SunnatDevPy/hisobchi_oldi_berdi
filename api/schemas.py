@@ -74,6 +74,7 @@ class NakladnoyOut(BaseModel):
     created_at: str
     time_hm: str
     report_date: Optional[str] = None
+    session_status: str = "open"
 
 
 class NakladnoyUpdateRequest(BaseModel):

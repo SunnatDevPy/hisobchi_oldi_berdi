@@ -1089,7 +1089,10 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     }
   }
 
-  Future<void> _openNakladnoyDetail(NakladnoyItem item) async {
+  Future<void> _openNakladnoyDetail(
+    NakladnoyItem item, {
+    bool readOnly = false,
+  }) async {
     final changed = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
@@ -1097,6 +1100,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
       builder: (ctx) => NakladnoyDetailSheet(
         api: widget.api,
         item: item,
+        readOnly: readOnly || item.isClosedSession,
       ),
     );
     if (changed == true) {
@@ -1504,7 +1508,12 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
               });
             },
             onOpenNakladnoyTab: () => setState(() => _tabIndex = 1),
-            onTapNakladnoy: _openNakladnoyDetail,
+            onTapNakladnoy: (item) => _openNakladnoyDetail(
+              item,
+              readOnly: isViewingPast ||
+                  s.sessionStatus == 'closed' ||
+                  item.isClosedSession,
+            ),
             onEditCashTx: (tx) =>
                 _openCashDialog(tx.sourceType, existing: tx),
             onDeleteCashTx: (tx) async {
@@ -1667,6 +1676,8 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
         children: [
           _buildDashboardDateSwitcherBar(s, isViewingPast),
           const SizedBox(height: 10),
+          _buildNakladnoyMiniDashboard(s),
+          const SizedBox(height: 12),
           // Header strip
           Row(
             children: [
@@ -1818,7 +1829,12 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                 padding: const EdgeInsets.only(bottom: 10),
                 child: NakladnoyListCard(
                   item: item,
-                  onTap: () => _openNakladnoyDetail(item),
+                  onTap: () => _openNakladnoyDetail(
+                    item,
+                    readOnly: isViewingPast ||
+                        s.sessionStatus == 'closed' ||
+                        item.isClosedSession,
+                  ),
                   onQuickPay: item.isDebt && widget.api.canWrite
                       ? () => _openPayDebtDialog(item)
                       : null,
@@ -1826,6 +1842,157 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildNakladnoyMiniDashboard(StatusSummary s) {
+    final naks = s.nakladnoys;
+    final cashCnt =
+        naks.where((n) => !n.isDebt && n.paymentMethod == 'cash').length;
+    final cardCnt =
+        naks.where((n) => !n.isDebt && n.paymentMethod == 'card').length;
+    final transferCnt =
+        naks.where((n) => !n.isDebt && n.paymentMethod == 'transfer').length;
+    final debtCnt = naks.where((n) => n.isDebt).length;
+
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _miniNakStatCard(
+                label: 'Naqd',
+                amount: s.totalNakladnoySpent,
+                count: cashCnt,
+                icon: Icons.payments_rounded,
+                color: AppTokens.cashGreen,
+                filterKey: 'cash',
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _miniNakStatCard(
+                label: 'Karta',
+                amount: s.totalCardSpent,
+                count: cardCnt,
+                icon: Icons.credit_card_rounded,
+                color: AppTokens.cardBlue,
+                filterKey: 'card',
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: _miniNakStatCard(
+                label: "O'tkazma",
+                amount: s.totalTransferSpent,
+                count: transferCnt,
+                icon: Icons.account_balance_rounded,
+                color: AppTokens.transferPurple,
+                filterKey: 'transfer',
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _miniNakStatCard(
+                label: 'Qarzga',
+                amount: s.totalDebtNakladnoy,
+                count: debtCnt,
+                icon: Icons.push_pin_rounded,
+                color: AppTokens.debtAmber,
+                filterKey: 'debt',
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _miniNakStatCard({
+    required String label,
+    required double amount,
+    required int count,
+    required IconData icon,
+    required Color color,
+    required String filterKey,
+  }) {
+    final isSelected = _filterMode == filterKey;
+    final (fg, bg, border) = AppTokens.semanticSurface(context, color);
+
+    return Card(
+      color: isSelected ? bg : null,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(
+          color: isSelected ? fg : border.withValues(alpha: 0.45),
+          width: isSelected ? 2.0 : 1.0,
+        ),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => setState(() {
+          _filterMode = isSelected ? 'all' : filterKey;
+        }),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(7),
+                decoration: BoxDecoration(
+                  color: fg.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, size: 17, color: fg),
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '$label ($count)',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              color: isSelected ? fg : textSecondaryOf(context),
+                            ),
+                          ),
+                        ),
+                        if (isSelected)
+                          Icon(Icons.check_circle_rounded, size: 14, color: fg),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        formatUzs(amount, withCurrency: true),
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w900,
+                          color: textPrimaryOf(context),
+                          fontFeatures: AppTokens.tabularNums,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -2391,7 +2558,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                 FilledButton.tonalIcon(
                   onPressed: widget.onOpenHistorySessions,
                   icon: const Icon(Icons.history_rounded),
-                  label: const Text("📜 O'tgan smenalar tarixi va Qayta ochish"),
+                  label: const Text("📜 O'tgan smenalar tarixi (Arxiv)"),
                 ),
                 const SizedBox(height: 10),
                 OutlinedButton.icon(
@@ -3207,11 +3374,13 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
 class NakladnoyDetailSheet extends StatefulWidget {
   final HisobchiApiClient api;
   final NakladnoyItem item;
+  final bool readOnly;
 
   const NakladnoyDetailSheet({
     super.key,
     required this.api,
     required this.item,
+    this.readOnly = false,
   });
 
   @override
@@ -3229,6 +3398,9 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
   bool _changed = false;
   int _photoCacheBust = 0;
 
+  bool get _isReadOnly =>
+      widget.readOnly || !widget.api.canWrite || _cur.isClosedSession;
+
   @override
   void initState() {
     super.initState();
@@ -3239,7 +3411,9 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
           _cur.amount.round().toString()),
     );
     _noteCtrl = TextEditingController(text: _cur.note);
-    _loadSuppliers();
+    if (!_isReadOnly) {
+      _loadSuppliers();
+    }
   }
 
   @override
@@ -3353,20 +3527,28 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
     }
   }
 
-  Future<void> _applyUpdate({
-    String? supplier,
-    double? amount,
-    String? note,
-    bool roundAmount = false,
-  }) async {
+  Future<void> _saveAllChanges() async {
+    final sup = _supCtrl.text.trim();
+    if (sup.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Postavshik nomini kiriting')),
+      );
+      return;
+    }
+    final parsed = parseUzsInput(_amtCtrl.text);
+    if (parsed == null || parsed <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Summani to'g'ri kiriting")),
+      );
+      return;
+    }
     setState(() => _busy = true);
     try {
       final updated = await widget.api.updateNakladnoy(
         paymentId: _cur.id,
-        supplierName: supplier,
-        amount: amount,
-        note: note,
-        roundAmount: roundAmount,
+        supplierName: sup,
+        amount: parsed,
+        note: _noteCtrl.text.trim(),
       );
       if (mounted) {
         setState(() {
@@ -3377,6 +3559,9 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
           _noteCtrl.text = updated.note;
           _changed = true;
         });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("✅ O'zgarishlar saqlandi")),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -3417,9 +3602,102 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
     }
   }
 
+  Widget _buildPhotoPreview() {
+    return GestureDetector(
+      onTap: _openFullScreenPhoto,
+      child: Stack(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: Image.network(
+              _currentPhotoUrl(),
+              height: 190,
+              width: double.infinity,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+            ),
+          ),
+          Positioned(
+            right: 10,
+            bottom: 10,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.65),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.zoom_in_rounded, color: Colors.white, size: 16),
+                  SizedBox(width: 4),
+                  Text(
+                    'Kattalashtirish',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _paymentMethodLabel(NakladnoyItem n) {
+    if (n.isDebt) return '📌 Qarzga';
+    switch (n.paymentMethod) {
+      case 'card':
+        return '💳 Karta orqali';
+      case 'transfer':
+        return "🏦 Perechesleniya (O'tkazma)";
+      default:
+        return '💵 Naqd pul';
+    }
+  }
+
+  Widget _readOnlyInfoRow(String label, String value,
+      {bool bold = false, Color? valueColor}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w600,
+              color: textSecondaryOf(context),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: TextStyle(
+                fontSize: bold ? 16 : 14,
+                fontWeight: bold ? FontWeight.w900 : FontWeight.w800,
+                color: valueColor ?? textPrimaryOf(context),
+                fontFeatures: AppTokens.tabularNums,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final activeMode = _cur.isDebt ? 'debt' : _cur.paymentMethod;
+    final (lockFg, lockBg, lockBorder) =
+        AppTokens.semanticSurface(context, AppTokens.debtAmber);
 
     return SafeArea(
       top: false,
@@ -3451,56 +3729,95 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
               ),
               const SizedBox(height: 10),
 
-              if (_cur.hasPhoto) ...[
-                GestureDetector(
-                  onTap: _openFullScreenPhoto,
-                  child: Stack(
+              if (_isReadOnly) ...[
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: lockBg,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: lockBorder),
+                  ),
+                  child: Row(
                     children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(14),
-                        child: Image.network(
-                          _currentPhotoUrl(),
-                          height: 190,
-                          width: double.infinity,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                        ),
-                      ),
-                      Positioned(
-                        right: 10,
-                        bottom: 10,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 5),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.65),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.zoom_in_rounded,
-                                  color: Colors.white, size: 16),
-                              SizedBox(width: 4),
-                              Text(
-                                'Kattalashtirish',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ],
+                      Icon(Icons.lock_outline_rounded, size: 18, color: lockFg),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          (_cur.isClosedSession || widget.readOnly)
+                              ? "🔒 Yopilgan kun — Faqat ko'rish rejimi"
+                              : "🔒 Faqat ko'rish rejimi",
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                            color: lockFg,
                           ),
                         ),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 8),
-              ],
-
-              if (widget.api.canWrite) ...[
+                const SizedBox(height: 12),
+                if (_cur.hasPhoto) ...[
+                  _buildPhotoPreview(),
+                  const SizedBox(height: 12),
+                ],
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(15),
+                    child: Column(
+                      children: [
+                        _readOnlyInfoRow('Postavshik:', _cur.supplierName,
+                            bold: true),
+                        const Divider(height: 10),
+                        _readOnlyInfoRow(
+                          'Summa:',
+                          formatUzs(_cur.amount, withCurrency: true),
+                          bold: true,
+                          valueColor: AppTokens.brand,
+                        ),
+                        if (_cur.originalAmount != null &&
+                            _cur.originalAmount!.round() !=
+                                _cur.amount.round()) ...[
+                          const Divider(height: 10),
+                          _readOnlyInfoRow(
+                            'Asl summa:',
+                            formatUzs(_cur.originalAmount, withCurrency: true),
+                          ),
+                        ],
+                        const Divider(height: 10),
+                        _readOnlyInfoRow(
+                            "To'lov turi:", _paymentMethodLabel(_cur)),
+                        const Divider(height: 10),
+                        _readOnlyInfoRow(
+                          'Sana va vaqt:',
+                          _cur.reportDate != null
+                              ? '${_cur.reportDate} • ${_cur.timeHm}'
+                              : _cur.createdAt,
+                        ),
+                        if (_cur.note.isNotEmpty) ...[
+                          const Divider(height: 10),
+                          _readOnlyInfoRow('Izoh:', _cur.note),
+                        ],
+                        const Divider(height: 10),
+                        _readOnlyInfoRow(
+                          'Guruh holati:',
+                          _cur.inGroup ? '✅ Guruhga yuborilgan' : '📁 Bazada',
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                FilledButton.tonal(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Yopish'),
+                ),
+              ] else ...[
+                if (_cur.hasPhoto) ...[
+                  _buildPhotoPreview(),
+                  const SizedBox(height: 8),
+                ],
                 Row(
                   children: [
                     Expanded(
@@ -3509,8 +3826,9 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                             ? null
                             : () => _pickAndUploadPhoto(ImageSource.camera),
                         icon: const Icon(Icons.add_a_photo_rounded, size: 17),
-                        label: Text(
-                            _cur.hasPhoto ? 'Kameradan yangilash' : 'Kameradan rasm'),
+                        label: Text(_cur.hasPhoto
+                            ? 'Kameradan yangilash'
+                            : 'Kameradan rasm'),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -3519,203 +3837,181 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                         onPressed: _busy
                             ? null
                             : () => _pickAndUploadPhoto(ImageSource.gallery),
-                        icon: const Icon(Icons.photo_library_rounded, size: 17),
+                        icon:
+                            const Icon(Icons.photo_library_rounded, size: 17),
                         label: const Text('Galereyadan'),
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 12),
-              ],
 
-              // Supplier field + Searchable Dropdown Modal Picker
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _supCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Postavshik',
-                        prefixIcon: Icon(Icons.storefront_rounded),
-                        isDense: true,
+                // Supplier field + Searchable Dropdown Modal Picker
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _supCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Postavshik',
+                          prefixIcon: Icon(Icons.storefront_rounded),
+                          isDense: true,
+                        ),
                       ),
-                      onSubmitted: (v) {
-                        if (v.trim().isNotEmpty) {
-                          _applyUpdate(supplier: v.trim());
-                        }
-                      },
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    onPressed: () async {
-                      final picked = await showSupplierPickerDialog(
-                        context,
-                        _suppliers,
-                        current: _supCtrl.text,
-                      );
-                      if (picked != null && picked.trim().isNotEmpty) {
-                        await _applyUpdate(supplier: picked.trim());
-                      }
-                    },
-                    icon: const Icon(Icons.arrow_drop_down_circle_outlined,
-                        size: 18),
-                    label: const Text("Ro'yxat"),
-                  ),
-                  const SizedBox(width: 6),
-                  FilledButton.tonal(
-                    onPressed: _busy
-                        ? null
-                        : () {
-                            if (_supCtrl.text.trim().isNotEmpty) {
-                              _applyUpdate(supplier: _supCtrl.text.trim());
-                            }
-                          },
-                    child: const Text('Saqlash'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-
-              // Space-formatted Amount field + Yaxlitlash + Yangilash
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _amtCtrl,
-                      keyboardType: TextInputType.number,
-                      inputFormatters: const [UzsAmountInputFormatter()],
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w900,
-                        fontFeatures: AppTokens.tabularNums,
-                      ),
-                      decoration: const InputDecoration(
-                        labelText: "Summa (so'm)",
-                        prefixIcon: Icon(Icons.payments_outlined),
-                        isDense: true,
-                      ),
-                      onSubmitted: (v) {
-                        final parsed = parseUzsInput(v);
-                        if (parsed != null && parsed > 0) {
-                          _applyUpdate(amount: parsed);
-                        }
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    onPressed:
-                        _busy ? null : () => _applyUpdate(roundAmount: true),
-                    icon: const Icon(Icons.auto_fix_high_rounded, size: 17),
-                    label: const Text('Yaxlit'),
-                  ),
-                  const SizedBox(width: 6),
-                  FilledButton(
-                    onPressed: _busy
-                        ? null
-                        : () {
-                            final parsed = parseUzsInput(_amtCtrl.text);
-                            if (parsed != null && parsed > 0) {
-                              _applyUpdate(amount: parsed);
-                            }
-                          },
-                    child: const Text('Saqlash'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-
-              // Note field (Izoh) + Saqlash
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _noteCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Izoh (ixtiyoriy)',
-                        prefixIcon: Icon(Icons.notes_rounded),
-                        isDense: true,
-                      ),
-                      onSubmitted: (v) => _applyUpdate(note: v.trim()),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  FilledButton.tonal(
-                    onPressed: _busy
-                        ? null
-                        : () => _applyUpdate(note: _noteCtrl.text.trim()),
-                    child: const Text('Saqlash'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-
-              const Text(
-                "To'lov turi va holati:",
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5),
-              ),
-              const SizedBox(height: 8),
-              PaymentModeSelector(
-                selectedMode: activeMode,
-                onChanged: (m) {
-                  if (!_busy && m != activeMode) {
-                    _switchMethod(m);
-                  }
-                },
-              ),
-              const SizedBox(height: 16),
-
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
                       onPressed: _busy
                           ? null
                           : () async {
-                              setState(() => _busy = true);
-                              try {
-                                final msg = await widget.api
-                                    .sendNakladnoyToGroup(_cur.id);
-                                _changed = true;
-                                if (context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('📤 $msg')),
-                                  );
-                                }
-                              } catch (e) {
-                                if (context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text(e.toString())),
-                                  );
-                                }
-                              } finally {
-                                if (mounted) setState(() => _busy = false);
+                              final picked = await showSupplierPickerDialog(
+                                context,
+                                _suppliers,
+                                current: _supCtrl.text,
+                              );
+                              if (picked != null && picked.trim().isNotEmpty) {
+                                setState(() {
+                                  _supCtrl.text = picked.trim();
+                                });
                               }
                             },
-                      icon: const Icon(Icons.send_rounded, size: 17),
-                      label: Text(_cur.inGroup
-                          ? 'Guruhda yangilash'
-                          : 'Guruhga yuborish'),
+                      icon: const Icon(Icons.arrow_drop_down_circle_outlined,
+                          size: 18),
+                      label: const Text("Ro'yxat"),
                     ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+
+                // Space-formatted Amount field + Yaxlitlash
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _amtCtrl,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: const [UzsAmountInputFormatter()],
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w900,
+                          fontFeatures: AppTokens.tabularNums,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: "Summa (so'm)",
+                          prefixIcon: Icon(Icons.payments_outlined),
+                          isDense: true,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      onPressed: _busy
+                          ? null
+                          : () {
+                              final parsed = parseUzsInput(_amtCtrl.text);
+                              if (parsed != null && parsed >= 1000) {
+                                final floored = (parsed ~/ 1000) * 1000;
+                                setState(() {
+                                  _amtCtrl.text =
+                                      UzsAmountInputFormatter.formatDigits(
+                                          floored.toString());
+                                });
+                              }
+                            },
+                      icon: const Icon(Icons.auto_fix_high_rounded, size: 17),
+                      label: const Text('Yaxlit'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+
+                // Note field (Izoh)
+                TextField(
+                  controller: _noteCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Izoh (ixtiyoriy)',
+                    prefixIcon: Icon(Icons.notes_rounded),
+                    isDense: true,
                   ),
-                  const SizedBox(width: 10),
-                  OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                        foregroundColor: AppTokens.dangerRed),
-                    onPressed: _busy
-                        ? null
-                        : () async {
-                            await widget.api.deleteNakladnoy(_cur.id);
-                            if (context.mounted) {
-                              Navigator.pop(context, true);
-                            }
-                          },
-                    icon: const Icon(Icons.delete_outline_rounded, size: 18),
-                    label: const Text("O'chirish"),
-                  ),
-                ],
-              ),
+                ),
+                const SizedBox(height: 14),
+
+                // Single consolidated Save button for Supplier + Amount + Note
+                FilledButton.icon(
+                  onPressed: _busy ? null : _saveAllChanges,
+                  icon: const Icon(Icons.check_circle_rounded, size: 19),
+                  label: Text(_busy
+                      ? 'Saqlanmoqda...'
+                      : "O'zgarishlarni saqlash"),
+                ),
+                const SizedBox(height: 16),
+
+                const Text(
+                  "To'lov turi va holati:",
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5),
+                ),
+                const SizedBox(height: 8),
+                PaymentModeSelector(
+                  selectedMode: activeMode,
+                  onChanged: (m) {
+                    if (!_busy && m != activeMode) {
+                      _switchMethod(m);
+                    }
+                  },
+                ),
+                const SizedBox(height: 16),
+
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _busy
+                            ? null
+                            : () async {
+                                setState(() => _busy = true);
+                                try {
+                                  final msg = await widget.api
+                                      .sendNakladnoyToGroup(_cur.id);
+                                  _changed = true;
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text('📤 $msg')),
+                                    );
+                                  }
+                                } catch (e) {
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text(e.toString())),
+                                    );
+                                  }
+                                } finally {
+                                  if (mounted) setState(() => _busy = false);
+                                }
+                              },
+                        icon: const Icon(Icons.send_rounded, size: 17),
+                        label: Text(_cur.inGroup
+                            ? 'Guruhda yangilash'
+                            : 'Guruhga yuborish'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                          foregroundColor: AppTokens.dangerRed),
+                      onPressed: _busy
+                          ? null
+                          : () async {
+                              await widget.api.deleteNakladnoy(_cur.id);
+                              if (context.mounted) {
+                                Navigator.pop(context, true);
+                              }
+                            },
+                      icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                      label: const Text("O'chirish"),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),
@@ -3725,7 +4021,7 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
 }
 
 // ============================================================================
-// STAGE 1: O'TGAN SMENALAR TARIXI, SMENA ICHINI KO'RISH VA QAYTA OCHISH
+// STAGE 1: O'TGAN SMENALAR TARIXI, SMENA ICHINI KO'RISH (FAQAT KO'RISH)
 // ============================================================================
 
 class HistorySessionsSheet extends StatefulWidget {
@@ -3784,28 +4080,6 @@ class _HistorySessionsSheetState extends State<HistorySessionsSheet> {
     try {
       final detail = await widget.api.getHistorySessionDetail(sessionId);
       if (mounted) setState(() => _selectedDetail = detail);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.toString())));
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _reopenSession(int sessionId) async {
-    setState(() => _busy = true);
-    try {
-      await widget.api.reopenSession(sessionId);
-      _changed = true;
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text("🔄 Smena qayta ochildi va faol holatga o'tdi!")),
-        );
-        Navigator.pop(context, true);
-      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -3941,7 +4215,7 @@ class _HistorySessionsSheetState extends State<HistorySessionsSheet> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                  "Holati: ${isClosed ? '🔒 Yopilgan' : '🟢 Ochiq smena'}",
+                  "Holati: ${isClosed ? '🔒 Yopilgan (Faqat ko\'rish)' : '🟢 Ochiq smena'}",
                   style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 6),
@@ -3954,27 +4228,10 @@ class _HistorySessionsSheetState extends State<HistorySessionsSheet> {
                   style: const TextStyle(fontSize: 13.5, height: 1.45),
                 ),
                 const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: _busy ? null : () => _exportSessionExcel(d),
-                        icon: const Icon(Icons.table_view_rounded, size: 17),
-                        label: const Text('Excel yuklash'),
-                      ),
-                    ),
-                    if (isClosed && widget.api.canWrite) ...[
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed:
-                              _busy ? null : () => _reopenSession(d.sessionId),
-                          icon: const Icon(Icons.lock_open_rounded, size: 17),
-                          label: const Text('Qayta ochish'),
-                        ),
-                      ),
-                    ],
-                  ],
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : () => _exportSessionExcel(d),
+                  icon: const Icon(Icons.table_view_rounded, size: 17),
+                  label: const Text('Excel yuklash'),
                 ),
               ],
             ),
@@ -3993,6 +4250,7 @@ class _HistorySessionsSheetState extends State<HistorySessionsSheet> {
               item: n,
               onTap: () async {
                 await widget.onOpenNakladnoyDetail(n);
+                if (!isClosed) _changed = true;
                 await _openSessionDetail(d.sessionId);
               },
             ),

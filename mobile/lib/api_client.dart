@@ -83,6 +83,9 @@ class NakladnoyItem {
   final String createdAt;
   final String timeHm;
   final String? reportDate;
+  final String sessionStatus;
+
+  bool get isClosedSession => sessionStatus == 'closed';
 
   const NakladnoyItem({
     required this.id,
@@ -102,6 +105,7 @@ class NakladnoyItem {
     required this.createdAt,
     required this.timeHm,
     this.reportDate,
+    this.sessionStatus = 'open',
   });
 
   factory NakladnoyItem.fromJson(Map<String, dynamic> j) => NakladnoyItem(
@@ -122,6 +126,7 @@ class NakladnoyItem {
         createdAt: (j['created_at'] ?? '').toString(),
         timeHm: (j['time_hm'] ?? '').toString(),
         reportDate: j['report_date']?.toString(),
+        sessionStatus: (j['session_status'] ?? 'open').toString(),
       );
 }
 

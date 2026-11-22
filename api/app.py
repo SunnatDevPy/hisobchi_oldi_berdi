@@ -11,6 +11,7 @@ from typing import Optional
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
+from sqlalchemy import select
 
 from api.auth import (
     AuthenticatedUser,
@@ -98,7 +99,7 @@ from database.crud import (
     update_cash_transaction,
     update_nakladnoy,
 )
-from database.models import CashTransaction, NakladnoyPayment
+from database.models import CashTransaction, DailyCashSession, NakladnoyPayment
 from database.session import async_session_maker
 from services.excel_export import build_range_excel, build_session_excel, build_sverka_excel
 from services.gemini_ai import extract_nakladnoy_from_image
@@ -121,6 +122,7 @@ def _serialize_nakladnoy(
     n: NakladnoyPayment,
     session_seq: Optional[int] = None,
     report_date: Optional[str] = None,
+    session_status: str = "open",
 ) -> NakladnoyOut:
     pm = normalize_payment_method(getattr(n, "payment_method", "cash"))
     has_ph = bool(n.photo_file_id) or has_local_photo(int(n.id))
@@ -144,7 +146,51 @@ def _serialize_nakladnoy(
         created_at=format_local_dt(n.created_at, "%Y-%m-%d %H:%M"),
         time_hm=format_local_dt(n.created_at, "%H:%M"),
         report_date=report_date,
+        session_status=session_status,
     )
+
+
+async def _batch_session_statuses(db, payments: list[NakladnoyPayment]) -> dict[int, str]:
+    """Batch-fetch DailyCashSession.status keyed by session_id for serialized nakladnoys."""
+    sids = {int(p.session_id) for p in payments if getattr(p, "session_id", None) is not None}
+    if not sids:
+        return {}
+    rows = (
+        await db.execute(
+            select(DailyCashSession.id, DailyCashSession.status).where(
+                DailyCashSession.id.in_(sids)
+            )
+        )
+    ).all()
+    return {int(sid): str(st or "open") for sid, st in rows}
+
+
+async def _assert_payment_editable(db, payment_id: int, allow_if_debt: bool = False) -> NakladnoyPayment:
+    """Ensure payment exists, is not deleted, and does not belong to a closed session."""
+    pay = await get_nakladnoy(db, payment_id)
+    if pay is None or pay.status == "deleted":
+        raise HTTPException(status_code=404, detail="Nakladnoy topilmadi")
+    sess = await db.get(DailyCashSession, pay.session_id)
+    if sess is not None and sess.status == "closed":
+        if not (allow_if_debt and bool(getattr(pay, "is_debt", False))):
+            raise HTTPException(
+                status_code=400,
+                detail="Yopilgan kunning nakladnoyini tahrirlash yoki o'chirish mumkin emas (faqat ko'rish rejimi)",
+            )
+    return pay
+
+
+async def _assert_cash_tx_editable(db, tx_id: int) -> None:
+    """Ensure cash transaction exists and does not belong to a closed session."""
+    tx = await db.get(CashTransaction, tx_id)
+    if tx is None or getattr(tx, "is_deleted", False):
+        raise HTTPException(status_code=404, detail="Kassa amali topilmadi")
+    sess = await db.get(DailyCashSession, tx.session_id)
+    if sess is not None and sess.status == "closed":
+        raise HTTPException(
+            status_code=400,
+            detail="Yopilgan smenadagi kassa amalini o'zgartirish mumkin emas",
+        )
 
 
 async def _load_group_info(db) -> GroupConfigInfo:
@@ -272,7 +318,12 @@ def create_api_app() -> FastAPI:
             key=lambda x: x.id,
         )
         nak_outs = [
-            _serialize_nakladnoy(n, session_seq=idx, report_date=summary.session.report_date)
+            _serialize_nakladnoy(
+                n,
+                session_seq=idx,
+                report_date=summary.session.report_date,
+                session_status=summary.session.status,
+            )
             for idx, n in enumerate(all_naks, start=1)
         ]
         cash_outs = [_serialize_cash_tx(tx) for tx in summary.cash_transactions]
@@ -320,6 +371,7 @@ def create_api_app() -> FastAPI:
         user: AuthenticatedUser = Depends(require_write_user),
     ) -> CashTxOut:
         async with async_session_maker() as db:
+            await _assert_cash_tx_editable(db, tx_id)
             tx = await update_cash_transaction(
                 db,
                 tx_id=tx_id,
@@ -337,6 +389,7 @@ def create_api_app() -> FastAPI:
         user: AuthenticatedUser = Depends(require_write_user),
     ) -> dict:
         async with async_session_maker() as db:
+            await _assert_cash_tx_editable(db, tx_id)
             tx = await delete_cash_transaction(db, tx_id=tx_id, user_id=user.user_id)
         if tx is None:
             raise HTTPException(status_code=404, detail="Kassa amali topilmadi")
@@ -515,7 +568,13 @@ def create_api_app() -> FastAPI:
         async with async_session_maker() as db:
             if scope == "recent":
                 rows = await list_recent_nakladnoys(db, limit=60)
-                items = [_serialize_nakladnoy(r) for r in rows]
+                st_map = await _batch_session_statuses(db, rows)
+                items = [
+                    _serialize_nakladnoy(
+                        r, session_status=st_map.get(int(r.session_id), "open")
+                    )
+                    for r in rows
+                ]
             else:
                 summary = await compute_session_summary(db)
                 all_naks = sorted(
@@ -528,7 +587,10 @@ def create_api_app() -> FastAPI:
                 )
                 items = [
                     _serialize_nakladnoy(
-                        n, session_seq=idx, report_date=summary.session.report_date
+                        n,
+                        session_seq=idx,
+                        report_date=summary.session.report_date,
+                        session_status=summary.session.status,
                     )
                     for idx, n in enumerate(all_naks, start=1)
                 ]
@@ -570,10 +632,8 @@ def create_api_app() -> FastAPI:
         user: AuthenticatedUser = Depends(require_write_user),
     ) -> NakladnoyOut:
         async with async_session_maker() as db:
+            cur_pay = await _assert_payment_editable(db, payment_id, allow_if_debt=False)
             if payload.round_amount:
-                cur_pay = await get_nakladnoy(db, payment_id)
-                if cur_pay is None or cur_pay.status == "deleted":
-                    raise HTTPException(status_code=404, detail="Nakladnoy topilmadi")
                 r_mode = await get_app_setting(db, "round_mode", "floor_1000")
                 if r_mode == "none":
                     r_mode = "floor_1000"
@@ -615,6 +675,7 @@ def create_api_app() -> FastAPI:
         user: AuthenticatedUser = Depends(require_write_user),
     ) -> NakladnoyOut:
         async with async_session_maker() as db:
+            await _assert_payment_editable(db, payment_id, allow_if_debt=True)
             res = await set_nakladnoy_payment_method(
                 db,
                 payment_id=payment_id,
@@ -635,6 +696,7 @@ def create_api_app() -> FastAPI:
         user: AuthenticatedUser = Depends(require_write_user),
     ) -> NakladnoyOut:
         async with async_session_maker() as db:
+            await _assert_payment_editable(db, payment_id, allow_if_debt=False)
             updated = await mark_nakladnoy_as_debt(db, payment_id=payment_id, user_id=user.user_id)
             if updated is None:
                 raise HTTPException(status_code=404, detail="Nakladnoy topilmadi")
@@ -687,6 +749,7 @@ def create_api_app() -> FastAPI:
         user: AuthenticatedUser = Depends(require_write_user),
     ) -> dict:
         async with async_session_maker() as db:
+            await _assert_payment_editable(db, payment_id, allow_if_debt=False)
             deleted = await delete_nakladnoy(db, payment_id=payment_id, user_id=user.user_id)
         if deleted is None:
             raise HTTPException(status_code=404, detail="Nakladnoy topilmadi")
@@ -699,7 +762,15 @@ def create_api_app() -> FastAPI:
     ) -> dict:
         async with async_session_maker() as db:
             rows = await list_unpaid_debt_nakladnoys(db)
-        items = [_serialize_nakladnoy(pay, report_date=r_date) for pay, r_date in rows]
+            st_map = await _batch_session_statuses(db, [pay for pay, _ in rows])
+        items = [
+            _serialize_nakladnoy(
+                pay,
+                report_date=r_date,
+                session_status=st_map.get(int(pay.session_id), "open"),
+            )
+            for pay, r_date in rows
+        ]
         total = sum(i.amount for i in items)
         return {"count": len(items), "total_amount": total, "items": items}
 
@@ -825,7 +896,12 @@ def create_api_app() -> FastAPI:
             key=lambda x: x.id,
         )
         nak_outs = [
-            _serialize_nakladnoy(n, session_seq=idx, report_date=summary.session.report_date)
+            _serialize_nakladnoy(
+                n,
+                session_seq=idx,
+                report_date=summary.session.report_date,
+                session_status=summary.session.status,
+            )
             for idx, n in enumerate(all_naks, start=1)
         ]
         cash_outs = [_serialize_cash_tx(tx) for tx in summary.cash_transactions]
@@ -874,7 +950,15 @@ def create_api_app() -> FastAPI:
     ) -> dict:
         async with async_session_maker() as db:
             rows = await search_nakladnoys(db, q.strip(), limit=40)
-        items = [_serialize_nakladnoy(pay, report_date=r_date) for pay, r_date in rows]
+            st_map = await _batch_session_statuses(db, [pay for pay, _ in rows])
+        items = [
+            _serialize_nakladnoy(
+                pay,
+                report_date=r_date,
+                session_status=st_map.get(int(pay.session_id), "open"),
+            )
+            for pay, r_date in rows
+        ]
         return {"query": q.strip(), "count": len(items), "items": items}
 
     # -----------------------------------------------------------------------
@@ -989,9 +1073,7 @@ def create_api_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="Rasm 15 MB dan oshmasligi kerak")
 
         async with async_session_maker() as db:
-            payment = await get_nakladnoy(db, payment_id)
-            if payment is None or payment.status == "deleted":
-                raise HTTPException(status_code=404, detail="Nakladnoy topilmadi")
+            payment = await _assert_payment_editable(db, payment_id, allow_if_debt=False)
 
         await asyncio.to_thread(save_local_photo, payment_id, raw)
 

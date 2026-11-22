@@ -1771,10 +1771,32 @@ def test_mobile_apk_rest_api_and_group_posting(tmp_path: Path, monkeypatch):
                 r_hdet = await client.get(f"/history/sessions/{closed_sid}", headers=headers)
                 assert r_hdet.status_code == 200
                 assert r_hdet.json()["session_status"] == "closed"
+                assert r_hdet.json()["nakladnoys"][0]["session_status"] == "closed"
+
+                # Closed session nakladnoys & cash txs cannot be edited or deleted
+                r_locked_patch = await client.patch(
+                    f"/nakladnoy/{nak1['id']}",
+                    headers=headers,
+                    json={"amount": 999_000},
+                )
+                assert r_locked_patch.status_code == 400
+
+                r_locked_del = await client.delete(
+                    f"/nakladnoy/{nak1['id']}",
+                    headers=headers,
+                )
+                assert r_locked_del.status_code == 400
+
+                r_locked_cash = await client.delete(
+                    f"/cash/{tx_id}",
+                    headers=headers,
+                )
+                assert r_locked_cash.status_code == 400
 
                 r_search = await client.get("/history/search?q=Coca", headers=headers)
                 assert r_search.status_code == 200
                 assert len(r_search.json()["items"]) == 1
+                assert r_search.json()["items"][0]["session_status"] == "closed"
 
                 r_reopen = await client.post(f"/history/sessions/{closed_sid}/reopen", headers=headers)
                 assert r_reopen.status_code == 200
