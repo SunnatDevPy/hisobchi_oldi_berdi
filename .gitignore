@@ -30,3 +30,8 @@ env/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Mobile build artifacts & compiled APKs
+dist/
+mobile/build/
+mobile/.dart_tool/

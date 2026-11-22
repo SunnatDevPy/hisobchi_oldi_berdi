@@ -1,0 +1,628 @@
+"""FastAPI application providing mobile APK endpoints sharing the bot database and Telegram group."""
+
+from __future__ import annotations
+
+import asyncio
+import io
+from typing import Optional
+
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, Response, StreamingResponse
+
+from api.auth import (
+    AuthenticatedUser,
+    consume_login_code,
+    get_current_user,
+    issue_api_token,
+    require_write_user,
+    revoke_raw_token,
+)
+from api.deps import (
+    get_bot,
+    get_local_photo_path,
+    has_local_photo,
+    post_nakladnoy_to_telegram_group,
+    save_local_photo,
+    sync_existing_group_message,
+)
+from api.schemas import (
+    CashCreateRequest,
+    CashTxOut,
+    CashUpdateRequest,
+    DayCloseRequest,
+    DayCloseResponse,
+    GroupConfigInfo,
+    LoginRequest,
+    LoginResponse,
+    NakladnoyOut,
+    NakladnoyUpdateRequest,
+    PaymentMethodRequest,
+    StatusSummaryResponse,
+    UserProfileResponse,
+)
+from bot.auth import ROLE_ADMIN, can_write_role, get_user_role, is_admin_role
+from database.crud import (
+    add_cash_transaction,
+    close_cash_session,
+    compute_session_summary,
+    confirm_nakladnoy,
+    create_pending_nakladnoy,
+    delete_cash_transaction,
+    delete_nakladnoy,
+    format_local_dt,
+    get_all_known_suppliers,
+    get_app_setting,
+    get_group_config,
+    get_nakladnoy,
+    get_nakladnoy_session_seq,
+    get_or_create_open_session,
+    get_range_report_data,
+    get_recent_amounts_for_supplier,
+    get_supplier_sverka,
+    list_recent_nakladnoys,
+    list_unpaid_debt_nakladnoys,
+    mark_nakladnoy_as_debt,
+    mark_nakladnoy_as_paid,
+    normalize_payment_method,
+    resolve_supplier_name,
+    round_nakladnoy_amount,
+    set_nakladnoy_payment_method,
+    today_iso,
+    update_cash_transaction,
+    update_nakladnoy,
+)
+from database.models import CashTransaction, NakladnoyPayment
+from database.session import async_session_maker
+from services.excel_export import build_range_excel, build_session_excel, build_sverka_excel
+
+
+def _serialize_cash_tx(tx: CashTransaction) -> CashTxOut:
+    return CashTxOut(
+        id=int(tx.id),
+        session_id=int(tx.session_id),
+        amount=float(tx.amount),
+        source_type=tx.source_type,
+        note=tx.note or "",
+        created_at=format_local_dt(tx.created_at, "%Y-%m-%d %H:%M"),
+        time_hm=format_local_dt(tx.created_at, "%H:%M"),
+    )
+
+
+def _serialize_nakladnoy(
+    n: NakladnoyPayment,
+    session_seq: Optional[int] = None,
+    report_date: Optional[str] = None,
+) -> NakladnoyOut:
+    pm = normalize_payment_method(getattr(n, "payment_method", "cash"))
+    has_ph = bool(n.photo_file_id) or has_local_photo(int(n.id))
+    in_grp = bool(n.group_chat_id and n.group_message_id)
+    disp = f"#{n.id} / {session_seq}" if session_seq else f"#{n.id}"
+    return NakladnoyOut(
+        id=int(n.id),
+        session_id=int(n.session_id),
+        session_seq=session_seq,
+        display_num=disp,
+        supplier_name=n.supplier_name,
+        amount=float(n.amount),
+        original_amount=float(n.original_amount) if n.original_amount is not None else None,
+        payment_method=pm,
+        is_debt=bool(getattr(n, "is_debt", False)),
+        note=n.note or "",
+        has_photo=has_ph,
+        in_group=in_grp,
+        group_chat_id=n.group_chat_id,
+        group_message_id=n.group_message_id,
+        created_at=format_local_dt(n.created_at, "%Y-%m-%d %H:%M"),
+        time_hm=format_local_dt(n.created_at, "%H:%M"),
+        report_date=report_date,
+    )
+
+
+async def _load_group_info(db) -> GroupConfigInfo:
+    grp = await get_group_config(db, "nakladnoy")
+    apk_toggle = await get_app_setting(db, "apk_post_to_group", "on")
+    post_enabled = (apk_toggle or "on").strip().lower() != "off"
+    if grp and grp.chat_id:
+        return GroupConfigInfo(
+            bound=True,
+            chat_id=int(grp.chat_id),
+            title=grp.title or str(grp.chat_id),
+            apk_post_to_group=post_enabled,
+        )
+    return GroupConfigInfo(bound=False, chat_id=None, title="", apk_post_to_group=post_enabled)
+
+
+def create_api_app() -> FastAPI:
+    """Create and configure the FastAPI application for Hisobot Mobile APK."""
+    app = FastAPI(
+        title="Hisobchi Mobile API",
+        version="1.0.0",
+        docs_url=None,
+        redoc_url=None,
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    @app.get("/health")
+    async def health() -> dict:
+        return {"status": "ok", "service": "hisobchi-api"}
+
+    @app.post("/auth/login", response_model=LoginResponse)
+    async def auth_login(payload: LoginRequest, request: Request) -> LoginResponse:
+        client_ip = request.client.host if request.client else "unknown"
+        user_id = consume_login_code(payload.code, client_ip=client_ip)
+        if user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Kod noto'g'ri yoki muddati tugagan. Telegram botga /apk yozib yangi kod oling.",
+            )
+        role = get_user_role(user_id)
+        if role is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Ushbu foydalanuvchiga ruxsat berilmagan.",
+            )
+        async with async_session_maker() as db:
+            raw_token, _ = await issue_api_token(db, user_id=user_id, device_name=payload.device_name)
+
+        return LoginResponse(
+            access_token=raw_token,
+            user_id=user_id,
+            role=role,
+            can_write=can_write_role(user_id),
+            is_admin=is_admin_role(user_id) or role == ROLE_ADMIN,
+        )
+
+    @app.post("/auth/logout")
+    async def auth_logout(user: AuthenticatedUser = Depends(get_current_user)) -> dict:
+        async with async_session_maker() as db:
+            await revoke_raw_token(db, user.raw_token)
+        return {"ok": True}
+
+    @app.get("/me", response_model=UserProfileResponse)
+    async def get_me(user: AuthenticatedUser = Depends(get_current_user)) -> UserProfileResponse:
+        return UserProfileResponse(
+            user_id=user.user_id,
+            role=user.role,
+            can_write=user.can_write,
+            is_admin=user.is_admin,
+        )
+
+    @app.get("/config", response_model=GroupConfigInfo)
+    async def get_config(user: AuthenticatedUser = Depends(get_current_user)) -> GroupConfigInfo:
+        async with async_session_maker() as db:
+            return await _load_group_info(db)
+
+    @app.get("/status", response_model=StatusSummaryResponse)
+    async def get_status(user: AuthenticatedUser = Depends(get_current_user)) -> StatusSummaryResponse:
+        async with async_session_maker() as db:
+            summary = await compute_session_summary(db)
+            grp_info = await _load_group_info(db)
+
+        all_naks = sorted(
+            [
+                *summary.confirmed_nakladnoys,
+                *summary.noncash_nakladnoys,
+                *summary.debt_nakladnoys,
+            ],
+            key=lambda x: x.id,
+        )
+        nak_outs = [
+            _serialize_nakladnoy(n, session_seq=idx, report_date=summary.session.report_date)
+            for idx, n in enumerate(all_naks, start=1)
+        ]
+        cash_outs = [_serialize_cash_tx(tx) for tx in summary.cash_transactions]
+
+        return StatusSummaryResponse(
+            session_id=int(summary.session.id),
+            report_date=summary.session.report_date,
+            session_status=summary.session.status,
+            opening_balance=float(summary.opening_balance),
+            main_cash_in=float(summary.main_cash_in),
+            kassa_debt_today=float(summary.kassa_debt_today),
+            kassa_repay_today=float(summary.kassa_repay_today),
+            total_available_inflow=float(summary.total_available_inflow),
+            total_nakladnoy_spent=float(summary.total_nakladnoy_spent),
+            total_card_spent=float(summary.total_card_spent),
+            total_transfer_spent=float(summary.total_transfer_spent),
+            total_debt_nakladnoy=float(summary.total_debt_nakladnoy),
+            expected_cash=float(summary.expected_cash),
+            total_kassa_debt_outstanding=float(summary.total_kassa_debt_outstanding),
+            all_unpaid_debt_count=int(summary.all_unpaid_debt_count),
+            all_unpaid_debt_total=float(summary.all_unpaid_debt_total),
+            group_info=grp_info,
+            cash_transactions=cash_outs,
+            nakladnoys=nak_outs,
+        )
+
+    @app.post("/cash", response_model=CashTxOut)
+    async def create_cash(
+        payload: CashCreateRequest,
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> CashTxOut:
+        async with async_session_maker() as db:
+            tx = await add_cash_transaction(
+                db,
+                amount=payload.amount,
+                source_type=payload.source_type,
+                note=payload.note,
+            )
+        return _serialize_cash_tx(tx)
+
+    @app.patch("/cash/{tx_id}", response_model=CashTxOut)
+    async def edit_cash(
+        tx_id: int,
+        payload: CashUpdateRequest,
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> CashTxOut:
+        async with async_session_maker() as db:
+            tx = await update_cash_transaction(
+                db,
+                tx_id=tx_id,
+                new_amount=payload.amount,
+                new_note=payload.note,
+                user_id=user.user_id,
+            )
+        if tx is None:
+            raise HTTPException(status_code=404, detail="Kassa amali topilmadi")
+        return _serialize_cash_tx(tx)
+
+    @app.delete("/cash/{tx_id}")
+    async def remove_cash(
+        tx_id: int,
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> dict:
+        async with async_session_maker() as db:
+            tx = await delete_cash_transaction(db, tx_id=tx_id, user_id=user.user_id)
+        if tx is None:
+            raise HTTPException(status_code=404, detail="Kassa amali topilmadi")
+        return {"ok": True, "deleted_id": tx_id}
+
+    @app.get("/suppliers")
+    async def get_suppliers(
+        q: str = Query(default=""),
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        async with async_session_maker() as db:
+            names = await get_all_known_suppliers(db, limit=250)
+        if q.strip():
+            needle = q.strip().lower()
+            names = [n for n in names if needle in n.lower()]
+        return {"suppliers": names}
+
+    @app.get("/suppliers/amounts")
+    async def get_supplier_amounts(
+        supplier: str = Query(..., min_length=1),
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        async with async_session_maker() as db:
+            canonical, _ = await resolve_supplier_name(db, supplier.strip())
+            amounts = await get_recent_amounts_for_supplier(db, canonical, limit=6)
+        return {"supplier": canonical, "amounts": [float(a) for a in amounts]}
+
+    @app.post("/nakladnoy")
+    async def create_nakladnoy(
+        supplier_name: str = Form(...),
+        amount: float = Form(...),
+        payment_mode: str = Form(default="cash"),  # cash | card | transfer | debt
+        note: str = Form(default=""),
+        send_to_group: bool = Form(default=True),
+        photo: Optional[UploadFile] = File(default=None),
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> dict:
+        clean_supplier = supplier_name.strip()
+        if not clean_supplier:
+            raise HTTPException(status_code=400, detail="Postavshik nomini kiriting")
+        if amount <= 0:
+            raise HTTPException(status_code=400, detail="Summa 0 dan katta bo'lishi kerak")
+
+        mode = (payment_mode or "cash").strip().lower()
+        is_debt = mode == "debt"
+        pm = "cash" if is_debt else normalize_payment_method(mode)
+
+        photo_bytes: Optional[bytes] = None
+        if photo is not None:
+            raw = await photo.read()
+            if raw:
+                if len(raw) > 15 * 1024 * 1024:
+                    raise HTTPException(status_code=400, detail="Rasm hajmi 15 MB dan oshmasligi kerak")
+                photo_bytes = raw
+
+        async with async_session_maker() as db:
+            canonical, _ = await resolve_supplier_name(db, clean_supplier)
+            pending = await create_pending_nakladnoy(
+                db,
+                supplier_name=canonical,
+                amount=amount,
+                note=note.strip() or None,
+            )
+            confirmed = await confirm_nakladnoy(
+                db,
+                payment_id=pending.id,
+                user_id=user.user_id,
+                is_debt=is_debt,
+                payment_method=pm,
+            )
+            if confirmed is None:
+                raise HTTPException(status_code=500, detail="Nakladnoy tasdiqlashda xatolik")
+            seq = await get_nakladnoy_session_seq(db, confirmed)
+
+        if photo_bytes:
+            await asyncio.to_thread(save_local_photo, confirmed.id, photo_bytes)
+
+        grp_ok = False
+        grp_msg = "Faqat bazaga saqlandi"
+        if send_to_group:
+            grp_ok, grp_msg = await post_nakladnoy_to_telegram_group(
+                confirmed.id, photo_bytes=photo_bytes, force=False
+            )
+            if grp_ok:
+                async with async_session_maker() as db:
+                    refreshed = await get_nakladnoy(db, confirmed.id)
+                    if refreshed is not None:
+                        confirmed = refreshed
+
+        return {
+            "nakladnoy": _serialize_nakladnoy(confirmed, session_seq=seq),
+            "group_posted": grp_ok,
+            "group_message": grp_msg,
+        }
+
+    @app.get("/nakladnoy")
+    async def list_nakladnoys(
+        scope: str = Query(default="today"),
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        async with async_session_maker() as db:
+            if scope == "recent":
+                rows = await list_recent_nakladnoys(db, limit=60)
+                items = [_serialize_nakladnoy(r) for r in rows]
+            else:
+                summary = await compute_session_summary(db)
+                all_naks = sorted(
+                    [
+                        *summary.confirmed_nakladnoys,
+                        *summary.noncash_nakladnoys,
+                        *summary.debt_nakladnoys,
+                    ],
+                    key=lambda x: x.id,
+                )
+                items = [
+                    _serialize_nakladnoy(
+                        n, session_seq=idx, report_date=summary.session.report_date
+                    )
+                    for idx, n in enumerate(all_naks, start=1)
+                ]
+        return {"items": items}
+
+    @app.get("/nakladnoy/{payment_id}/photo")
+    async def get_nakladnoy_photo(
+        payment_id: int,
+        user: AuthenticatedUser = Depends(get_current_user),
+    ):
+        local_path = get_local_photo_path(payment_id)
+        if local_path.is_file():
+            return FileResponse(local_path, media_type="image/jpeg")
+
+        async with async_session_maker() as db:
+            payment = await get_nakladnoy(db, payment_id)
+        if payment is None or not payment.photo_file_id:
+            raise HTTPException(status_code=404, detail="Rasm topilmadi")
+
+        bot = get_bot()
+        if bot is None:
+            raise HTTPException(status_code=404, detail="Telegram rasm yuklab bo'lmadi")
+        try:
+            tg_file = await bot.get_file(payment.photo_file_id)
+            buf = io.BytesIO()
+            await bot.download_file(tg_file.file_path, destination=buf)
+            data = buf.getvalue()
+            if data:
+                await asyncio.to_thread(save_local_photo, payment_id, data)
+                return Response(content=data, media_type="image/jpeg")
+        except Exception as exc:
+            raise HTTPException(status_code=404, detail=f"Rasmni yuklab bo'lmadi: {exc}") from exc
+        raise HTTPException(status_code=404, detail="Rasm bo'sh")
+
+    @app.patch("/nakladnoy/{payment_id}", response_model=NakladnoyOut)
+    async def edit_nakladnoy_endpoint(
+        payment_id: int,
+        payload: NakladnoyUpdateRequest,
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> NakladnoyOut:
+        async with async_session_maker() as db:
+            if payload.round_amount:
+                res = await round_nakladnoy_amount(db, payment_id, user_id=user.user_id)
+                updated = res[0] if res else None
+            else:
+                canonical_sup = None
+                if payload.supplier_name is not None:
+                    canonical_sup, _ = await resolve_supplier_name(db, payload.supplier_name.strip())
+                updated = await update_nakladnoy(
+                    db,
+                    payment_id=payment_id,
+                    supplier_name=canonical_sup,
+                    amount=payload.amount,
+                    note=payload.note,
+                    user_id=user.user_id,
+                )
+            if updated is None:
+                raise HTTPException(status_code=404, detail="Nakladnoy topilmadi")
+            seq = await get_nakladnoy_session_seq(db, updated)
+
+        sync_existing_group_message(updated, tag="✏️ [TAHRIRLANDI]")
+        return _serialize_nakladnoy(updated, session_seq=seq)
+
+    @app.post("/nakladnoy/{payment_id}/payment-method", response_model=NakladnoyOut)
+    async def change_nakladnoy_payment_method(
+        payment_id: int,
+        payload: PaymentMethodRequest,
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> NakladnoyOut:
+        async with async_session_maker() as db:
+            res = await set_nakladnoy_payment_method(
+                db,
+                payment_id=payment_id,
+                payment_method=payload.payment_method,
+                user_id=user.user_id,
+            )
+            if res is None:
+                raise HTTPException(status_code=404, detail="Nakladnoy topilmadi")
+            updated, _ = res
+            seq = await get_nakladnoy_session_seq(db, updated)
+
+        sync_existing_group_message(updated, tag="")
+        return _serialize_nakladnoy(updated, session_seq=seq)
+
+    @app.post("/nakladnoy/{payment_id}/debt", response_model=NakladnoyOut)
+    async def convert_nakladnoy_to_debt(
+        payment_id: int,
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> NakladnoyOut:
+        async with async_session_maker() as db:
+            updated = await mark_nakladnoy_as_debt(db, payment_id=payment_id, user_id=user.user_id)
+            if updated is None:
+                raise HTTPException(status_code=404, detail="Nakladnoy topilmadi")
+            seq = await get_nakladnoy_session_seq(db, updated)
+
+        sync_existing_group_message(updated, tag="📌 [QARZGA O'TKAZILDI]")
+        return _serialize_nakladnoy(updated, session_seq=seq)
+
+    @app.post("/nakladnoy/{payment_id}/paid", response_model=NakladnoyOut)
+    async def pay_debt_nakladnoy(
+        payment_id: int,
+        payload: PaymentMethodRequest,
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> NakladnoyOut:
+        async with async_session_maker() as db:
+            res = await mark_nakladnoy_as_paid(
+                db,
+                payment_id=payment_id,
+                user_id=user.user_id,
+                payment_method=payload.payment_method,
+            )
+            if res is None:
+                raise HTTPException(status_code=404, detail="Nakladnoy topilmadi")
+            updated, _ = res
+            seq = await get_nakladnoy_session_seq(db, updated)
+
+        sync_existing_group_message(updated, tag="✅ [QARZ TO'LANDI]")
+        return _serialize_nakladnoy(updated, session_seq=seq)
+
+    @app.post("/nakladnoy/{payment_id}/group")
+    async def send_nakladnoy_to_group_endpoint(
+        payment_id: int,
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> dict:
+        ok, msg = await post_nakladnoy_to_telegram_group(payment_id, force=True)
+        if not ok:
+            raise HTTPException(status_code=400, detail=msg)
+        async with async_session_maker() as db:
+            updated = await get_nakladnoy(db, payment_id)
+            seq = await get_nakladnoy_session_seq(db, updated) if updated else None
+        return {
+            "ok": True,
+            "message": msg,
+            "nakladnoy": _serialize_nakladnoy(updated, session_seq=seq) if updated else None,
+        }
+
+    @app.delete("/nakladnoy/{payment_id}")
+    async def remove_nakladnoy(
+        payment_id: int,
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> dict:
+        async with async_session_maker() as db:
+            deleted = await delete_nakladnoy(db, payment_id=payment_id, user_id=user.user_id)
+        if deleted is None:
+            raise HTTPException(status_code=404, detail="Nakladnoy topilmadi")
+        sync_existing_group_message(deleted, tag="❌ [O'CHIRILDI]")
+        return {"ok": True, "deleted_id": payment_id}
+
+    @app.get("/debts")
+    async def get_unpaid_debts(
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        async with async_session_maker() as db:
+            rows = await list_unpaid_debt_nakladnoys(db)
+        items = [_serialize_nakladnoy(pay, report_date=r_date) for pay, r_date in rows]
+        total = sum(i.amount for i in items)
+        return {"count": len(items), "total_amount": total, "items": items}
+
+    @app.post("/day/close", response_model=DayCloseResponse)
+    async def close_day_endpoint(
+        payload: DayCloseRequest,
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> DayCloseResponse:
+        async with async_session_maker() as db:
+            open_sess = await get_or_create_open_session(db)
+            closed_summary = await close_cash_session(
+                db,
+                session_id=open_sess.id,
+                actual_counted_cash=payload.actual_counted_cash,
+            )
+            next_sess = await get_or_create_open_session(db)
+
+        return DayCloseResponse(
+            closed_session_id=int(closed_summary.session.id),
+            report_date=closed_summary.session.report_date,
+            expected_cash=float(closed_summary.expected_cash),
+            actual_counted_cash=float(closed_summary.session.actual_counted_cash or 0),
+            difference=float(closed_summary.session.difference or 0),
+            next_session_id=int(next_sess.id),
+            next_opening_balance=float(next_sess.opening_balance),
+        )
+
+    @app.get("/export/session")
+    async def export_current_session_excel(
+        session_id: Optional[int] = Query(default=None),
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> StreamingResponse:
+        async with async_session_maker() as db:
+            summary = await compute_session_summary(db, session_id=session_id)
+        xlsx_bytes = await asyncio.to_thread(build_session_excel, summary)
+        filename = f"Hisobot_{summary.session.report_date}.xlsx"
+        return StreamingResponse(
+            io.BytesIO(xlsx_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.get("/export/range")
+    async def export_range_excel(
+        date_from: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        date_to: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> StreamingResponse:
+        if date_from > date_to:
+            date_from, date_to = date_to, date_from
+        async with async_session_maker() as db:
+            data = await get_range_report_data(db, date_from, date_to)
+        xlsx_bytes = await asyncio.to_thread(build_range_excel, date_from, date_to, data)
+        filename = f"Hisobot_{date_from}_{date_to}.xlsx"
+        return StreamingResponse(
+            io.BytesIO(xlsx_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.get("/export/sverka")
+    async def export_sverka_excel(
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> StreamingResponse:
+        async with async_session_maker() as db:
+            rows = await get_supplier_sverka(db)
+        xlsx_bytes = await asyncio.to_thread(build_sverka_excel, rows)
+        filename = f"Sverka_{today_iso()}.xlsx"
+        return StreamingResponse(
+            io.BytesIO(xlsx_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    return app

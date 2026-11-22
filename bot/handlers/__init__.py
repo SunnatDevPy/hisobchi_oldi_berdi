@@ -3,6 +3,7 @@
 from aiogram import Router
 
 from bot.handlers.admin_tools import router as admin_router
+from bot.handlers.apk_link import router as apk_router
 from bot.handlers.nasiya import router as nasiya_router
 from bot.handlers.navigation import router as navigation_router
 from bot.handlers.prixod_itog import router as prixod_router
@@ -16,6 +17,7 @@ def get_main_router() -> Router:
     # navigation_router MUST come first so menu buttons & /cancel override any active FSM wait state.
     root.include_router(navigation_router)
     root.include_router(admin_router)
+    root.include_router(apk_router)
     root.include_router(nasiya_router)
     root.include_router(settings_router)
     root.include_router(prixod_router)

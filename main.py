@@ -47,12 +47,30 @@ async def _register_bot_commands(bot: Bot) -> None:
         BotCommand(command="stats", description="Haftalik / oylik statistika"),
         BotCommand(command="audit", description="O'zgarishlar va AI sarfi"),
         BotCommand(command="roles", description="Foydalanuvchi rollari"),
+        BotCommand(command="apk", description="Mobil ilova (APK) ulash"),
         BotCommand(command="backup", description="Hozir backup olish"),
     ]
     try:
         await bot.set_my_commands(commands, scope=BotCommandScopeAllPrivateChats())
     except Exception:
         logger.debug("set_my_commands skipped")
+
+
+async def _run_api_server(host: str, port: int) -> None:
+    """Run embedded FastAPI mobile API server inside the bot asyncio loop."""
+    import uvicorn
+    from api.app import create_api_app
+
+    config = uvicorn.Config(
+        create_api_app(),
+        host=host,
+        port=port,
+        log_level="warning",
+        access_log=False,
+    )
+    server = uvicorn.Server(config)
+    logger.info("Starting Hisobchi Mobile REST API on %s:%s", host, port)
+    await server.serve()
 
 
 async def run_bot() -> None:
@@ -76,9 +94,16 @@ async def run_bot() -> None:
     dp = Dispatcher(storage=DatabaseFSMStorage(async_session_maker))
     dp.include_router(get_main_router())
 
+    from api.deps import set_bot
+
+    set_bot(bot)
     await _register_bot_commands(bot)
-    backup_task = asyncio.create_task(backup_scheduler(bot))
-    report_task = asyncio.create_task(daily_report_scheduler(bot))
+    bg_tasks = [
+        asyncio.create_task(backup_scheduler(bot)),
+        asyncio.create_task(daily_report_scheduler(bot)),
+    ]
+    if settings.API_ENABLED:
+        bg_tasks.append(asyncio.create_task(_run_api_server(settings.API_HOST, settings.API_PORT)))
 
     logger.info("Starting Hisobot Bot polling...")
     try:
@@ -89,7 +114,8 @@ async def run_bot() -> None:
             allowed_updates=dp.resolve_used_update_types(),
         )
     finally:
-        for task in (backup_task, report_task):
+        set_bot(None)
+        for task in bg_tasks:
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task

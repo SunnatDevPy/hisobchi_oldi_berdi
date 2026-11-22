@@ -38,6 +38,10 @@ class Settings(BaseSettings):
 
     TIMEZONE: str = "Asia/Tashkent"
     BACKUP_PASSWORD: str = ""
+    API_ENABLED: bool = True
+    API_HOST: str = "0.0.0.0"
+    API_PORT: int = 8088
+    API_PUBLIC_URL: str = ""
 
     @field_validator("DATABASE_URL")
     @classmethod

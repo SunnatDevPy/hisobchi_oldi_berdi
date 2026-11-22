@@ -1444,3 +1444,183 @@ def test_fsm_storage_cache_and_fast_expected_cash_sync(tmp_path: Path, monkeypat
             await eng.dispose()
 
     asyncio.run(scenario())
+
+
+def test_mobile_apk_rest_api_and_group_posting(tmp_path: Path, monkeypatch):
+    from types import SimpleNamespace
+    import httpx
+    from api import app as api_app_mod
+    from api import auth as api_auth_mod
+    from api import deps as api_deps_mod
+    from config import get_settings
+    from database.crud import set_group_config
+
+    monkeypatch.setenv("BOT_TOKEN", "test-token")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("ADMIN_IDS", "111")
+    get_settings.cache_clear()
+    api_auth_mod.clear_auth_memory_state()
+    monkeypatch.setattr(api_deps_mod, "APK_PHOTOS_DIR", tmp_path / "apk_photos")
+
+    class FakeGroupBot:
+        def __init__(self) -> None:
+            self.sent_messages: list[tuple[int, str, bool]] = []
+            self.edited_messages: list[tuple[int, int, str]] = []
+
+        async def send_photo(self, chat_id: int, photo, caption: str, **kwargs):
+            self.sent_messages.append((chat_id, caption, True))
+            return SimpleNamespace(
+                message_id=901,
+                photo=[SimpleNamespace(file_id="tg-apk-photo-901")],
+            )
+
+        async def send_message(self, chat_id: int, text: str, **kwargs):
+            self.sent_messages.append((chat_id, text, False))
+            return SimpleNamespace(message_id=902, photo=None)
+
+        async def edit_message_caption(self, chat_id: int, message_id: int, caption: str, **kwargs):
+            self.edited_messages.append((chat_id, message_id, caption))
+
+        async def edit_message_text(self, chat_id: int, message_id: int, text: str, **kwargs):
+            self.edited_messages.append((chat_id, message_id, text))
+
+    async def scenario():
+        db_file = tmp_path / "test_apk_api.db"
+        eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+        await init_db(engine_override=eng, session_maker_override=maker)
+        monkeypatch.setattr(api_auth_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_deps_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_app_mod, "async_session_maker", maker)
+
+        fake_bot = FakeGroupBot()
+        api_deps_mod.set_bot(fake_bot)
+        try:
+            async with maker() as db:
+                await set_group_config(db, "nakladnoy", -100777888, "Test Nakladnoy Group")
+
+            app = api_app_mod.create_api_app()
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                # 1. Health check
+                r_health = await client.get("/health")
+                assert r_health.status_code == 200
+                assert r_health.json()["status"] == "ok"
+
+                # 2. One-time code login
+                code = api_auth_mod.create_login_code(111)
+                r_login = await client.post(
+                    "/auth/login",
+                    json={"code": code, "device_name": "Samsung S24"},
+                )
+                assert r_login.status_code == 200
+                token = r_login.json()["access_token"]
+                assert r_login.json()["role"] == "admin"
+
+                # Reusing one-time code fails
+                r_reuse = await client.post("/auth/login", json={"code": code})
+                assert r_reuse.status_code == 401
+
+                headers = {"Authorization": f"Bearer {token}"}
+
+                # 3. Cash transaction
+                r_cash = await client.post(
+                    "/cash",
+                    headers=headers,
+                    json={"amount": 5_000_000, "source_type": "main", "note": "Seyfdan"},
+                )
+                assert r_cash.status_code == 200
+                tx_id = r_cash.json()["id"]
+
+                # 4. Create cash nakladnoy with photo -> posts to bound Telegram group
+                r_nak1 = await client.post(
+                    "/nakladnoy",
+                    headers=headers,
+                    data={
+                        "supplier_name": "Coca Cola",
+                        "amount": "1200000",
+                        "payment_mode": "cash",
+                        "send_to_group": "true",
+                    },
+                    files={"photo": ("check.jpg", b"\xff\xd8\xff\xe0fakejpeg", "image/jpeg")},
+                )
+                assert r_nak1.status_code == 200
+                nak1 = r_nak1.json()["nakladnoy"]
+                assert r_nak1.json()["group_posted"] is True
+                assert nak1["display_num"] == f"#{nak1['id']} / 1"
+                assert len(fake_bot.sent_messages) == 1
+                assert "Coca Cola" in fake_bot.sent_messages[0][1]
+
+                # 5. Create card & debt nakladnoys (card/debt do not reduce expected_cash)
+                r_nak2 = await client.post(
+                    "/nakladnoy",
+                    headers=headers,
+                    data={
+                        "supplier_name": "Card Supplier",
+                        "amount": "800000",
+                        "payment_mode": "card",
+                        "send_to_group": "false",
+                    },
+                )
+                assert r_nak2.status_code == 200
+
+                r_nak3 = await client.post(
+                    "/nakladnoy",
+                    headers=headers,
+                    data={
+                        "supplier_name": "Debt Supplier",
+                        "amount": "500000",
+                        "payment_mode": "debt",
+                        "send_to_group": "false",
+                    },
+                )
+                assert r_nak3.status_code == 200
+                debt_id = r_nak3.json()["nakladnoy"]["id"]
+
+                # 6. Check /status balance
+                r_status = await client.get("/status", headers=headers)
+                assert r_status.status_code == 200
+                st = r_status.json()
+                assert st["expected_cash"] == 3_800_000.0
+                assert st["total_card_spent"] == 800_000.0
+                assert st["total_debt_nakladnoy"] == 500_000.0
+                assert len(st["nakladnoys"]) == 3
+
+                # 7. Pay debt nakladnoy via transfer -> does not reduce cash
+                r_pay = await client.post(
+                    f"/nakladnoy/{debt_id}/paid",
+                    headers=headers,
+                    json={"payment_method": "transfer"},
+                )
+                assert r_pay.status_code == 200
+                assert r_pay.json()["is_debt"] is False
+                assert r_pay.json()["payment_method"] == "transfer"
+
+                # 8. Excel export
+                r_xlsx = await client.get("/export/session", headers=headers)
+                assert r_xlsx.status_code == 200
+                assert len(r_xlsx.content) > 1000
+
+                # 9. Close day
+                r_close = await client.post(
+                    "/day/close",
+                    headers=headers,
+                    json={"actual_counted_cash": 3_800_000},
+                )
+                assert r_close.status_code == 200
+                assert r_close.json()["difference"] == 0.0
+                assert r_close.json()["next_opening_balance"] == 3_800_000.0
+
+                # 10. Logout revokes token
+                r_out = await client.post("/auth/logout", headers=headers)
+                assert r_out.status_code == 200
+                r_after = await client.get("/me", headers=headers)
+                assert r_after.status_code == 401
+        finally:
+            api_deps_mod.set_bot(None)
+            await eng.dispose()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        get_settings.cache_clear()
+
