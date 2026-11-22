@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import Optional
@@ -31,7 +32,35 @@ logger = logging.getLogger("hisobot_bot.api.deps")
 
 APK_PHOTOS_DIR = Path("data/apk_photos")
 APK_BINARY_PATH = Path("data/hisobchi.apk")
+APK_VERSION_PATH = Path("data/apk_version.json")
 _ACTIVE_BOT: Optional[Bot] = None
+
+
+def get_apk_version_metadata() -> dict:
+    """Read current deployed APK version and build number from data/apk_version.json."""
+    meta = {
+        "version": "1.0.0",
+        "build": 1,
+        "full": "1.0.0+1",
+        "built_at": "",
+        "size_bytes": 0,
+        "available": False,
+    }
+    if APK_VERSION_PATH.is_file():
+        try:
+            loaded = json.loads(APK_VERSION_PATH.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                meta["version"] = str(loaded.get("version") or meta["version"])
+                meta["build"] = int(loaded.get("build") or meta["build"])
+                meta["full"] = str(loaded.get("full") or f"{meta['version']}+{meta['build']}")
+                meta["built_at"] = str(loaded.get("built_at") or "")
+        except Exception:
+            pass
+    if APK_BINARY_PATH.is_file():
+        st = APK_BINARY_PATH.stat()
+        meta["size_bytes"] = int(st.st_size)
+        meta["available"] = True
+    return meta
 
 
 def set_bot(bot: Optional[Bot]) -> None:

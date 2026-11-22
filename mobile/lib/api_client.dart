@@ -584,6 +584,54 @@ class HisobchiApiClient {
     final res = await http.Response.fromStream(streamed);
     return AiExtractResult.fromJson(_decodeJson(res));
   }
+
+  Future<ApkVersionInfo> checkApkVersion() async {
+    final res = await _http
+        .get(_uri('/apk/version'))
+        .timeout(const Duration(seconds: 10));
+    return ApkVersionInfo.fromJson(_decodeJson(res), baseUrl);
+  }
+
+  Future<Uint8List> downloadLatestApkBytes() async {
+    final res = await _http
+        .get(_uri('/download/hisobchi.apk'))
+        .timeout(const Duration(seconds: 120));
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      return res.bodyBytes;
+    }
+    throw const ApiException('APK yuklab olishda xatolik');
+  }
+}
+
+class ApkVersionInfo {
+  final String version;
+  final int build;
+  final String full;
+  final String builtAt;
+  final int sizeBytes;
+  final bool available;
+  final String downloadUrl;
+
+  const ApkVersionInfo({
+    required this.version,
+    required this.build,
+    required this.full,
+    required this.builtAt,
+    required this.sizeBytes,
+    required this.available,
+    required this.downloadUrl,
+  });
+
+  factory ApkVersionInfo.fromJson(Map<String, dynamic> j, String baseUrl) =>
+      ApkVersionInfo(
+        version: (j['version'] ?? '1.0.0').toString(),
+        build: (j['build'] as num?)?.toInt() ?? 1,
+        full: (j['full'] ?? '1.0.0+1').toString(),
+        builtAt: (j['built_at'] ?? '').toString(),
+        sizeBytes: (j['size_bytes'] as num?)?.toInt() ?? 0,
+        available: j['available'] == true,
+        downloadUrl: '$baseUrl${j['download_path'] ?? '/download/hisobchi.apk'}',
+      );
 }
 
 class AiExtractResult {

@@ -20,6 +20,7 @@ from api.auth import (
 )
 from api.deps import (
     APK_BINARY_PATH,
+    get_apk_version_metadata,
     get_bot,
     get_local_photo_path,
     has_local_photo,
@@ -153,7 +154,21 @@ def create_api_app() -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict:
-        return {"status": "ok", "service": "hisobchi-api"}
+        meta = get_apk_version_metadata()
+        return {
+            "status": "ok",
+            "service": "hisobchi-api",
+            "apk_version": meta["version"],
+            "apk_build": meta["build"],
+        }
+
+    @app.get("/apk/version")
+    async def get_apk_version() -> dict:
+        meta = get_apk_version_metadata()
+        return {
+            **meta,
+            "download_path": "/download/hisobchi.apk",
+        }
 
     @app.get("/download/hisobchi.apk")
     async def download_apk_binary():
@@ -162,10 +177,13 @@ def create_api_app() -> FastAPI:
                 status_code=404,
                 detail="APK fayli serverda topilmadi (data/hisobchi.apk)",
             )
+        meta = get_apk_version_metadata()
+        fname = f"Hisobchi_v{meta['version']}.apk"
         return FileResponse(
             APK_BINARY_PATH,
             media_type="application/vnd.android.package-archive",
-            filename="Hisobchi.apk",
+            filename=fname,
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
         )
 
     @app.post("/auth/login", response_model=LoginResponse)

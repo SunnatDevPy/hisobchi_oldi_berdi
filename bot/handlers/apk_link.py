@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import html
+import json
 import logging
+from pathlib import Path
 from typing import Optional
 
 from aiogram import F, Router
@@ -16,25 +18,36 @@ from aiogram.types import (
     Message,
 )
 
-from pathlib import Path
-
 from api.auth import (
     create_login_code,
     format_login_code_display,
     list_active_tokens,
     revoke_token_by_id,
 )
-
-APK_BINARY_PATH = Path("data/hisobchi.apk")
 from bot.auth import ROLE_LABELS, deny_if_unauthorized, get_user_role, is_admin_role
 from bot.handlers.wallet_nakladnoy import _safe_cb_answer, _safe_edit_text
 from config import get_settings
 from database.crud import format_local_dt, get_app_setting, get_group_config, set_app_setting
 from database.session import async_session_maker
 
+APK_BINARY_PATH = Path("data/hisobchi.apk")
+APK_VERSION_PATH = Path("data/apk_version.json")
 
 router = Router(name="apk_link")
 logger = logging.getLogger("hisobot_bot.apk_link")
+
+
+def _read_apk_version_str() -> tuple[str, str]:
+    """Return (version, full_version) from data/apk_version.json."""
+    if APK_VERSION_PATH.is_file():
+        try:
+            d = json.loads(APK_VERSION_PATH.read_text(encoding="utf-8"))
+            v = str(d.get("version") or "1.0.0")
+            b = int(d.get("build") or 1)
+            return v, f"v{v} (build #{b})"
+        except Exception:
+            pass
+    return "1.0.0", "v1.0.0"
 
 
 def _apk_panel_kb(post_to_group_on: bool, device_count: int, is_admin: bool) -> InlineKeyboardMarkup:
@@ -104,10 +117,12 @@ async def _render_apk_home(user_id: int, code: Optional[str] = None) -> tuple[st
     if code is None:
         code = create_login_code(user_id)
     disp_code = format_login_code_display(code)
+    _, ver_label = _read_apk_version_str()
 
     text = (
         "📱 <b>Hisobchi Mobil Ilova (APK) ulash</b>\n"
         "===============================\n"
+        f"📦 Ilova versiyasi: <b>{html.escape(ver_label)}</b>\n"
         f"🔑 Bir martalik kirish kodi (5 daqiqa amal qiladi):\n\n"
         f"👉  <code>{code}</code>   <i>({disp_code})</i>\n"
         f"{url_hint}\n"
@@ -180,8 +195,9 @@ async def cb_apk_download_file(cb: CallbackQuery) -> None:
 
     uid = cb.from_user.id if cb.from_user else 0
     code = create_login_code(uid)
+    ver_num, ver_label = _read_apk_version_str()
     caption = (
-        "📱 <b>Hisobchi Mobil Ilovasi (Android APK)</b>\n\n"
+        f"📱 <b>Hisobchi Mobil Ilovasi — {html.escape(ver_label)}</b>\n\n"
         f"🌐 Server: <code>{html.escape(pub_url)}</code>\n"
         f"🔑 Kirish kodi (5 daqiqa): <code>{code}</code>\n\n"
         "<i>Faylni yuklab olib telefoningizga o'rnating va yuqoridagi 8 xonali kodni kiriting.</i>"
@@ -202,7 +218,7 @@ async def cb_apk_download_file(cb: CallbackQuery) -> None:
         try:
             wait_msg = await cb.message.answer("⏳ <i>APK fayli Telegramga yuklanmoqda (10-15 soniya)...</i>", parse_mode="HTML")
             sent = await cb.message.answer_document(
-                document=FSInputFile(APK_BINARY_PATH, filename="Hisobchi.apk"),
+                document=FSInputFile(APK_BINARY_PATH, filename=f"Hisobchi_v{ver_num}.apk"),
                 caption=caption,
                 parse_mode="HTML",
             )

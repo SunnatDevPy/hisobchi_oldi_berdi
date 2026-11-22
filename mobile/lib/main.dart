@@ -7,6 +7,7 @@ import 'package:share_plus/share_plus.dart';
 
 import 'api_client.dart';
 import 'theme.dart';
+import 'version.dart';
 import 'widgets.dart';
 
 void main() {
@@ -600,6 +601,9 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   // Qarzlar tab supplier dropdown filter
   String _debtSupplierFilter = 'all';
 
+  ApkVersionInfo? _remoteVersion;
+  bool _updatingApk = false;
+
   @override
   void initState() {
     super.initState();
@@ -616,10 +620,15 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
         widget.api.getStatus(),
         widget.api.getUnpaidDebts(),
       ]);
+      ApkVersionInfo? ver;
+      try {
+        ver = await widget.api.checkApkVersion();
+      } catch (_) {}
       if (mounted) {
         setState(() {
           _summary = results[0] as StatusSummary;
           _allDebts = results[1] as List<NakladnoyItem>;
+          if (ver != null) _remoteVersion = ver;
           _loading = false;
         });
       }
@@ -653,6 +662,27 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
         backgroundColor: isError ? AppTokens.dangerRed : AppTokens.navyDark,
       ),
     );
+  }
+
+  Future<void> _downloadAndShareApkUpdate() async {
+    if (_updatingApk) return;
+    final ver = _remoteVersion?.version ?? kAppVersion;
+    setState(() => _updatingApk = true);
+    _showSnack('📥 Yangi versiya (v$ver) yuklab olinmoqda...');
+    try {
+      final bytes = await widget.api.downloadLatestApkBytes();
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/Hisobchi_v$ver.apk');
+      await file.writeAsBytes(bytes, flush: true);
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: "Hisobchi v$ver yangi versiyasi — ustiga bosib o'rnating",
+      );
+    } catch (e) {
+      _showSnack('Yangilashda xatolik: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => _updatingApk = false);
+    }
   }
 
   Future<void> _openCashDialog(
@@ -900,6 +930,23 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
             ),
             const SizedBox(width: 10),
             const Text('Hisobchi'),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+              decoration: BoxDecoration(
+                color: AppTokens.brand.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                'v$kAppVersion',
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w800,
+                  color: AppTokens.brand,
+                  fontFeatures: AppTokens.tabularNums,
+                ),
+              ),
+            ),
           ],
         ),
         actions: [
@@ -972,13 +1019,61 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
           ? const Center(child: CircularProgressIndicator())
           : _error != null && _summary == null
               ? _buildErrorState()
-              : IndexedStack(
-                  index: _tabIndex,
+              : Column(
                   children: [
-                    _buildDashboardTab(),
-                    _buildNakladnoylarTab(),
-                    _buildDebtsTab(),
-                    _buildSmenaAndReportsTab(),
+                    if (_remoteVersion != null &&
+                        _remoteVersion!.build > kAppBuildNumber)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 10),
+                        decoration: const BoxDecoration(
+                          gradient: AppTokens.aiGradient,
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.system_update_rounded,
+                                color: Colors.white, size: 20),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                '🚀 Yangi versiya chiqdi: v${_remoteVersion!.version} (sizda v$kAppVersion)',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                            FilledButton(
+                              style: FilledButton.styleFrom(
+                                backgroundColor: Colors.white,
+                                foregroundColor: AppTokens.brandDeep,
+                                minimumSize: const Size(70, 36),
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 12),
+                              ),
+                              onPressed: _updatingApk
+                                  ? null
+                                  : _downloadAndShareApkUpdate,
+                              child: Text(_updatingApk
+                                  ? 'Yuklanmoqda...'
+                                  : 'Yangilash'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    Expanded(
+                      child: IndexedStack(
+                        index: _tabIndex,
+                        children: [
+                          _buildDashboardTab(),
+                          _buildNakladnoylarTab(),
+                          _buildDebtsTab(),
+                          _buildSmenaAndReportsTab(),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
     );
@@ -1750,6 +1845,8 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                 ),
                 const SizedBox(height: 6),
                 _infoRow('Server:', widget.api.baseUrl),
+                const SizedBox(height: 6),
+                _infoRow('Ilova versiyasi:', 'v$kAppVersion (build #$kAppBuildNumber)'),
                 const SizedBox(height: 6),
                 _infoRow('Rol:', widget.api.role.toUpperCase()),
                 const Divider(height: 24),
