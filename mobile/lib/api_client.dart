@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -349,6 +348,29 @@ class HisobchiApiClient {
     );
   }
 
+  /// Authenticate a Telegram Mini App owner session in memory via initData HMAC.
+  Future<void> loginWithTelegramWebApp({
+    required String initData,
+    String? serverUrl,
+  }) async {
+    final cleanUrl = normalizeBaseUrl(serverUrl ?? baseUrl);
+    final res = await _http
+        .post(
+          Uri.parse('$cleanUrl/auth/telegram-webapp'),
+          headers: const {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          body: jsonEncode({'init_data': initData}),
+        )
+        .timeout(const Duration(seconds: 12));
+    final data = _decodeJson(res);
+    baseUrl = cleanUrl;
+    accessToken = data['access_token'].toString();
+    role = (data['role'] ?? 'admin').toString();
+    userId = (data['user_id'] as num).toInt();
+  }
+
   Future<void> logout() async {
     try {
       if (isAuthenticated) {
@@ -441,7 +463,8 @@ class HisobchiApiClient {
     required String paymentMode, // cash | card | transfer | debt
     String note = '',
     bool sendToGroup = true,
-    File? photoFile,
+    Uint8List? photoBytes,
+    String photoFilename = 'nakladnoy.jpg',
     double? originalAmount,
   }) async {
     final req = http.MultipartRequest('POST', _uri('/nakladnoy'));
@@ -457,9 +480,13 @@ class HisobchiApiClient {
       req.fields['original_amount'] = originalAmount.toStringAsFixed(0);
     }
 
-    if (photoFile != null && await photoFile.exists()) {
+    if (photoBytes != null && photoBytes.isNotEmpty) {
       req.files.add(
-        await http.MultipartFile.fromPath('photo', photoFile.path),
+        http.MultipartFile.fromBytes(
+          'photo',
+          photoBytes,
+          filename: photoFilename.isNotEmpty ? photoFilename : 'nakladnoy.jpg',
+        ),
       );
     }
 
@@ -575,20 +602,42 @@ class HisobchiApiClient {
     throw const ApiException('Excel yuklashda xatolik');
   }
 
+  String buildAuthenticatedDownloadUrl(
+    String endpointPath, {
+    Map<String, String>? query,
+  }) {
+    final q = <String, String>{...?query};
+    if (accessToken != null && accessToken!.isNotEmpty) {
+      q['token'] = accessToken!;
+    }
+    return _uri(endpointPath, q).toString();
+  }
+
   String photoUrlFor(int paymentId) =>
       '$baseUrl/nakladnoy/$paymentId/photo?token=${Uri.encodeComponent(accessToken ?? '')}';
 
   /// Send nakladnoy photo to server-side Gemini Vision; returns supplier & amount guess.
-  Future<AiExtractResult> extractFromPhoto(File photoFile) async {
+  Future<AiExtractResult> extractFromPhoto(
+    Uint8List photoBytes, {
+    String filename = 'nakladnoy.jpg',
+  }) async {
     final req = http.MultipartRequest('POST', _uri('/ai/extract'));
     if (accessToken != null) {
       req.headers['Authorization'] = 'Bearer $accessToken';
     }
-    req.files.add(await http.MultipartFile.fromPath('photo', photoFile.path));
+    req.files.add(
+      http.MultipartFile.fromBytes(
+        'photo',
+        photoBytes,
+        filename: filename.isNotEmpty ? filename : 'nakladnoy.jpg',
+      ),
+    );
     final streamed = await _http.send(req).timeout(const Duration(seconds: 45));
     final res = await http.Response.fromStream(streamed);
     return AiExtractResult.fromJson(_decodeJson(res));
   }
+
+  Uri get apkDownloadUri => _uri('/download/hisobchi.apk');
 
   Future<ApkVersionInfo> checkApkVersion() async {
     final res = await _http
@@ -605,41 +654,6 @@ class HisobchiApiClient {
       return res.bodyBytes;
     }
     throw const ApiException('APK yuklab olishda xatolik');
-  }
-
-  Future<File> downloadApkToFileWithProgress({
-    required File targetFile,
-    required void Function(int receivedBytes, int totalBytes) onProgress,
-    int fallbackTotalBytes = 0,
-  }) async {
-    final req = http.Request('GET', _uri('/download/hisobchi.apk'));
-    final streamed =
-        await _http.send(req).timeout(const Duration(seconds: 180));
-    if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
-      throw ApiException(
-        'APK yuklab olishda xatolik (HTTP ${streamed.statusCode})',
-        statusCode: streamed.statusCode,
-      );
-    }
-    final total = (streamed.contentLength != null && streamed.contentLength! > 0)
-        ? streamed.contentLength!
-        : fallbackTotalBytes;
-    final sink = targetFile.openWrite();
-    var received = 0;
-    try {
-      await for (final chunk in streamed.stream) {
-        sink.add(chunk);
-        received += chunk.length;
-        onProgress(received, total);
-      }
-      await sink.flush();
-    } finally {
-      await sink.close();
-    }
-    if (received < 100 * 1024) {
-      throw const ApiException('Yuklangan APK fayl to\'liq emas');
-    }
-    return targetFile;
   }
 
   // Stage 1: History sessions, detail, reopen & global search
@@ -705,7 +719,8 @@ class HisobchiApiClient {
   // Stage 3: Attach / Replace photo on existing nakladnoy
   Future<NakladnoyItem> uploadNakladnoyPhoto(
     int paymentId,
-    File photoFile, {
+    Uint8List photoBytes, {
+    String filename = 'nakladnoy.jpg',
     bool sendToGroup = true,
   }) async {
     final req =
@@ -714,7 +729,13 @@ class HisobchiApiClient {
       req.headers['Authorization'] = 'Bearer $accessToken';
     }
     req.fields['send_to_group'] = sendToGroup ? 'true' : 'false';
-    req.files.add(await http.MultipartFile.fromPath('photo', photoFile.path));
+    req.files.add(
+      http.MultipartFile.fromBytes(
+        'photo',
+        photoBytes,
+        filename: filename.isNotEmpty ? filename : 'nakladnoy.jpg',
+      ),
+    );
     final streamed = await _http.send(req).timeout(const Duration(seconds: 30));
     final res = await http.Response.fromStream(streamed);
     return NakladnoyItem.fromJson(_decodeJson(res));
@@ -794,7 +815,8 @@ class HisobchiApiClient {
   }
 
   Future<Map<String, dynamic>> createPrixodFromFile({
-    required File file,
+    required Uint8List bytes,
+    required String filename,
     bool publishToGroup = false,
   }) async {
     final req = http.MultipartRequest('POST', _uri('/prixod/file'));
@@ -802,7 +824,13 @@ class HisobchiApiClient {
       req.headers['Authorization'] = 'Bearer $accessToken';
     }
     req.fields['publish_to_group'] = publishToGroup ? 'true' : 'false';
-    req.files.add(await http.MultipartFile.fromPath('file', file.path));
+    req.files.add(
+      http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: filename.isNotEmpty ? filename : 'yespos_report.xlsx',
+      ),
+    );
     final streamed = await _http.send(req).timeout(const Duration(seconds: 30));
     final res = await http.Response.fromStream(streamed);
     return _decodeJson(res);

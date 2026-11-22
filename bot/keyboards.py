@@ -78,7 +78,7 @@ def get_webapp_url() -> Optional[str]:
     """Return HTTPS URL of the Telegram Mini App if API_PUBLIC_URL is HTTPS."""
     pub = (get_settings().API_PUBLIC_URL or "").strip().rstrip("/")
     if pub.startswith("https://"):
-        return f"{pub}/webapp"
+        return f"{pub}/webapp/"
     return None
 
 

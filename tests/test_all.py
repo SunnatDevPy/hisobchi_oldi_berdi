@@ -2254,7 +2254,7 @@ def test_telegram_webapp_auth_owner_only_and_static_routes(tmp_path: Path, monke
     more_shown = [b for row in more_menu_kb("admin", show_webapp=True).inline_keyboard for b in row]
     assert not any(getattr(b, "web_app", None) for b in more_hidden)
     assert any(
-        getattr(b, "web_app", None) and b.web_app.url == "https://hisobchi.okaposai.uz/webapp"
+        getattr(b, "web_app", None) and b.web_app.url == "https://hisobchi.okaposai.uz/webapp/"
         for b in more_shown
     )
     apk_hidden = [b for row in _apk_panel_kb(True, 0, True, show_webapp=False).inline_keyboard for b in row]
@@ -2264,6 +2264,20 @@ def test_telegram_webapp_auth_owner_only_and_static_routes(tmp_path: Path, monke
 
     async def scenario() -> None:
         db_file = tmp_path / "webapp_auth.db"
+        tmp_webapp = tmp_path / "webapp"
+        tmp_webapp.mkdir(parents=True, exist_ok=True)
+        (tmp_webapp / "index.html").write_text(
+            "<html><head>"
+            '<script src="https://telegram.org/js/telegram-web-app.js"></script>'
+            '<script src="flutter_bootstrap.js" async></script>'
+            "</head><body>Hisobchi</body></html>",
+            encoding="utf-8",
+        )
+        (tmp_webapp / "flutter_bootstrap.js").write_text(
+            "console.log('flutter bootstrap ok');",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(api_app_mod, "WEBAPP_DIR", tmp_webapp)
         eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
         monkeypatch.setattr(api_app_mod, "async_session_maker", maker)
         monkeypatch.setattr(api_auth_mod, "async_session_maker", maker)
@@ -2275,13 +2289,21 @@ def test_telegram_webapp_auth_owner_only_and_static_routes(tmp_path: Path, monke
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
                 now_ts = int(time.time())
 
-                # 1. Static assets served
-                r_html = await client.get("/webapp")
+                # 1. Static Flutter Web assets served + /webapp redirects cleanly
+                r_redir = await client.get("/webapp", follow_redirects=False)
+                assert r_redir.status_code == 302
+                assert r_redir.headers["location"] == "/webapp/"
+
+                r_html = await client.get("/webapp/")
                 assert r_html.status_code == 200 and "text/html" in r_html.headers["content-type"]
-                r_css = await client.get("/webapp/styles.css")
-                assert r_css.status_code == 200 and "text/css" in r_css.headers["content-type"]
-                r_js = await client.get("/webapp/app.js")
-                assert r_js.status_code == 200 and "javascript" in r_js.headers["content-type"]
+                assert "telegram-web-app.js" in r_html.text
+                assert "flutter_bootstrap.js" in r_html.text
+
+                r_boot = await client.get("/webapp/flutter_bootstrap.js")
+                assert r_boot.status_code == 200 and "javascript" in r_boot.headers["content-type"]
+
+                r_trav = await client.get("/webapp/%2e%2e/config.py")
+                assert r_trav.status_code == 404
 
                 # 2. Tampered hash & expired auth_date -> 401
                 r_bad = await client.post(

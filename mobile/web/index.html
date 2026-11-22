@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="description" content="Hisobchi — Kunlik kassa va nakladnoy tizimi">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Hisobchi">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="manifest" href="manifest.json">
+  <title>Hisobchi</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script>
+    (function () {
+      function getTg() {
+        return (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+      }
+
+      window.HisobchiWebBridge = {
+        init: function () {
+          try {
+            var tg = getTg();
+            if (!tg) return;
+            if (typeof tg.ready === 'function') tg.ready();
+            if (typeof tg.expand === 'function') tg.expand();
+            if (typeof tg.disableVerticalSwipes === 'function') {
+              try { tg.disableVerticalSwipes(); } catch (_) {}
+            }
+          } catch (_) {}
+        },
+        getInitData: function () {
+          try {
+            var tg = getTg();
+            return (tg && tg.initData) ? String(tg.initData) : '';
+          } catch (_) {
+            return '';
+          }
+        },
+        getColorScheme: function () {
+          try {
+            var tg = getTg();
+            return (tg && tg.colorScheme) ? String(tg.colorScheme) : '';
+          } catch (_) {
+            return '';
+          }
+        },
+        syncChromeColors: function (isDark) {
+          try {
+            var tg = getTg();
+            if (!tg) return;
+            var bg = isDark ? '#090D18' : '#F3F5FA';
+            var hdr = isDark ? '#13192B' : '#4338CA';
+            if (typeof tg.setBackgroundColor === 'function') tg.setBackgroundColor(bg);
+            if (typeof tg.setHeaderColor === 'function') tg.setHeaderColor(hdr);
+          } catch (_) {}
+        },
+        tryTelegramDownload: function (url, filename) {
+          try {
+            var tg = getTg();
+            if (tg && typeof tg.downloadFile === 'function') {
+              tg.downloadFile({ url: url, file_name: filename });
+              return true;
+            }
+            if (tg && typeof tg.openLink === 'function') {
+              tg.openLink(url);
+              return true;
+            }
+          } catch (_) {}
+          return false;
+        },
+        downloadBlob: function (bytes, filename) {
+          var blob = new Blob([bytes], {
+            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          });
+          var objectUrl = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = objectUrl;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(function () {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(objectUrl);
+          }, 1200);
+        },
+        pickFile: function (accept) {
+          return new Promise(function (resolve) {
+            var input = document.createElement('input');
+            input.type = 'file';
+            input.accept = accept || '';
+            input.style.display = 'none';
+            var settled = false;
+            function finish(result) {
+              if (settled) return;
+              settled = true;
+              window.removeEventListener('focus', onFocusBack);
+              if (input.parentNode) input.parentNode.removeChild(input);
+              resolve(result);
+            }
+            function onFocusBack() {
+              setTimeout(function () {
+                if (!settled && (!input.files || input.files.length === 0)) {
+                  finish(null);
+                }
+              }, 600);
+            }
+            input.onchange = function () {
+              var file = input.files && input.files[0];
+              if (!file) {
+                finish(null);
+                return;
+              }
+              var reader = new FileReader();
+              reader.onload = function () {
+                finish({
+                  name: file.name || 'file',
+                  bytes: new Uint8Array(reader.result)
+                });
+              };
+              reader.onerror = function () { finish(null); };
+              reader.readAsArrayBuffer(file);
+            };
+            input.oncancel = function () { finish(null); };
+            window.addEventListener('focus', onFocusBack, { once: true });
+            document.body.appendChild(input);
+            input.click();
+          });
+        }
+      };
+
+      window.HisobchiWebBridge.init();
+    })();
+  </script>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #F3F5FA;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    #hisobchi-splash {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      background: linear-gradient(145deg, #1E1B4B 0%, #4338CA 55%, #6D28D9 100%);
+      color: #FFFFFF;
+      transition: opacity 0.22s ease;
+    }
+    #hisobchi-splash img {
+      width: 68px;
+      height: 68px;
+      border-radius: 18px;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+    }
+    #hisobchi-splash .title {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: 0.2px;
+    }
+    #hisobchi-splash .sub {
+      font-size: 13px;
+      opacity: 0.85;
+    }
+    #hisobchi-splash .spinner {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      border: 3px solid rgba(255, 255, 255, 0.28);
+      border-top-color: #FFFFFF;
+      animation: hspin 0.8s linear infinite;
+    }
+    @keyframes hspin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div id="hisobchi-splash">
+    <img src="icons/Icon-192.png" alt="Hisobchi">
+    <div class="title">Hisobchi</div>
+    <div class="spinner"></div>
+    <div class="sub">Ilova yuklanmoqda...</div>
+  </div>
+  <script>
+    window.addEventListener('flutter-first-frame', function () {
+      var el = document.getElementById('hisobchi-splash');
+      if (el) {
+        el.style.opacity = '0';
+        setTimeout(function () {
+          if (el.parentNode) el.parentNode.removeChild(el);
+        }, 250);
+      }
+    });
+  </script>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

@@ -1,12 +1,11 @@
-import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 
 import 'api_client.dart';
+import 'platform_bridge.dart';
 import 'theme.dart';
 import 'version.dart';
 import 'widgets.dart';
@@ -371,21 +370,55 @@ class _HisobchiAppState extends State<HisobchiApp> {
   late final HisobchiApiClient _api;
   ThemeMode _themeMode = ThemeMode.system;
   bool _initializing = true;
+  String? _webAuthError;
 
   @override
   void initState() {
     super.initState();
-    _api = widget.apiOverride ?? HisobchiApiClient();
+    _api = widget.apiOverride ??
+        HisobchiApiClient(baseUrl: resolveDefaultApiBaseUrl());
     _bootstrap();
   }
 
   Future<void> _bootstrap() async {
     if (widget.apiOverride == null) {
-      await _api.loadSavedSession();
+      if (kIsWeb) {
+        initTelegramWebApp();
+        final scheme = getTelegramColorScheme();
+        if (scheme == 'dark') {
+          _themeMode = ThemeMode.dark;
+        } else if (scheme == 'light') {
+          _themeMode = ThemeMode.light;
+        }
+        syncTelegramChromeColors(isDark: _themeMode == ThemeMode.dark);
+
+        final initData = getTelegramWebAppInitData();
+        if (initData == null || initData.isEmpty) {
+          _webAuthError =
+              "Mini App faqat Telegram bot ichidan (@hisobchi_my_bot) ochiladi.";
+        } else {
+          try {
+            await _api.loginWithTelegramWebApp(initData: initData);
+            _webAuthError = null;
+          } catch (e) {
+            _webAuthError = e.toString();
+          }
+        }
+      } else {
+        await _api.loadSavedSession();
+      }
     }
     if (mounted) {
       setState(() => _initializing = false);
     }
+  }
+
+  Future<void> _retryWebBootstrap() async {
+    setState(() {
+      _initializing = true;
+      _webAuthError = null;
+    });
+    await _bootstrap();
   }
 
   void _toggleTheme() {
@@ -393,30 +426,149 @@ class _HisobchiAppState extends State<HisobchiApp> {
       _themeMode =
           _themeMode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
     });
+    syncTelegramChromeColors(isDark: _themeMode == ThemeMode.dark);
   }
 
   @override
   Widget build(BuildContext context) {
+    Widget home;
+    if (_initializing) {
+      home = Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(18),
+                child: Image.asset(
+                  'assets/app_icon.png',
+                  width: 64,
+                  height: 64,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const Icon(
+                    Icons.account_balance_wallet_rounded,
+                    size: 48,
+                    color: AppTokens.brand,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const CircularProgressIndicator(),
+              const SizedBox(height: 12),
+              Text(
+                'Hisobchi yuklanmoqda...',
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: textSecondaryOf(context),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    } else if (_api.isAuthenticated) {
+      home = MainWorkspaceScreen(
+        api: _api,
+        onToggleTheme: _toggleTheme,
+        onLoggedOut: () => setState(() {}),
+      );
+    } else if (kIsWeb) {
+      home = _WebAppLockedScreen(
+        message: _webAuthError ??
+            "🔒 Mini App hozircha faqat asosiy admin uchun ochiq.",
+        onRetry: _retryWebBootstrap,
+      );
+    } else {
+      home = LoginScreen(
+        api: _api,
+        onLoggedIn: () => setState(() {}),
+      );
+    }
+
     return MaterialApp(
       title: 'Hisobchi',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(Brightness.light),
       darkTheme: buildAppTheme(Brightness.dark),
       themeMode: _themeMode,
-      home: _initializing
-          ? const Scaffold(
-              body: Center(child: CircularProgressIndicator()),
-            )
-          : _api.isAuthenticated
-              ? MainWorkspaceScreen(
-                  api: _api,
-                  onToggleTheme: _toggleTheme,
-                  onLoggedOut: () => setState(() {}),
-                )
-              : LoginScreen(
-                  api: _api,
-                  onLoggedIn: () => setState(() {}),
+      home: home,
+    );
+  }
+}
+
+class _WebAppLockedScreen extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+
+  const _WebAppLockedScreen({
+    required this.message,
+    required this.onRetry,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          gradient: AppTokens.heroGradient,
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.lock_person_rounded,
+                                color: Colors.white, size: 32),
+                            SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                'Hisobchi Mini App',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      Text(
+                        message,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w700,
+                          height: 1.45,
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      FilledButton.icon(
+                        onPressed: onRetry,
+                        icon: const Icon(Icons.refresh_rounded),
+                        label: const Text('Qayta urinish'),
+                      ),
+                    ],
+                  ),
                 ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -796,9 +948,11 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
         widget.api.getUnpaidDebts(),
       ]);
       ApkVersionInfo? ver;
-      try {
-        ver = await widget.api.checkApkVersion();
-      } catch (_) {}
+      if (!kIsWeb) {
+        try {
+          ver = await widget.api.checkApkVersion();
+        } catch (_) {}
+      }
       List<HistorySessionItem> hist = _historySessions;
       try {
         hist = await widget.api.getHistorySessions(limit: 30);
@@ -959,11 +1113,8 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     );
   }
 
-  static const MethodChannel _installerChannel =
-      MethodChannel('uz.hisobchi.hisobchi_app/installer');
-
   Future<void> _downloadAndShareApkUpdate({bool manualCheck = false}) async {
-    if (_updatingApk) return;
+    if (kIsWeb || _updatingApk) return;
     setState(() => _updatingApk = true);
     try {
       final verInfo = await widget.api.checkApkVersion();
@@ -976,14 +1127,11 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
         return;
       }
       if (!mounted) return;
-      await showDialog<void>(
+      await showInAppApkUpdateDialog(
         context: context,
-        barrierDismissible: false,
-        builder: (ctx) => _InAppUpdateProgressDialog(
-          api: widget.api,
-          versionInfo: verInfo,
-          installerChannel: _installerChannel,
-        ),
+        downloadUri: widget.api.apkDownloadUri,
+        version: verInfo.version,
+        sizeBytes: verInfo.sizeBytes,
       );
     } catch (e) {
       _showSnack('Yangilashda xatolik: $e', isError: true);
@@ -1119,7 +1267,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     }
   }
 
-  Future<void> _openAddNakladnoySheet({File? initialPhoto}) async {
+  Future<void> _openAddNakladnoySheet({PickedBytesFile? initialPhoto}) async {
     final grpInfo = _summary?.groupInfo ??
         const GroupInfo(bound: false, title: '', apkPostToGroup: true);
     final saved = await showModalBottomSheet<bool>(
@@ -1341,7 +1489,8 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
               ? _buildErrorState()
               : Column(
                   children: [
-                    if (_remoteVersion != null &&
+                    if (!kIsWeb &&
+                        _remoteVersion != null &&
                         _remoteVersion!.build > kAppBuildNumber)
                       Container(
                         width: double.infinity,
@@ -2396,14 +2545,11 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
     setState(() => _downloadingExcel = true);
     widget.showSnack('📥 Excel tayyorlanmoqda...');
     try {
-      final bytes =
-          await widget.api.downloadExcelBytes(endpoint, query: query);
-      final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/$filename');
-      await file.writeAsBytes(bytes, flush: true);
-      await Share.shareXFiles(
-        [XFile(file.path)],
-        text: 'Hisobchi Excel hisobot: $filename',
+      await saveAndShareExcel(
+        fetchBytes: () => widget.api.downloadExcelBytes(endpoint, query: query),
+        filename: filename,
+        authenticatedDownloadUrl:
+            widget.api.buildAuthenticatedDownloadUrl(endpoint, query: query),
       );
     } catch (e) {
       widget.showSnack('Excel yuklashda xatolik: $e', isError: true);
@@ -2717,7 +2863,12 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                 const SizedBox(height: 6),
                 _infoRow('Aloqa holati:', '🟢 Himoyalangan sinxron ulanish'),
                 const SizedBox(height: 6),
-                _infoRow('Ilova versiyasi:', 'v$kAppVersion (build #$kAppBuildNumber)'),
+                _infoRow(
+                  'Ilova versiyasi:',
+                  kIsWeb
+                      ? 'v$kAppVersion (Mini App)'
+                      : 'v$kAppVersion (build #$kAppBuildNumber)',
+                ),
                 const SizedBox(height: 6),
                 _infoRow('Rol:', widget.api.role.toUpperCase()),
                 const Divider(height: 24),
@@ -2728,30 +2879,32 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                       height: 1.4,
                       color: textSecondaryOf(context)),
                 ),
-                const SizedBox(height: 14),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.tonalIcon(
-                    onPressed: widget.onCheckUpdate,
-                    icon: const Icon(Icons.system_update_rounded),
-                    label: const Text("Ilova ichida yangilanishni tekshirish"),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppTokens.dangerRed,
+                if (!kIsWeb) ...[
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.tonalIcon(
+                      onPressed: widget.onCheckUpdate,
+                      icon: const Icon(Icons.system_update_rounded),
+                      label: const Text("Ilova ichida yangilanishni tekshirish"),
                     ),
-                    onPressed: () async {
-                      await widget.api.logout();
-                      widget.onLoggedOut();
-                    },
-                    icon: const Icon(Icons.logout_rounded),
-                    label: const Text('Hisobdan chiqish'),
                   ),
-                ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppTokens.dangerRed,
+                      ),
+                      onPressed: () async {
+                        await widget.api.logout();
+                        widget.onLoggedOut();
+                      },
+                      icon: const Icon(Icons.logout_rounded),
+                      label: const Text('Hisobdan chiqish'),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -2791,7 +2944,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
 class AddNakladnoySheet extends StatefulWidget {
   final HisobchiApiClient api;
   final GroupInfo groupInfo;
-  final File? initialPhoto;
+  final PickedBytesFile? initialPhoto;
 
   const AddNakladnoySheet({
     super.key,
@@ -2814,7 +2967,7 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
   List<double> _recentAmounts = [];
   String _paymentMode = 'cash'; // cash | card | transfer | debt
   bool _sendToGroup = true; // Default ON as requested
-  File? _photoFile;
+  PickedBytesFile? _photoFile;
   double? _originalAmount;
   String? _supplierSuggestion;
   List<String> _aiSimilarSuppliers = [];
@@ -2875,7 +3028,7 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
   }
 
   /// Automatically calls server Gemini Vision OCR the moment a photo is picked!
-  Future<void> _runAiExtract(File file) async {
+  Future<void> _runAiExtract(PickedBytesFile file) async {
     setState(() {
       _aiLoading = true;
       _aiBadgeText = null;
@@ -2886,7 +3039,10 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
       _error = null;
     });
     try {
-      final res = await widget.api.extractFromPhoto(file);
+      final res = await widget.api.extractFromPhoto(
+        file.bytes,
+        filename: file.filename,
+      );
       if (!mounted) return;
       setState(() {
         _aiLoading = false;
@@ -2943,7 +3099,11 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
         imageQuality: 85,
       );
       if (xfile != null && mounted) {
-        final file = File(xfile.path);
+        final bytes = await xfile.readAsBytes();
+        final file = PickedBytesFile(
+          bytes: bytes,
+          filename: xfile.name.isNotEmpty ? xfile.name : 'nakladnoy.jpg',
+        );
         setState(() => _photoFile = file);
         await _runAiExtract(file);
       }
@@ -2976,7 +3136,8 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
         paymentMode: _paymentMode,
         note: _noteCtrl.text,
         sendToGroup: _sendToGroup,
-        photoFile: _photoFile,
+        photoBytes: _photoFile?.bytes,
+        photoFilename: _photoFile?.filename ?? 'nakladnoy.jpg',
         originalAmount: _originalAmount,
       );
       if (mounted) {
@@ -3418,8 +3579,8 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
                         children: [
                           ClipRRect(
                             borderRadius: BorderRadius.circular(12),
-                            child: Image.file(
-                              _photoFile!,
+                            child: Image.memory(
+                              _photoFile!.bytes,
                               height: 125,
                               width: double.infinity,
                               fit: BoxFit.cover,
@@ -3931,8 +4092,12 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
       );
       if (xfile == null || !mounted) return;
       setState(() => _busy = true);
-      final updated = await widget.api
-          .uploadNakladnoyPhoto(_cur.id, File(xfile.path));
+      final bytes = await xfile.readAsBytes();
+      final updated = await widget.api.uploadNakladnoyPhoto(
+        _cur.id,
+        bytes,
+        filename: xfile.name.isNotEmpty ? xfile.name : 'nakladnoy.jpg',
+      );
       if (mounted) {
         setState(() {
           _cur = updated;
@@ -4489,15 +4654,15 @@ class _HistorySessionsSheetState extends State<HistorySessionsSheet> {
   Future<void> _exportSessionExcel(StatusSummary s) async {
     setState(() => _busy = true);
     try {
-      final bytes = await widget.api.downloadExcelBytes(
-        '/export/session',
-        query: {'session_id': '${s.sessionId}'},
-      );
-      final dir = await getTemporaryDirectory();
       final filename = 'Hisobot_${s.reportDate}_smena${s.sessionId}.xlsx';
-      final file = File('${dir.path}/$filename');
-      await file.writeAsBytes(bytes, flush: true);
-      await Share.shareXFiles([XFile(file.path)], text: filename);
+      final q = {'session_id': '${s.sessionId}'};
+      await saveAndShareExcel(
+        fetchBytes: () =>
+            widget.api.downloadExcelBytes('/export/session', query: q),
+        filename: filename,
+        authenticatedDownloadUrl: widget.api
+            .buildAuthenticatedDownloadUrl('/export/session', query: q),
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -4870,15 +5035,15 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
     if (_downloadingExcel) return;
     setState(() => _downloadingExcel = true);
     try {
-      final bytes = await widget.api.downloadExcelBytes(
-        '/export/sverka',
-        query: {'month': _monthStr},
-      );
-      final dir = await getTemporaryDirectory();
       final filename = 'Sverka_$_monthStr.xlsx';
-      final file = File('${dir.path}/$filename');
-      await file.writeAsBytes(bytes, flush: true);
-      await Share.shareXFiles([XFile(file.path)], text: filename);
+      final q = {'month': _monthStr};
+      await saveAndShareExcel(
+        fetchBytes: () =>
+            widget.api.downloadExcelBytes('/export/sverka', query: q),
+        filename: filename,
+        authenticatedDownloadUrl: widget.api
+            .buildAuthenticatedDownloadUrl('/export/sverka', query: q),
+      );
     } catch (e) {
       widget.showSnack('Excel yuklashda xatolik: $e', isError: true);
     } finally {
@@ -5534,9 +5699,6 @@ class _PrixodItogSheetState extends State<PrixodItogSheet> {
     }
   }
 
-  static const MethodChannel _docChannel =
-      MethodChannel('uz.hisobchi.hisobchi_app/installer');
-
   Future<void> _createFromText() async {
     if (_txtCtrl.text.trim().isEmpty) return;
     setState(() => _submitting = true);
@@ -5558,18 +5720,14 @@ class _PrixodItogSheetState extends State<PrixodItogSheet> {
   Future<void> _pickAndUploadYesPosFile() async {
     setState(() => _submitting = true);
     try {
-      final picked = await _docChannel.invokeMethod<dynamic>('pickDocument');
-      if (picked == null || picked is! Map) {
-        if (mounted) setState(() => _submitting = false);
-        return;
-      }
-      final path = (picked['path'] ?? '').toString();
-      if (path.isEmpty) {
+      final picked = await pickYesPosDocument();
+      if (picked == null) {
         if (mounted) setState(() => _submitting = false);
         return;
       }
       final res = await widget.api.createPrixodFromFile(
-        file: File(path),
+        bytes: picked.bytes,
+        filename: picked.filename,
         publishToGroup: _publishToGroup,
       );
       widget.showSnack(
@@ -5758,234 +5916,6 @@ class _PrixodItogSheetState extends State<PrixodItogSheet> {
           ),
         ),
       ),
-    );
-  }
-}
-
-// ============================================================================
-// IN-APP DIRECT APK UPDATER DIALOG (0%..100% Streaming + Native PackageInstaller)
-// ============================================================================
-
-class _InAppUpdateProgressDialog extends StatefulWidget {
-  final HisobchiApiClient api;
-  final ApkVersionInfo versionInfo;
-  final MethodChannel installerChannel;
-
-  const _InAppUpdateProgressDialog({
-    required this.api,
-    required this.versionInfo,
-    required this.installerChannel,
-  });
-
-  @override
-  State<_InAppUpdateProgressDialog> createState() =>
-      _InAppUpdateProgressDialogState();
-}
-
-class _InAppUpdateProgressDialogState
-    extends State<_InAppUpdateProgressDialog> {
-  int _receivedBytes = 0;
-  int _totalBytes = 0;
-  bool _downloading = true;
-  File? _downloadedFile;
-  String? _statusMessage;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _totalBytes = widget.versionInfo.sizeBytes;
-    _startDownloadAndInstall();
-  }
-
-  Future<void> _startDownloadAndInstall() async {
-    setState(() {
-      _downloading = true;
-      _error = null;
-      _statusMessage = 'Yangi versiya yuklab olinmoqda...';
-    });
-    try {
-      final dir = await getTemporaryDirectory();
-      final target =
-          File('${dir.path}/Hisobchi_v${widget.versionInfo.version}.apk');
-      if (await target.exists()) {
-        await target.delete();
-      }
-      final savedFile = await widget.api.downloadApkToFileWithProgress(
-        targetFile: target,
-        fallbackTotalBytes: widget.versionInfo.sizeBytes,
-        onProgress: (rec, tot) {
-          if (mounted) {
-            setState(() {
-              _receivedBytes = rec;
-              if (tot > 0) _totalBytes = tot;
-            });
-          }
-        },
-      );
-      if (!mounted) return;
-      setState(() {
-        _downloading = false;
-        _downloadedFile = savedFile;
-        _statusMessage = "Yuklab olindi! O'rnatish oynasi ochilmoqda...";
-      });
-      await _triggerNativeInstall(savedFile);
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _downloading = false;
-          _error = e.toString();
-        });
-      }
-    }
-  }
-
-  Future<void> _triggerNativeInstall(File file) async {
-    try {
-      final res = await widget.installerChannel.invokeMethod<String>(
-        'installApk',
-        {'path': file.path},
-      );
-      if (!mounted) return;
-      if (res == 'PERMISSION_REQUESTED') {
-        setState(() {
-          _statusMessage =
-              "⚙️ Telefon sozlamalarida «Hisobchi» ilovasiga o'rnatish ruxsatini yoqing — qaytishingiz bilan o'rnatish avtomatik boshlanadi.";
-        });
-      } else {
-        setState(() {
-          _statusMessage =
-              "✅ Android o'rnatish oynasida «Yangilash (Update)» tugmasini bosing.";
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _error = "O'rnatish oynasini ochishda xatolik: $e");
-      }
-    }
-  }
-
-  String _formatMb(int bytes) => (bytes / (1024 * 1024)).toStringAsFixed(1);
-
-  @override
-  Widget build(BuildContext context) {
-    final ratio = _totalBytes > 0
-        ? (_receivedBytes / _totalBytes).clamp(0.0, 1.0)
-        : null;
-    final pct = ratio != null ? (ratio * 100).round() : 0;
-
-    return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-      title: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              gradient: AppTokens.aiGradient,
-              borderRadius: BorderRadius.circular(11),
-            ),
-            child: const Icon(Icons.system_update_rounded,
-                color: Colors.white, size: 20),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'Hisobchi v${widget.versionInfo.version}',
-              style:
-                  const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
-            ),
-          ),
-        ],
-      ),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (_downloading) ...[
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Yuklanmoqda: $pct%',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 15,
-                    color: AppTokens.brand,
-                    fontFeatures: AppTokens.tabularNums,
-                  ),
-                ),
-                Text(
-                  _totalBytes > 0
-                      ? '${_formatMb(_receivedBytes)} / ${_formatMb(_totalBytes)} MB'
-                      : '${_formatMb(_receivedBytes)} MB',
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
-                    color: textSecondaryOf(context),
-                    fontFeatures: AppTokens.tabularNums,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: LinearProgressIndicator(
-                value: ratio,
-                minHeight: 10,
-                backgroundColor: AppTokens.brand.withValues(alpha: 0.14),
-                valueColor:
-                    const AlwaysStoppedAnimation<Color>(AppTokens.brand),
-              ),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              _statusMessage ?? '',
-              style: TextStyle(
-                fontSize: 12.5,
-                color: textSecondaryOf(context),
-              ),
-            ),
-          ] else if (_error != null) ...[
-            Text(
-              '⚠️ $_error',
-              style: const TextStyle(
-                color: AppTokens.dangerRed,
-                fontWeight: FontWeight.w700,
-                fontSize: 13.5,
-              ),
-            ),
-          ] else ...[
-            Text(
-              _statusMessage ?? "✅ Yuklab olindi!",
-              style: const TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: 13.5,
-                height: 1.4,
-              ),
-            ),
-          ],
-        ],
-      ),
-      actions: [
-        if (!_downloading && _downloadedFile != null)
-          FilledButton.icon(
-            onPressed: () => _triggerNativeInstall(_downloadedFile!),
-            icon: const Icon(Icons.install_mobile_rounded, size: 18),
-            label: const Text("O'rnatish (Yangilash)"),
-          ),
-        if (!_downloading && _error != null)
-          FilledButton.icon(
-            onPressed: _startDownloadAndInstall,
-            icon: const Icon(Icons.refresh_rounded, size: 18),
-            label: const Text('Qayta urinish'),
-          ),
-        if (!_downloading)
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Yopish'),
-          ),
-      ],
     );
   }
 }

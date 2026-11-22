@@ -6,12 +6,19 @@ import asyncio
 from datetime import timedelta
 import html
 import io
+import mimetypes
 from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from sqlalchemy import select
+
+mimetypes.add_type("application/wasm", ".wasm")
+mimetypes.add_type("application/javascript", ".mjs")
+mimetypes.add_type("font/otf", ".otf")
+mimetypes.add_type("font/ttf", ".ttf")
 
 from api.auth import (
     AuthenticatedUser,
@@ -108,6 +115,18 @@ from database.session import async_session_maker
 from services.excel_export import build_range_excel, build_session_excel, build_sverka_excel
 from services.gemini_ai import extract_nakladnoy_from_image
 from services.prixod_parser import parse_manual_itog_text, parse_yespos_table
+
+WEBAPP_DIR = BASE_DIR / "data" / "webapp"
+_WEBAPP_NO_CACHE_FILES = {
+    "index.html",
+    "flutter_bootstrap.js",
+    "version.json",
+    "manifest.json",
+    "flutter_service_worker.js",
+    "precache_manifest.json",
+}
+_WEBAPP_NO_CACHE_HEADERS = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+_WEBAPP_STATIC_CACHE_HEADERS = {"Cache-Control": "public, max-age=86400"}
 
 
 def _serialize_cash_tx(tx: CashTransaction) -> CashTxOut:
@@ -226,6 +245,7 @@ def create_api_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
 
     @app.get("/health")
     async def health() -> dict:
@@ -261,30 +281,45 @@ def create_api_app() -> FastAPI:
             headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
         )
 
-    WEBAPP_DIR = BASE_DIR / "webapp"
-
-    def _webapp_file_response(filename: str, media_type: str) -> FileResponse:
-        fpath = WEBAPP_DIR / filename
-        if not fpath.is_file():
+    def _webapp_file_response(rel_path: str) -> FileResponse:
+        webapp_root = WEBAPP_DIR.resolve()
+        clean_rel = (rel_path or "").lstrip("/")
+        if not clean_rel:
+            clean_rel = "index.html"
+        target = (webapp_root / clean_rel).resolve()
+        if not target.is_relative_to(webapp_root) or not target.is_file():
             raise HTTPException(status_code=404, detail="Mini App fayli topilmadi")
+        media_type, _ = mimetypes.guess_type(str(target))
+        if target.suffix.lower() == ".html":
+            media_type = "text/html; charset=utf-8"
+        elif target.suffix.lower() == ".js":
+            media_type = "application/javascript; charset=utf-8"
+        elif target.suffix.lower() == ".css":
+            media_type = "text/css; charset=utf-8"
+        elif target.suffix.lower() == ".json":
+            media_type = "application/json; charset=utf-8"
+        headers = (
+            _WEBAPP_NO_CACHE_HEADERS
+            if clean_rel in _WEBAPP_NO_CACHE_FILES
+            else _WEBAPP_STATIC_CACHE_HEADERS
+        )
         return FileResponse(
-            fpath,
-            media_type=media_type,
-            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+            target,
+            media_type=media_type or "application/octet-stream",
+            headers=headers,
         )
 
     @app.get("/webapp", include_in_schema=False)
+    async def redirect_webapp_root():
+        return RedirectResponse(url="/webapp/", status_code=302)
+
     @app.get("/webapp/", include_in_schema=False)
     async def serve_webapp_index():
-        return _webapp_file_response("index.html", "text/html; charset=utf-8")
+        return _webapp_file_response("index.html")
 
-    @app.get("/webapp/styles.css", include_in_schema=False)
-    async def serve_webapp_css():
-        return _webapp_file_response("styles.css", "text/css; charset=utf-8")
-
-    @app.get("/webapp/app.js", include_in_schema=False)
-    async def serve_webapp_js():
-        return _webapp_file_response("app.js", "application/javascript; charset=utf-8")
+    @app.get("/webapp/{asset_path:path}", include_in_schema=False)
+    async def serve_webapp_asset(asset_path: str):
+        return _webapp_file_response(asset_path)
 
     @app.post("/auth/login", response_model=LoginResponse)
     async def auth_login(payload: LoginRequest, request: Request) -> LoginResponse:

@@ -1,0 +1,23 @@
+{
+  "name": "Hisobchi",
+  "short_name": "Hisobchi",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#1E1B4B",
+  "theme_color": "#4F46E5",
+  "description": "Hisobchi — Kunlik kassa va nakladnoy tizimi",
+  "orientation": "portrait-primary",
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "icons/Icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/Icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
