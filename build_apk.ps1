@@ -79,8 +79,16 @@ try {
     Write-Host "✅ APK muvaffaqiyatli yig'ildi: $DistApk (v$NewVersion, $SizeMb MB)" -ForegroundColor Green
 
     if ($Deploy) {
-        Write-Host "=== 4. Serverga (46.8.194.206) APK va versiya ma'lumoti yuklanmoqda ===" -ForegroundColor Cyan
-        scp "$DistDir\apk_version.json" $DistApk ubuntu@46.8.194.206:/home/ubuntu/hisobchi_oldi_berdi/data/
+        $TargetFile = "$RootDir\.deploy_target"
+        $DeployTarget = if ($env:HISOBCHI_DEPLOY_TARGET) {
+            $env:HISOBCHI_DEPLOY_TARGET.Trim()
+        } elseif (Test-Path $TargetFile) {
+            (Get-Content $TargetFile -Raw).Trim()
+        } else {
+            throw ".deploy_target fayli yoki HISOBCHI_DEPLOY_TARGET o'zgaruvchisi topilmadi!"
+        }
+        Write-Host "=== 4. Serverga APK va versiya ma'lumoti yuklanmoqda ===" -ForegroundColor Cyan
+        scp "$DistDir\apk_version.json" $DistApk $DeployTarget
         Write-Host "🚀 Serverdagi APK v$NewVersion (#$Build) ga yangilandi!" -ForegroundColor Green
     }
 }
