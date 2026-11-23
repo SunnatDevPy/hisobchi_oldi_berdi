@@ -110,6 +110,14 @@ Future<bool> openExternalTelegramUrl(String url) async {
   }
 }
 
+Future<bool> canUseBiometric() async => false;
+
+Future<bool> authenticateBiometric({
+  String title = 'Hisobchi — Tasdiqlash',
+  String subtitle = 'Ilovaga kirish uchun barmoq izini tasdiqlang',
+}) async =>
+    false;
+
 Future<void> showInAppApkUpdateDialog({
   required BuildContext context,
   required Uri downloadUri,

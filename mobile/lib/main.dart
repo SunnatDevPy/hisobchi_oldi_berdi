@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_client.dart';
 import 'platform_bridge.dart';
@@ -379,6 +380,42 @@ Future<String?> showSupplierPickerDialog(
   );
 }
 
+class AppLockStorage {
+  static const _kPin = 'hisobchi_pin_code';
+  static const _kPinEnabled = 'hisobchi_pin_enabled';
+  static const _kBioEnabled = 'hisobchi_bio_enabled';
+
+  static Future<({bool enabled, String? pin, bool bioEnabled})> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final enabled = prefs.getBool(_kPinEnabled) == true;
+    final pin = prefs.getString(_kPin);
+    final bio = prefs.getBool(_kBioEnabled) == true;
+    if (!enabled || pin == null || pin.length != 4) {
+      return (enabled: false, pin: null, bioEnabled: false);
+    }
+    return (enabled: true, pin: pin, bioEnabled: bio);
+  }
+
+  static Future<void> savePin(String pin, {required bool biometricEnabled}) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kPin, pin);
+    await prefs.setBool(_kPinEnabled, true);
+    await prefs.setBool(_kBioEnabled, biometricEnabled);
+  }
+
+  static Future<void> setBiometricEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kBioEnabled, enabled);
+  }
+
+  static Future<void> clearPin() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kPin);
+    await prefs.setBool(_kPinEnabled, false);
+    await prefs.setBool(_kBioEnabled, false);
+  }
+}
+
 class HisobchiApp extends StatefulWidget {
   final HisobchiApiClient? apiOverride;
 
@@ -392,6 +429,11 @@ class _HisobchiAppState extends State<HisobchiApp> {
   late final HisobchiApiClient _api;
   ThemeMode _themeMode = ThemeMode.system;
   bool _initializing = true;
+  bool _transitioningToHome = false;
+  bool _pinLocked = false;
+  bool _needsPinSetup = false;
+  String? _savedPin;
+  bool _bioEnabled = false;
   String? _webAuthError;
 
   @override
@@ -428,11 +470,34 @@ class _HisobchiAppState extends State<HisobchiApp> {
         }
       } else {
         await _api.loadSavedSession();
+        final lock = await AppLockStorage.load();
+        _savedPin = lock.pin;
+        _bioEnabled = lock.bioEnabled;
+        if (_api.isAuthenticated && lock.enabled && lock.pin != null) {
+          _pinLocked = true;
+        }
       }
     }
     if (mounted) {
       setState(() => _initializing = false);
     }
+  }
+
+  Future<void> _playTransitionAndEnter({bool checkPinSetup = false}) async {
+    if (!mounted) return;
+    setState(() => _transitioningToHome = true);
+    await Future<void>.delayed(const Duration(milliseconds: 650));
+    if (!mounted) return;
+    setState(() {
+      _transitioningToHome = false;
+      _pinLocked = false;
+      if (checkPinSetup &&
+          !kIsWeb &&
+          widget.apiOverride == null &&
+          _savedPin == null) {
+        _needsPinSetup = true;
+      }
+    });
   }
 
   Future<void> _retryWebBootstrap() async {
@@ -456,26 +521,96 @@ class _HisobchiAppState extends State<HisobchiApp> {
     Widget home;
     if (_initializing) {
       home = const Scaffold(
+        key: ValueKey('app_init'),
         body: HisobchiAnimatedLoadingScreen(
           subtitle: 'Ilova tayyorlanmoqda...',
         ),
       );
+    } else if (_transitioningToHome) {
+      home = const Scaffold(
+        key: ValueKey('app_entering'),
+        body: HisobchiAnimatedLoadingScreen(
+          subtitle: "Xush kelibsiz! Ma'lumotlar yuklanmoqda...",
+        ),
+      );
+    } else if (_api.isAuthenticated && _pinLocked && _savedPin != null) {
+      home = PinLockScreen(
+        key: const ValueKey('pin_unlock'),
+        mode: PinScreenMode.unlock,
+        expectedPin: _savedPin,
+        biometricEnabled: _bioEnabled,
+        onCanUseBiometric: canUseBiometric,
+        onAuthenticateBiometric: () => authenticateBiometric(
+          subtitle: "Hisobchi ilovasini ochish uchun barmoq izini bosing",
+        ),
+        onCompleted: (pin, bio) async {
+          await _playTransitionAndEnter();
+        },
+        onLogout: () async {
+          await _api.logout();
+          await AppLockStorage.clearPin();
+          if (!mounted) return;
+          setState(() {
+            _savedPin = null;
+            _bioEnabled = false;
+            _pinLocked = false;
+            _needsPinSetup = false;
+          });
+        },
+      );
+    } else if (_api.isAuthenticated && _needsPinSetup) {
+      home = PinLockScreen(
+        key: const ValueKey('pin_setup'),
+        mode: PinScreenMode.setup,
+        onCanUseBiometric: canUseBiometric,
+        onCompleted: (pin, enableBio) async {
+          await AppLockStorage.savePin(pin, biometricEnabled: enableBio);
+          if (!mounted) return;
+          setState(() {
+            _savedPin = pin;
+            _bioEnabled = enableBio;
+            _needsPinSetup = false;
+          });
+          await _playTransitionAndEnter();
+        },
+        onSkip: () {
+          setState(() => _needsPinSetup = false);
+        },
+      );
     } else if (_api.isAuthenticated) {
       home = MainWorkspaceScreen(
+        key: const ValueKey('main_workspace'),
         api: _api,
         onToggleTheme: _toggleTheme,
-        onLoggedOut: () => setState(() {}),
+        onLoggedOut: () => setState(() {
+          _pinLocked = false;
+          _needsPinSetup = false;
+        }),
+        onLockChanged: () {
+          AppLockStorage.load().then((lock) {
+            if (!mounted) return;
+            setState(() {
+              _savedPin = lock.pin;
+              _bioEnabled = lock.bioEnabled;
+              if (!lock.enabled || lock.pin == null) {
+                _pinLocked = false;
+              }
+            });
+          });
+        },
       );
     } else if (kIsWeb) {
       home = _WebAppLockedScreen(
+        key: const ValueKey('webapp_locked'),
         message: _webAuthError ??
             "🔒 Mini App hozircha faqat asosiy admin uchun ochiq.",
         onRetry: _retryWebBootstrap,
       );
     } else {
       home = LoginScreen(
+        key: const ValueKey('login_screen'),
         api: _api,
-        onLoggedIn: () => setState(() {}),
+        onLoggedIn: () => _playTransitionAndEnter(checkPinSetup: true),
       );
     }
 
@@ -501,7 +636,12 @@ class _HisobchiAppState extends State<HisobchiApp> {
         theme: buildAppTheme(Brightness.light),
         darkTheme: buildAppTheme(Brightness.dark),
         themeMode: _themeMode,
-        home: home,
+        home: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 360),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          child: home,
+        ),
       ),
     );
   }
@@ -512,6 +652,7 @@ class _WebAppLockedScreen extends StatelessWidget {
   final VoidCallback onRetry;
 
   const _WebAppLockedScreen({
+    super.key,
     required this.message,
     required this.onRetry,
   });
@@ -643,189 +784,230 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = isDarkCtx(context);
     final (errFg, errBg, errBorder) =
         AppTokens.semanticSurface(context, AppTokens.dangerRed);
 
     return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 440),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(22),
-                    decoration: BoxDecoration(
-                      gradient: AppTokens.heroGradient,
-                      borderRadius: BorderRadius.circular(24),
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppTokens.brand.withValues(alpha: 0.25),
-                          blurRadius: 20,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(13),
-                              child: Image.asset(
-                                'assets/app_icon.png',
-                                width: 46,
-                                height: 46,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => const Icon(
-                                    Icons.account_balance_wallet_rounded,
-                                    color: Colors.white,
-                                    size: 32),
-                              ),
-                            ),
-                            const SizedBox(width: 14),
-                            const Expanded(
-                              child: Text(
-                                'Hisobchi Mobil',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 23,
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        const Text(
-                          'Telegram bot, AI nakladnoy skaneri va Nakladnoy guruhi bilan bevosita sinxron ishlovchi rasmiy kassa ilovasi.',
-                          style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 13.5,
-                            height: 1.4,
-                          ),
-                        ),
-                      ],
-                    ),
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: const Alignment(0, -0.78),
+                    radius: 0.95,
+                    colors: [
+                      AppTokens.brandViolet
+                          .withValues(alpha: isDark ? 0.30 : 0.14),
+                      const Color(0xFFEC4899)
+                          .withValues(alpha: isDark ? 0.12 : 0.05),
+                      Colors.transparent,
+                    ],
                   ),
-                  const SizedBox(height: 16),
-
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Qanday ulanadi?',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 15,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          _stepRow('1',
-                              'Telegramda @hisobchi_my_bot ga kiring va /apk buyrug\'ini yuboring.'),
-                          const SizedBox(height: 6),
-                          _stepRow('2',
-                              'Bot bergan 8 xonali bir martalik kodni quyiga kiriting.'),
-                          const SizedBox(height: 6),
-                          _stepRow('3',
-                              'Nakladnoy qaysi guruhga tushishini botning o\'zida (/apk yoki Sozlamalar) boshqarasiz.'),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(18),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          const Text(
-                            '8 xonali kirish kodi (/apk)',
-                            style: TextStyle(
-                                fontWeight: FontWeight.w700, fontSize: 13),
-                          ),
-                          const SizedBox(height: 6),
-                          TextField(
-                            controller: _codeCtrl,
-                            keyboardType: TextInputType.number,
-                            style: const TextStyle(
-                              fontSize: 19,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 2,
-                              fontFeatures: AppTokens.tabularNums,
-                            ),
-                            decoration: const InputDecoration(
-                              hintText: '1234-5678',
-                              prefixIcon: Icon(Icons.vpn_key_rounded),
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-                          const Text(
-                            'Qurilma nomi',
-                            style: TextStyle(
-                                fontWeight: FontWeight.w700, fontSize: 13),
-                          ),
-                          const SizedBox(height: 6),
-                          TextField(
-                            controller: _deviceCtrl,
-                            decoration: const InputDecoration(
-                              hintText: 'Masalan: Kassir Samsung',
-                              prefixIcon: Icon(Icons.phone_android_rounded),
-                            ),
-                          ),
-                          if (_error != null) ...[
-                            const SizedBox(height: 14),
-                            Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: errBg,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: errBorder),
-                              ),
-                              child: Text(
-                                _error!,
-                                style: TextStyle(
-                                  color: errFg,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                          ],
-                          const SizedBox(height: 18),
-                          FilledButton.icon(
-                            onPressed: _loading ? null : _submitLogin,
-                            icon: _loading
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2.2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : const Icon(Icons.login_rounded),
-                            label: Text(
-                                _loading ? 'Ulanmoqda...' : 'Ilovaga kirish'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
-        ),
+          SafeArea(
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 440),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Column(
+                        children: [
+                          Container(
+                            width: 84,
+                            height: 84,
+                            padding: const EdgeInsets.all(11),
+                            decoration: BoxDecoration(
+                              gradient: AppTokens.aiGradient,
+                              borderRadius: BorderRadius.circular(25),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: AppTokens.brandViolet
+                                      .withValues(alpha: isDark ? 0.48 : 0.25),
+                                  blurRadius: 28,
+                                  spreadRadius: 1,
+                                ),
+                              ],
+                            ),
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: isDark ? AppTokens.cardDark : Colors.white,
+                                borderRadius: BorderRadius.circular(18),
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(14),
+                                child: Image.asset(
+                                  'assets/app_icon.png',
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => const Icon(
+                                    Icons.account_balance_wallet_rounded,
+                                    color: AppTokens.brand,
+                                    size: 36,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          Text(
+                            'Hisobchi Mobil',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 25,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: -0.4,
+                              color: textPrimaryOf(context),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Kassa, AI nakladnoy skaneri va Telegram guruhlar bilan jonli sinxron tizim.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 13.5,
+                              height: 1.4,
+                              color: textSecondaryOf(context),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(18),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const Text(
+                                '8 xonali kirish kodi (/apk)',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 13.5,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              TextField(
+                                controller: _codeCtrl,
+                                keyboardType: TextInputType.number,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  fontSize: 21,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 3,
+                                  fontFeatures: AppTokens.tabularNums,
+                                ),
+                                decoration: const InputDecoration(
+                                  hintText: '1234-5678',
+                                  prefixIcon: Icon(Icons.vpn_key_rounded),
+                                ),
+                              ),
+                              const SizedBox(height: 14),
+                              const Text(
+                                'Qurilma nomi',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 13.5,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              TextField(
+                                controller: _deviceCtrl,
+                                decoration: const InputDecoration(
+                                  hintText: 'Masalan: Kassir Samsung',
+                                  prefixIcon: Icon(Icons.phone_android_rounded),
+                                ),
+                              ),
+                              if (_error != null) ...[
+                                const SizedBox(height: 14),
+                                Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: errBg,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: errBorder),
+                                  ),
+                                  child: Text(
+                                    _error!,
+                                    style: TextStyle(
+                                      color: errFg,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                              const SizedBox(height: 18),
+                              TactileScaleTap(
+                                pressedScale: 0.96,
+                                enabled: !_loading,
+                                child: FilledButton.icon(
+                                  style: FilledButton.styleFrom(
+                                    minimumSize: const Size(0, 50),
+                                    backgroundColor: AppTokens.brandViolet,
+                                  ),
+                                  onPressed: _loading ? null : _submitLogin,
+                                  icon: _loading
+                                      ? const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2.2,
+                                            color: Colors.white,
+                                          ),
+                                        )
+                                      : const Icon(Icons.login_rounded),
+                                  label: Text(
+                                    _loading ? 'Ulanmoqda...' : 'Ilovaga kirish',
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(15),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Qanday ulanadi?',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 14.5,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              _stepRow('1',
+                                  'Telegramda @hisobchi_my_bot ga kiring va /apk buyrug\'ini yuboring.'),
+                              const SizedBox(height: 6),
+                              _stepRow('2',
+                                  'Bot bergan 8 xonali bir martalik kodni yuqoriga kiriting.'),
+                              const SizedBox(height: 6),
+                              _stepRow('3',
+                                  'Kirgach tezkor 4 xonali PIN kod va otpechatkani sozlashingiz mumkin.'),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -875,12 +1057,14 @@ class MainWorkspaceScreen extends StatefulWidget {
   final HisobchiApiClient api;
   final VoidCallback onToggleTheme;
   final VoidCallback onLoggedOut;
+  final VoidCallback? onLockChanged;
 
   const MainWorkspaceScreen({
     super.key,
     required this.api,
     required this.onToggleTheme,
     required this.onLoggedOut,
+    this.onLockChanged,
   });
 
   @override
@@ -919,6 +1103,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   ApkVersionInfo? _remoteVersion;
   bool _updatingApk = false;
   double _refreshTurns = 0.0;
+  int _dataAnimSeed = 0;
 
   @override
   void initState() {
@@ -1030,6 +1215,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
             _viewedSessionSummary = refreshedViewed;
           }
           if (ver != null) _remoteVersion = ver;
+          _dataAnimSeed++;
           _loading = false;
         });
       }
@@ -1064,7 +1250,10 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     try {
       final detail = await widget.api.getHistorySessionDetail(sessionId);
       if (mounted) {
-        setState(() => _viewedSessionSummary = detail);
+        setState(() {
+          _viewedSessionSummary = detail;
+          _dataAnimSeed++;
+        });
       }
     } catch (e) {
       _showSnack(e.toString(), isError: true);
@@ -1835,6 +2024,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
           const SizedBox(height: 10),
           HeroBalanceCard(
             summary: s,
+            animSeed: _dataAnimSeed,
             onAddCash: (!isViewingPast && widget.api.canWrite)
                 ? () => _openCashDialog('main')
                 : null,
@@ -1885,6 +2075,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
           const SizedBox(height: 14),
           DashboardAnalyticsSection(
             summary: s,
+            animSeed: _dataAnimSeed,
             canWrite: !isViewingPast && widget.api.canWrite,
             dailySeries: _dailySeries,
             seriesGranularity: _seriesGranularity,
@@ -2696,6 +2887,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
       api: widget.api,
       onClosed: _refreshAll,
       onLoggedOut: widget.onLoggedOut,
+      onLockChanged: widget.onLockChanged,
       showSnack: _showSnack,
       onOpenHistorySessions: _openHistorySessionsSheet,
       onOpenLiveSverka: _openLiveSverkaSheet,
@@ -2712,6 +2904,7 @@ class _SmenaAndReportsView extends StatefulWidget {
   final HisobchiApiClient api;
   final Future<void> Function() onClosed;
   final VoidCallback onLoggedOut;
+  final VoidCallback? onLockChanged;
   final void Function(String, {bool isError}) showSnack;
   final VoidCallback onOpenHistorySessions;
   final VoidCallback onOpenLiveSverka;
@@ -2725,6 +2918,7 @@ class _SmenaAndReportsView extends StatefulWidget {
     required this.api,
     required this.onClosed,
     required this.onLoggedOut,
+    this.onLockChanged,
     required this.showSnack,
     required this.onOpenHistorySessions,
     required this.onOpenLiveSverka,
@@ -2744,6 +2938,114 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
   String _selectedReportType = 'today'; // today | week | month | custom | sverka
   bool _downloadingExcel = false;
   bool _sendingExcelTelegram = false;
+  bool _lockLoaded = false;
+  bool _pinEnabled = false;
+  String? _savedPin;
+  bool _bioEnabled = false;
+  bool _bioSupported = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSecurityLock();
+  }
+
+  Future<void> _loadSecurityLock() async {
+    if (kIsWeb) return;
+    final lock = await AppLockStorage.load();
+    final bioAvail = await canUseBiometric();
+    if (!mounted) return;
+    setState(() {
+      _lockLoaded = true;
+      _pinEnabled = lock.enabled && lock.pin != null;
+      _savedPin = lock.pin;
+      _bioEnabled = lock.bioEnabled;
+      _bioSupported = bioAvail;
+    });
+  }
+
+  Future<void> _setupOrChangePin() async {
+    final isChanging = _pinEnabled && _savedPin != null;
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (ctx) => PinLockScreen(
+          mode: isChanging ? PinScreenMode.change : PinScreenMode.setup,
+          expectedPin: isChanging ? _savedPin : null,
+          biometricEnabled: _bioEnabled,
+          onCanUseBiometric: canUseBiometric,
+          onCompleted: (pin, enableBio) async {
+            await AppLockStorage.savePin(pin, biometricEnabled: enableBio);
+            if (ctx.mounted) Navigator.of(ctx).pop(true);
+          },
+          onCancel: () => Navigator.of(ctx).pop(false),
+        ),
+      ),
+    );
+    if (saved == true && mounted) {
+      await _loadSecurityLock();
+      widget.onLockChanged?.call();
+      widget.showSnack(
+        isChanging
+            ? "🔐 PIN kod muvaffaqiyatli yangilandi!"
+            : "🔐 4 xonali PIN kod o'rnatildi!",
+      );
+    }
+  }
+
+  Future<void> _toggleBiometric(bool nextVal) async {
+    if (!_pinEnabled || _savedPin == null) {
+      widget.showSnack("Avval 4 xonali PIN kod o'rnating", isError: true);
+      await _setupOrChangePin();
+      return;
+    }
+    if (nextVal) {
+      final ok = await authenticateBiometric(
+        subtitle: "Otpechatka orqali kirishni yoqish uchun barmoq izini bosing",
+      );
+      if (!ok) {
+        if (mounted) {
+          widget.showSnack("Barmoq izi tasdiqlanmadi", isError: true);
+        }
+        return;
+      }
+    }
+    await AppLockStorage.setBiometricEnabled(nextVal);
+    if (!mounted) return;
+    await _loadSecurityLock();
+    widget.onLockChanged?.call();
+    widget.showSnack(
+      nextVal
+          ? "✅ Otpechatka orqali kirish yoqildi!"
+          : "🔕 Otpechatka orqali kirish o'chirildi",
+    );
+  }
+
+  Future<void> _disablePin() async {
+    if (!_pinEnabled || _savedPin == null) return;
+    final verified = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (ctx) => PinLockScreen(
+          mode: PinScreenMode.unlock,
+          expectedPin: _savedPin,
+          biometricEnabled: _bioEnabled,
+          onCanUseBiometric: canUseBiometric,
+          onAuthenticateBiometric: () => authenticateBiometric(
+            subtitle: "PIN kodni o'chirish uchun barmoq izini tasdiqlang",
+          ),
+          onCompleted: (pin, bio) async {
+            if (ctx.mounted) Navigator.of(ctx).pop(true);
+          },
+          onCancel: () => Navigator.of(ctx).pop(false),
+        ),
+      ),
+    );
+    if (verified == true && mounted) {
+      await AppLockStorage.clearPin();
+      await _loadSecurityLock();
+      widget.onLockChanged?.call();
+      widget.showSnack("🔓 PIN kod va xavfsizlik qulfi o'chirildi");
+    }
+  }
 
   @override
   void dispose() {
@@ -3166,6 +3468,108 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
         ),
         const SizedBox(height: 14),
 
+        if (!kIsWeb) ...[
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.fingerprint_rounded,
+                          color: AppTokens.brand, size: 24),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '🔒 Xavfsizlik (PIN kod va Otpechatka)',
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w900),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  _infoRow(
+                    'PIN kod himoyasi:',
+                    !_lockLoaded
+                        ? 'Tekshirilmoqda...'
+                        : (_pinEnabled
+                            ? '✅ Yoqilgan (4 xonali)'
+                            : "🔕 O'rnatilmagan"),
+                  ),
+                  const SizedBox(height: 6),
+                  _infoRow(
+                    'Otpechatka (Barmoq izi):',
+                    !_lockLoaded
+                        ? 'Tekshirilmoqda...'
+                        : (!_bioSupported
+                            ? '⚠️ Qurilmada mavjud emas'
+                            : (_bioEnabled ? '✅ Yoqilgan' : "🔕 O'chirilgan")),
+                  ),
+                  if (_bioSupported) ...[
+                    const SizedBox(height: 6),
+                    SwitchListTile.adaptive(
+                      contentPadding: EdgeInsets.zero,
+                      secondary: const Icon(
+                        Icons.fingerprint_rounded,
+                        color: AppTokens.brand,
+                      ),
+                      title: const Text(
+                        'Otpechatka (Barmoq izi)',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      subtitle: Text(
+                        _pinEnabled
+                            ? 'Ilovaga kirishda barmoq izini avtomatik tekshirish'
+                            : "Avval 4 xonali PIN kod o'rnating",
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      value: _pinEnabled && _bioEnabled,
+                      onChanged: _lockLoaded ? _toggleBiometric : null,
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: TactileScaleTap(
+                      child: FilledButton.tonalIcon(
+                        onPressed: _lockLoaded ? _setupOrChangePin : null,
+                        icon: Icon(
+                          _pinEnabled
+                              ? Icons.edit_rounded
+                              : Icons.pin_rounded,
+                        ),
+                        label: Text(
+                          _pinEnabled
+                              ? "PIN kodni o'zgartirish"
+                              : "4 xonali PIN kod o'rnatish",
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (_pinEnabled) ...[
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: TactileScaleTap(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppTokens.dangerRed,
+                          ),
+                          onPressed: _lockLoaded ? _disablePin : null,
+                          icon: const Icon(Icons.lock_open_rounded),
+                          label: const Text("PIN kodni o'chirish"),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+        ],
         // 3. TELEGRAM GROUP & ACCOUNT SETTINGS
         Card(
           child: Padding(

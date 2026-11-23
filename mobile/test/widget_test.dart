@@ -169,4 +169,151 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Saqlandi!'), findsNothing);
   });
+
+  testWidgets('AnimatedUzsNumber rolls upward from 1 and re-rolls on animSeed change',
+      (WidgetTester tester) async {
+    var seed = 0;
+    late StateSetter hostSetState;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: Scaffold(
+          body: Center(
+            child: StatefulBuilder(
+              builder: (context, setState) {
+                hostSetState = setState;
+                return AnimatedUzsNumber(
+                  value: 150000,
+                  withCurrency: true,
+                  animSeed: seed,
+                  duration: const Duration(milliseconds: 500),
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+
+    // Frame 0 starts at 1 so'm
+    expect(find.text("1 so'm"), findsOneWidget);
+
+    // Midway should be strictly between 1 and 150 000
+    await tester.pump(const Duration(milliseconds: 220));
+    expect(find.text("1 so'm"), findsNothing);
+    expect(find.text("150 000 so'm"), findsNothing);
+
+    // Settled reaches full 150 000 so'm
+    await tester.pumpAndSettle();
+    expect(find.text("150 000 so'm"), findsOneWidget);
+
+    // Incrementing animSeed replays the upward count even with identical value
+    hostSetState(() => seed = 1);
+    await tester.pump();
+    expect(find.text("1 so'm"), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(find.text("150 000 so'm"), findsOneWidget);
+  });
+
+  testWidgets('PinLockScreen handles 2-step setup, mismatch, 1-step unlock, and PIN change',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 2.0;
+    addTearDown(() => tester.view.reset());
+
+    Future<void> enterDigits(String digits) async {
+      for (final ch in digits.split('')) {
+        await tester.tap(find.text(ch).last);
+        await tester.pump(const Duration(milliseconds: 40));
+      }
+      await tester.pumpAndSettle();
+    }
+
+    String? completedPin;
+    bool? completedBio;
+
+    // 1. Setup mode: requires entering PIN twice (mismatch resets back to step 1)
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: PinLockScreen(
+          key: const ValueKey('test_pin_setup'),
+          mode: PinScreenMode.setup,
+          onCanUseBiometric: () async => false,
+          onCompleted: (pin, bio) async {
+            completedPin = pin;
+            completedBio = bio;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text("PIN kod o'rnating"), findsOneWidget);
+
+    await enterDigits('1234');
+    expect(find.text('PIN kodni tasdiqlang'), findsOneWidget);
+
+    // Wrong 2nd entry shows error and resets to step 1 without completing
+    await enterDigits('9999');
+    expect(find.text("PIN kodlar mos kelmadi. Boshidan kiriting."), findsOneWidget);
+    expect(find.text("PIN kod o'rnating"), findsOneWidget);
+    expect(completedPin, isNull);
+
+    // Matching 2nd entry saves PIN
+    await enterDigits('1234');
+    expect(find.text('PIN kodni tasdiqlang'), findsOneWidget);
+    await enterDigits('1234');
+    expect(completedPin, equals('1234'));
+    expect(completedBio, isFalse);
+
+    // 2. Unlock mode: unlocks in 1 step
+    completedPin = null;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: PinLockScreen(
+          key: const ValueKey('test_pin_unlock'),
+          mode: PinScreenMode.unlock,
+          expectedPin: '1234',
+          biometricEnabled: false,
+          onCanUseBiometric: () async => false,
+          onCompleted: (pin, bio) async {
+            completedPin = pin;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await enterDigits('0000');
+    expect(completedPin, isNull);
+    await enterDigits('1234');
+    expect(completedPin, equals('1234'));
+
+    // 3. Change mode: verifies old PIN, then new PIN twice
+    completedPin = null;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: PinLockScreen(
+          key: const ValueKey('test_pin_change'),
+          mode: PinScreenMode.change,
+          expectedPin: '1234',
+          onCanUseBiometric: () async => false,
+          onCompleted: (pin, bio) async {
+            completedPin = pin;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Joriy PIN kod'), findsOneWidget);
+
+    await enterDigits('1234');
+    expect(find.text("PIN kod o'rnating"), findsOneWidget);
+    await enterDigits('4321');
+    expect(find.text('PIN kodni tasdiqlang'), findsOneWidget);
+    await enterDigits('4321');
+    expect(completedPin, equals('4321'));
+  });
 }

@@ -67,6 +67,30 @@ Future<bool> openExternalTelegramUrl(String url) async {
   }
 }
 
+Future<bool> canUseBiometric() async {
+  try {
+    final res = await _installerChannel.invokeMethod<bool>('canUseBiometric');
+    return res == true;
+  } catch (_) {
+    return false;
+  }
+}
+
+Future<bool> authenticateBiometric({
+  String title = 'Hisobchi — Tasdiqlash',
+  String subtitle = 'Ilovaga kirish uchun barmoq izini tasdiqlang',
+}) async {
+  try {
+    final res = await _installerChannel.invokeMethod<bool>(
+      'authenticateBiometric',
+      {'title': title, 'subtitle': subtitle},
+    );
+    return res == true;
+  } catch (_) {
+    return false;
+  }
+}
+
 Future<void> showInAppApkUpdateDialog({
   required BuildContext context,
   required Uri downloadUri,

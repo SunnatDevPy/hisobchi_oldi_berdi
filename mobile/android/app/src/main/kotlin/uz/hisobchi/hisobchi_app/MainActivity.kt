@@ -6,14 +6,18 @@ import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
 import android.provider.Settings
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileOutputStream
+import java.util.concurrent.atomic.AtomicBoolean
 
-class MainActivity : FlutterActivity() {
+class MainActivity : FlutterFragmentActivity() {
     private val channelName = "uz.hisobchi.hisobchi_app/installer"
     private var pendingApkPath: String? = null
     private var pendingDocResult: MethodChannel.Result? = null
@@ -88,6 +92,60 @@ class MainActivity : FlutterActivity() {
                             result.success(true)
                         } catch (e: Exception) {
                             result.error("OPEN_ERROR", e.localizedMessage ?: e.toString(), null)
+                        }
+                    }
+                    "canUseBiometric" -> {
+                        try {
+                            val mgr = BiometricManager.from(this)
+                            val status = mgr.canAuthenticate(
+                                BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                                    BiometricManager.Authenticators.BIOMETRIC_WEAK
+                            )
+                            result.success(status == BiometricManager.BIOMETRIC_SUCCESS)
+                        } catch (_: Exception) {
+                            result.success(false)
+                        }
+                    }
+                    "authenticateBiometric" -> {
+                        val title = call.argument<String>("title") ?: "Hisobchi — Tasdiqlash"
+                        val subtitle = call.argument<String>("subtitle")
+                            ?: "Ilovaga kirish uchun barmoq izini tasdiqlang"
+                        val replied = AtomicBoolean(false)
+                        fun finish(ok: Boolean) {
+                            if (replied.compareAndSet(false, true)) {
+                                runOnUiThread { result.success(ok) }
+                            }
+                        }
+                        try {
+                            val executor = ContextCompat.getMainExecutor(this)
+                            val prompt = BiometricPrompt(
+                                this,
+                                executor,
+                                object : BiometricPrompt.AuthenticationCallback() {
+                                    override fun onAuthenticationSucceeded(
+                                        res: BiometricPrompt.AuthenticationResult
+                                    ) {
+                                        super.onAuthenticationSucceeded(res)
+                                        finish(true)
+                                    }
+
+                                    override fun onAuthenticationError(
+                                        errorCode: Int,
+                                        errString: CharSequence
+                                    ) {
+                                        super.onAuthenticationError(errorCode, errString)
+                                        finish(false)
+                                    }
+                                }
+                            )
+                            val info = BiometricPrompt.PromptInfo.Builder()
+                                .setTitle(title)
+                                .setSubtitle(subtitle)
+                                .setNegativeButtonText("PIN kod bilan kirish")
+                                .build()
+                            prompt.authenticate(info)
+                        } catch (_: Exception) {
+                            finish(false)
                         }
                     }
                     else -> result.notImplemented()

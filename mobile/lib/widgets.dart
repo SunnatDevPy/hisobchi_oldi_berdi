@@ -7,6 +7,7 @@ import 'theme.dart';
 
 class HeroBalanceCard extends StatelessWidget {
   final StatusSummary summary;
+  final int animSeed;
   final VoidCallback? onAddCash;
   final VoidCallback? onKassaDebt;
   final VoidCallback? onKassaRepay;
@@ -14,6 +15,7 @@ class HeroBalanceCard extends StatelessWidget {
   const HeroBalanceCard({
     super.key,
     required this.summary,
+    this.animSeed = 0,
     this.onAddCash,
     this.onKassaDebt,
     this.onKassaRepay,
@@ -143,19 +145,17 @@ class HeroBalanceCard extends StatelessWidget {
           FittedBox(
             fit: BoxFit.scaleDown,
             alignment: Alignment.centerLeft,
-            child: TweenAnimationBuilder<double>(
-              tween: Tween<double>(end: summary.expectedCash),
-              duration: const Duration(milliseconds: 420),
-              curve: Curves.easeOutCubic,
-              builder: (context, animatedCash, _) => Text(
-                formatUzs(animatedCash, withCurrency: true),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 33,
-                  fontWeight: FontWeight.w900,
-                  fontFeatures: AppTokens.tabularNums,
-                  letterSpacing: -0.6,
-                ),
+            child: AnimatedUzsNumber(
+              value: summary.expectedCash,
+              withCurrency: true,
+              animSeed: animSeed,
+              duration: const Duration(milliseconds: 700),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 33,
+                fontWeight: FontWeight.w900,
+                fontFeatures: AppTokens.tabularNums,
+                letterSpacing: -0.6,
               ),
             ),
           ),
@@ -178,7 +178,8 @@ class HeroBalanceCard extends StatelessWidget {
                     Expanded(
                       child: _HeroMetricTile(
                         label: 'Jami kirim',
-                        value: formatUzs(summary.totalAvailableInflow),
+                        numericValue: summary.totalAvailableInflow,
+                        animSeed: animSeed,
                         icon: Icons.south_west_rounded,
                         color: const Color(0xFF6EE7B7),
                       ),
@@ -192,7 +193,8 @@ class HeroBalanceCard extends StatelessWidget {
                     Expanded(
                       child: _HeroMetricTile(
                         label: 'Naqd rasxod',
-                        value: formatUzs(summary.totalNakladnoySpent),
+                        numericValue: summary.totalNakladnoySpent,
+                        animSeed: animSeed,
                         icon: Icons.north_east_rounded,
                         color: const Color(0xFFFDA4AF),
                       ),
@@ -205,19 +207,23 @@ class HeroBalanceCard extends StatelessWidget {
                     Expanded(
                       child: _HeroSubStat(
                         label: 'Kechadan',
-                        value: formatUzs(summary.openingBalance),
+                        numericValue: summary.openingBalance,
+                        animSeed: animSeed,
                       ),
                     ),
                     Expanded(
                       child: _HeroSubStat(
                         label: 'Bugun kirim',
-                        value: '+${formatUzs(summary.mainCashIn)}',
+                        numericValue: summary.mainCashIn,
+                        prefix: '+',
+                        animSeed: animSeed,
                       ),
                     ),
                     Expanded(
                       child: _HeroSubStat(
                         label: 'Kassa qarzi',
-                        value: formatUzs(summary.totalKassaDebtOutstanding),
+                        numericValue: summary.totalKassaDebtOutstanding,
+                        animSeed: animSeed,
                       ),
                     ),
                   ],
@@ -264,9 +270,16 @@ class HeroBalanceCard extends StatelessWidget {
 
 class _HeroSubStat extends StatelessWidget {
   final String label;
-  final String value;
+  final double numericValue;
+  final String prefix;
+  final int animSeed;
 
-  const _HeroSubStat({required this.label, required this.value});
+  const _HeroSubStat({
+    required this.label,
+    required this.numericValue,
+    this.prefix = '',
+    this.animSeed = 0,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -287,8 +300,11 @@ class _HeroSubStat extends StatelessWidget {
         FittedBox(
           fit: BoxFit.scaleDown,
           alignment: Alignment.centerLeft,
-          child: Text(
-            value,
+          child: AnimatedUzsNumber(
+            value: numericValue,
+            prefix: prefix,
+            animSeed: animSeed,
+            duration: const Duration(milliseconds: 620),
             style: const TextStyle(
               color: Colors.white,
               fontSize: 13,
@@ -304,13 +320,15 @@ class _HeroSubStat extends StatelessWidget {
 
 class _HeroMetricTile extends StatelessWidget {
   final String label;
-  final String value;
+  final double numericValue;
+  final int animSeed;
   final IconData icon;
   final Color color;
 
   const _HeroMetricTile({
     required this.label,
-    required this.value,
+    required this.numericValue,
+    this.animSeed = 0,
     required this.icon,
     required this.color,
   });
@@ -342,8 +360,10 @@ class _HeroMetricTile extends StatelessWidget {
         FittedBox(
           fit: BoxFit.scaleDown,
           alignment: Alignment.centerLeft,
-          child: Text(
-            value,
+          child: AnimatedUzsNumber(
+            value: numericValue,
+            animSeed: animSeed,
+            duration: const Duration(milliseconds: 650),
             style: TextStyle(
               color: color,
               fontSize: 15.5,
@@ -415,6 +435,7 @@ class _HeroActionBtn extends StatelessWidget {
 class DashboardAnalyticsSection extends StatefulWidget {
   final StatusSummary summary;
   final bool canWrite;
+  final int animSeed;
   final List<Map<String, dynamic>> dailySeries;
   final String seriesGranularity; // 'daily' | 'hourly'
   final String periodLabel;
@@ -432,6 +453,7 @@ class DashboardAnalyticsSection extends StatefulWidget {
     super.key,
     required this.summary,
     required this.canWrite,
+    this.animSeed = 0,
     this.dailySeries = const [],
     this.seriesGranularity = 'daily',
     this.periodLabel = 'Oxirgi 7 kun',
@@ -554,6 +576,7 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
               child: _PaymentKpiCard(
                 title: 'Naqd to\'lov',
                 amount: summary.totalNakladnoySpent,
+                animSeed: widget.animSeed,
                 count: cashCnt,
                 share: grandTotal > 0
                     ? summary.totalNakladnoySpent / grandTotal
@@ -568,6 +591,7 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
               child: _PaymentKpiCard(
                 title: 'Karta (naqdsiz)',
                 amount: summary.totalCardSpent,
+                animSeed: widget.animSeed,
                 count: cardCnt,
                 share:
                     grandTotal > 0 ? summary.totalCardSpent / grandTotal : 0,
@@ -585,6 +609,7 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
               child: _PaymentKpiCard(
                 title: "Perechesleniya",
                 amount: summary.totalTransferSpent,
+                animSeed: widget.animSeed,
                 count: transferCnt,
                 share: grandTotal > 0
                     ? summary.totalTransferSpent / grandTotal
@@ -599,6 +624,7 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
               child: _PaymentKpiCard(
                 title: 'Qarzga (smena)',
                 amount: summary.totalDebtNakladnoy,
+                animSeed: widget.animSeed,
                 count: debtCnt,
                 share: grandTotal > 0
                     ? summary.totalDebtNakladnoy / grandTotal
@@ -2036,6 +2062,7 @@ class _MiniKassaCol extends StatelessWidget {
 class _PaymentKpiCard extends StatelessWidget {
   final String title;
   final double amount;
+  final int animSeed;
   final int count;
   final double share;
   final IconData icon;
@@ -2046,6 +2073,7 @@ class _PaymentKpiCard extends StatelessWidget {
   const _PaymentKpiCard({
     required this.title,
     required this.amount,
+    this.animSeed = 0,
     required this.count,
     required this.share,
     required this.icon,
@@ -2114,8 +2142,11 @@ class _PaymentKpiCard extends StatelessWidget {
               FittedBox(
                 fit: BoxFit.scaleDown,
                 alignment: Alignment.centerLeft,
-                child: Text(
-                  formatUzs(amount, withCurrency: true),
+                child: AnimatedUzsNumber(
+                  value: amount,
+                  withCurrency: true,
+                  animSeed: animSeed,
+                  duration: const Duration(milliseconds: 650),
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w900,
@@ -3822,6 +3853,644 @@ class _ActionFeedbackOverlayWidgetState
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// ANIMATED ROLL-UP UZS NUMBER & 4-DIGIT PIN + BIOMETRIC LOCK SCREEN
+// ============================================================================
+
+/// Rolls numeric UZS balances smoothly upward from 0 whenever first built or
+/// whenever [animSeed] changes (e.g. on pull-to-refresh / data reload).
+class AnimatedUzsNumber extends StatelessWidget {
+  final double value;
+  final bool withCurrency;
+  final String prefix;
+  final TextStyle? style;
+  final int animSeed;
+  final Duration duration;
+
+  const AnimatedUzsNumber({
+    super.key,
+    required this.value,
+    this.withCurrency = false,
+    this.prefix = '',
+    this.style,
+    this.animSeed = 0,
+    this.duration = const Duration(milliseconds: 650),
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final startVal = value > 1 ? 1.0 : 0.0;
+    return TweenAnimationBuilder<double>(
+      key: ValueKey<int>(animSeed),
+      tween: Tween<double>(begin: startVal, end: value),
+      duration: duration,
+      curve: Curves.easeOutCubic,
+      builder: (context, animated, _) => Text(
+        '$prefix${formatUzs(animated, withCurrency: withCurrency)}',
+        maxLines: 1,
+        style: style,
+      ),
+    );
+  }
+}
+
+enum PinScreenMode { setup, unlock, change }
+
+/// Stylized 4-digit PIN & Fingerprint (Otpechatka) screen matching the glowing
+/// violet/indigo fintech theme.
+class PinLockScreen extends StatefulWidget {
+  final PinScreenMode mode;
+  final String? expectedPin;
+  final bool biometricEnabled;
+  final Future<bool> Function()? onCanUseBiometric;
+  final Future<bool> Function()? onAuthenticateBiometric;
+  final Future<void> Function(String pin, bool enableBiometric)? onCompleted;
+  final VoidCallback? onSkip;
+  final VoidCallback? onCancel;
+  final VoidCallback? onLogout;
+
+  const PinLockScreen({
+    super.key,
+    required this.mode,
+    this.expectedPin,
+    this.biometricEnabled = false,
+    this.onCanUseBiometric,
+    this.onAuthenticateBiometric,
+    this.onCompleted,
+    this.onSkip,
+    this.onCancel,
+    this.onLogout,
+  });
+
+  @override
+  State<PinLockScreen> createState() => _PinLockScreenState();
+}
+
+class _PinLockScreenState extends State<PinLockScreen>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _shakeCtrl;
+  late int _step; // 0: verify current, 1: enter new, 2: confirm new
+  String? _firstPin;
+  String _entered = '';
+  String? _error;
+  bool _canBio = false;
+  bool _bioChecked = false;
+  bool _bioBusy = false;
+  bool _success = false;
+  bool _submitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _shakeCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 380),
+    );
+    _step = widget.mode == PinScreenMode.setup ? 1 : 0;
+    _bioChecked = widget.biometricEnabled;
+    _initBiometric();
+  }
+
+  @override
+  void didUpdateWidget(covariant PinLockScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.mode != widget.mode) {
+      _step = widget.mode == PinScreenMode.setup ? 1 : 0;
+      _entered = '';
+      _firstPin = null;
+      _error = null;
+      _success = false;
+      _submitting = false;
+      _bioChecked = widget.biometricEnabled;
+      _initBiometric();
+    }
+  }
+
+  Future<void> _initBiometric() async {
+    if (widget.onCanUseBiometric != null) {
+      try {
+        final ok = await widget.onCanUseBiometric!();
+        if (mounted) {
+          setState(() {
+            _canBio = ok;
+            if (widget.mode == PinScreenMode.setup && ok) {
+              _bioChecked = true;
+            }
+          });
+        }
+      } catch (_) {}
+    } else if (widget.biometricEnabled && widget.onAuthenticateBiometric != null) {
+      if (mounted) setState(() => _canBio = true);
+    }
+
+    if (widget.mode == PinScreenMode.unlock &&
+        widget.biometricEnabled &&
+        widget.onAuthenticateBiometric != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _triggerBiometric();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _shakeCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _triggerBiometric() async {
+    if (_bioBusy || _submitting || widget.onAuthenticateBiometric == null) {
+      return;
+    }
+    setState(() {
+      _bioBusy = true;
+      _error = null;
+    });
+    try {
+      final ok = await widget.onAuthenticateBiometric!();
+      if (!mounted) return;
+      if (ok) {
+        HapticFeedback.mediumImpact();
+        setState(() {
+          _entered = '••••';
+          _success = true;
+          _submitting = true;
+        });
+        await widget.onCompleted?.call(widget.expectedPin ?? '', true);
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _bioBusy = false;
+          _submitting = false;
+        });
+      }
+    }
+  }
+
+  void _triggerShake(String message) {
+    HapticFeedback.heavyImpact();
+    _shakeCtrl.forward(from: 0);
+    setState(() {
+      _error = message;
+      _entered = '';
+    });
+  }
+
+  Future<void> _onDigitTap(String d) async {
+    if (_submitting || _entered.length >= 4) return;
+    HapticFeedback.selectionClick();
+    setState(() {
+      _error = null;
+      _entered += d;
+    });
+    if (_entered.length == 4) {
+      await _handleFourDigits(_entered);
+    }
+  }
+
+  void _onBackspace() {
+    if (_submitting || _entered.isEmpty) return;
+    HapticFeedback.lightImpact();
+    setState(() {
+      _error = null;
+      _entered = _entered.substring(0, _entered.length - 1);
+    });
+  }
+
+  Future<void> _handleFourDigits(String pin) async {
+    if (widget.mode == PinScreenMode.unlock) {
+      if (pin == widget.expectedPin) {
+        HapticFeedback.mediumImpact();
+        setState(() {
+          _success = true;
+          _submitting = true;
+        });
+        try {
+          await widget.onCompleted?.call(pin, widget.biometricEnabled);
+        } finally {
+          if (mounted) {
+            setState(() => _submitting = false);
+          }
+        }
+      } else {
+        _triggerShake("PIN kod noto'g'ri. Qaytadan urinib ko'ring.");
+      }
+      return;
+    }
+
+    if (widget.mode == PinScreenMode.change && _step == 0) {
+      if (pin == widget.expectedPin) {
+        HapticFeedback.lightImpact();
+        setState(() {
+          _step = 1;
+          _entered = '';
+          _error = null;
+        });
+      } else {
+        _triggerShake("Joriy PIN kod noto'g'ri.");
+      }
+      return;
+    }
+
+    // Setup or Change: Step 1 -> capture first PIN, Step 2 -> confirm match
+    if (_step == 1) {
+      HapticFeedback.lightImpact();
+      setState(() {
+        _firstPin = pin;
+        _step = 2;
+        _entered = '';
+        _error = null;
+      });
+      return;
+    }
+
+    if (_step == 2) {
+      if (pin == _firstPin) {
+        HapticFeedback.mediumImpact();
+        setState(() {
+          _success = true;
+          _submitting = true;
+        });
+        try {
+          await widget.onCompleted?.call(pin, _bioChecked);
+        } finally {
+          if (mounted) {
+            setState(() => _submitting = false);
+          }
+        }
+      } else {
+        setState(() {
+          _step = 1;
+          _firstPin = null;
+        });
+        _triggerShake("PIN kodlar mos kelmadi. Boshidan kiriting.");
+      }
+    }
+  }
+
+  String _titleText() {
+    if (widget.mode == PinScreenMode.unlock) return 'Hisobchi — Kirish';
+    if (widget.mode == PinScreenMode.change && _step == 0) {
+      return 'Joriy PIN kod';
+    }
+    return _step == 1 ? "PIN kod o'rnating" : 'PIN kodni tasdiqlang';
+  }
+
+  String _subtitleText() {
+    if (widget.mode == PinScreenMode.unlock) {
+      return widget.biometricEnabled && _canBio
+          ? 'Barmoq izi yoki 4 xonali PIN kodni kiriting'
+          : '4 xonali PIN kodni kiriting';
+    }
+    if (widget.mode == PinScreenMode.change && _step == 0) {
+      return "O'zgartirish uchun avval joriy PIN kodni kiriting";
+    }
+    return _step == 1
+        ? "Tezkor kirish uchun 4 xonali kod o'ylab toping (1/2)"
+        : "Saqlash uchun xuddi shu PIN kodni qayta kiriting (2/2)";
+  }
+
+  Widget _buildKeyButton({
+    required Widget child,
+    VoidCallback? onTap,
+    bool accent = false,
+  }) {
+    final isDark = isDarkCtx(context);
+    final bg = accent
+        ? AppTokens.brandViolet.withValues(alpha: isDark ? 0.24 : 0.14)
+        : (isDark
+            ? const Color(0xFF1A223A)
+            : Colors.white);
+    final border = accent
+        ? AppTokens.brandViolet.withValues(alpha: 0.45)
+        : (isDark ? AppTokens.cardBorderDark : AppTokens.cardBorderLight);
+
+    return TactileScaleTap(
+      pressedScale: 0.90,
+      haptic: false,
+      enabled: onTap != null && !_submitting,
+      child: Material(
+        color: bg,
+        shape: CircleBorder(side: BorderSide(color: border)),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: (onTap != null && !_submitting) ? onTap : null,
+          child: SizedBox(
+            width: 72,
+            height: 72,
+            child: Center(child: child),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = isDarkCtx(context);
+    final bg = isDark ? AppTokens.surfaceDark : AppTokens.surfaceLight;
+    final showBioBtn = widget.mode == PinScreenMode.unlock &&
+        widget.biometricEnabled &&
+        _canBio &&
+        widget.onAuthenticateBiometric != null;
+
+    return Scaffold(
+      backgroundColor: bg,
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: const Alignment(0, -0.55),
+                    radius: 0.95,
+                    colors: [
+                      AppTokens.brandViolet
+                          .withValues(alpha: isDark ? 0.26 : 0.14),
+                      const Color(0xFFEC4899)
+                          .withValues(alpha: isDark ? 0.10 : 0.05),
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          SafeArea(
+            child: Center(
+              child: SingleChildScrollView(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 360),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (widget.onCancel != null)
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: IconButton(
+                            onPressed: widget.onCancel,
+                            icon: const Icon(Icons.close_rounded),
+                          ),
+                        ),
+                      Container(
+                        width: 74,
+                        height: 74,
+                        padding: const EdgeInsets.all(11),
+                        decoration: BoxDecoration(
+                          color: isDark ? AppTokens.cardDark : Colors.white,
+                          borderRadius: BorderRadius.circular(22),
+                          border: Border.all(
+                            color: AppTokens.brandViolet.withValues(alpha: 0.45),
+                            width: 1.4,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: AppTokens.brandViolet
+                                  .withValues(alpha: isDark ? 0.35 : 0.18),
+                              blurRadius: 22,
+                            ),
+                          ],
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(13),
+                          child: Image.asset(
+                            'assets/app_icon.png',
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => const Icon(
+                              Icons.lock_rounded,
+                              color: AppTokens.brand,
+                              size: 32,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        _titleText(),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                          color: textPrimaryOf(context),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _subtitleText(),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: textSecondaryOf(context),
+                        ),
+                      ),
+                      const SizedBox(height: 22),
+
+                      // Animated shaking 4 PIN dots
+                      AnimatedBuilder(
+                        animation: _shakeCtrl,
+                        builder: (ctx, child) {
+                          final dx = math.sin(_shakeCtrl.value * math.pi * 6) *
+                              (1.0 - _shakeCtrl.value) *
+                              12.0;
+                          return Transform.translate(
+                            offset: Offset(dx, 0),
+                            child: child,
+                          );
+                        },
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: List.generate(4, (i) {
+                            final filled = i < _entered.length;
+                            final dotColor = _success
+                                ? AppTokens.cashGreen
+                                : (_error != null
+                                    ? AppTokens.dangerRed
+                                    : (filled
+                                        ? AppTokens.brandViolet
+                                        : Colors.transparent));
+                            return AnimatedContainer(
+                              duration: const Duration(milliseconds: 140),
+                              margin: const EdgeInsets.symmetric(horizontal: 9),
+                              width: filled ? 18 : 16,
+                              height: filled ? 18 : 16,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: dotColor,
+                                border: Border.all(
+                                  color: _success
+                                      ? AppTokens.cashGreen
+                                      : (_error != null
+                                          ? AppTokens.dangerRed
+                                          : (filled
+                                              ? AppTokens.brandViolet
+                                              : textSecondaryOf(context)
+                                                  .withValues(alpha: 0.45))),
+                                  width: 2,
+                                ),
+                                boxShadow: filled
+                                    ? [
+                                        BoxShadow(
+                                          color:
+                                              dotColor.withValues(alpha: 0.55),
+                                          blurRadius: 10,
+                                        ),
+                                      ]
+                                    : null,
+                              ),
+                            );
+                          }),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        height: 20,
+                        child: _error != null
+                            ? Text(
+                                _error!,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: AppTokens.dangerRed,
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              )
+                            : null,
+                      ),
+
+                      if ((widget.mode == PinScreenMode.setup ||
+                              widget.mode == PinScreenMode.change) &&
+                          _canBio) ...[
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 14),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: isDark ? AppTokens.cardDark : Colors.white,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: isDark
+                                  ? AppTokens.cardBorderDark
+                                  : AppTokens.cardBorderLight,
+                            ),
+                          ),
+                          child: SwitchListTile.adaptive(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            secondary: const Icon(
+                              Icons.fingerprint_rounded,
+                              color: AppTokens.brandViolet,
+                            ),
+                            title: const Text(
+                              'Otpechatka bilan kirish',
+                              style: TextStyle(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            value: _bioChecked,
+                            onChanged: (v) => setState(() => _bioChecked = v),
+                          ),
+                        ),
+                      ],
+
+                      // Numeric Keypad (1..9, bio/empty, 0, backspace)
+                      for (final row in const [
+                        ['1', '2', '3'],
+                        ['4', '5', '6'],
+                        ['7', '8', '9'],
+                      ]) ...[
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: row
+                              .map(
+                                (d) => _buildKeyButton(
+                                  onTap: () => _onDigitTap(d),
+                                  child: Text(
+                                    d,
+                                    style: TextStyle(
+                                      fontSize: 25,
+                                      fontWeight: FontWeight.w800,
+                                      color: textPrimaryOf(context),
+                                      fontFeatures: AppTokens.tabularNums,
+                                    ),
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          if (showBioBtn)
+                            _buildKeyButton(
+                              accent: true,
+                              onTap: _triggerBiometric,
+                              child: const Icon(
+                                Icons.fingerprint_rounded,
+                                size: 32,
+                                color: AppTokens.brandViolet,
+                              ),
+                            )
+                          else
+                            const SizedBox(width: 72, height: 72),
+                          _buildKeyButton(
+                            onTap: () => _onDigitTap('0'),
+                            child: Text(
+                              '0',
+                              style: TextStyle(
+                                fontSize: 25,
+                                fontWeight: FontWeight.w800,
+                                color: textPrimaryOf(context),
+                                fontFeatures: AppTokens.tabularNums,
+                              ),
+                            ),
+                          ),
+                          _buildKeyButton(
+                            onTap: _entered.isEmpty ? null : _onBackspace,
+                            child: Icon(
+                              Icons.backspace_outlined,
+                              size: 24,
+                              color: _entered.isEmpty
+                                  ? textSecondaryOf(context)
+                                      .withValues(alpha: 0.4)
+                                  : textPrimaryOf(context),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      if (widget.onSkip != null)
+                        TextButton(
+                          onPressed: widget.onSkip,
+                          child: const Text('Keyinroq sozlayman'),
+                        )
+                      else if (widget.onLogout != null)
+                        TextButton(
+                          onPressed: widget.onLogout,
+                          child: const Text(
+                            "PIN esdan chiqdimi? Hisobdan chiqish",
+                            style: TextStyle(color: AppTokens.dangerRed),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
