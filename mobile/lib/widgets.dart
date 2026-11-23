@@ -3017,3 +3017,542 @@ class _CustomDropdownSheetState<T> extends State<_CustomDropdownSheet<T>> {
     );
   }
 }
+
+// ============================================================================
+// ANIMATED GLOWING LOGO SPLASH & DASHBOARD LOADING SKELETON
+// ============================================================================
+
+class HisobchiAnimatedLoadingScreen extends StatefulWidget {
+  final String title;
+  final String subtitle;
+
+  const HisobchiAnimatedLoadingScreen({
+    super.key,
+    this.title = 'Hisobchi',
+    this.subtitle = 'Ilova yuklanmoqda...',
+  });
+
+  @override
+  State<HisobchiAnimatedLoadingScreen> createState() =>
+      _HisobchiAnimatedLoadingScreenState();
+}
+
+class _HisobchiAnimatedLoadingScreenState
+    extends State<HisobchiAnimatedLoadingScreen>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2400),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = isDarkCtx(context);
+    final bgBase = isDark ? AppTokens.surfaceDark : AppTokens.surfaceLight;
+    final cardSurface = isDark ? AppTokens.cardDark : Colors.white;
+    final titleColor = textPrimaryOf(context);
+    final subColor = textSecondaryOf(context);
+    final glowViolet = AppTokens.brandViolet;
+    final glowIndigo = AppTokens.brand;
+    const glowPink = Color(0xFFEC4899);
+
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (context, _) {
+        final t = _ctrl.value;
+        final pulse = 0.5 - 0.5 * math.cos(t * 2 * math.pi); // 0..1 smooth
+        final logoScale = 0.97 + 0.06 * pulse;
+        final haloOpacity = (isDark ? 0.36 : 0.20) + 0.16 * pulse;
+
+        return Container(
+          color: bgBase,
+          child: Stack(
+            children: [
+              // Vertical ambient fintech beam behind logo
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: RadialGradient(
+                        center: const Alignment(0, -0.06),
+                        radius: 0.78 + 0.08 * pulse,
+                        colors: [
+                          glowViolet.withValues(alpha: haloOpacity),
+                          glowPink.withValues(alpha: haloOpacity * 0.45),
+                          glowIndigo.withValues(alpha: haloOpacity * 0.25),
+                          Colors.transparent,
+                        ],
+                        stops: const [0.0, 0.35, 0.62, 1.0],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              // Subtle vertical light pillar
+              Align(
+                alignment: Alignment.center,
+                child: IgnorePointer(
+                  child: Container(
+                    width: 150,
+                    height: 360,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.transparent,
+                          glowViolet.withValues(alpha: isDark ? 0.16 : 0.09),
+                          glowPink.withValues(alpha: isDark ? 0.14 : 0.08),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              // Bottom horizon purple glow arc
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: 110,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: RadialGradient(
+                        center: const Alignment(0, 1.25),
+                        radius: 1.15,
+                        colors: [
+                          glowViolet.withValues(
+                              alpha: (isDark ? 0.34 : 0.18) + 0.08 * pulse),
+                          glowPink.withValues(alpha: isDark ? 0.14 : 0.06),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              // Center animated squircle logo + text + glowing progress pill
+              SafeArea(
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Transform.scale(
+                        scale: logoScale,
+                        child: SizedBox(
+                          width: 118,
+                          height: 118,
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              // Rotating orbital neon ring
+                              Transform.rotate(
+                                angle: t * 2 * math.pi,
+                                child: Container(
+                                  width: 114,
+                                  height: 114,
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(31),
+                                    gradient: SweepGradient(
+                                      colors: [
+                                        glowIndigo,
+                                        glowViolet,
+                                        glowPink,
+                                        glowViolet.withValues(alpha: 0.15),
+                                        glowIndigo,
+                                      ],
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: glowViolet.withValues(
+                                            alpha: isDark ? 0.55 : 0.28),
+                                        blurRadius: 28,
+                                        spreadRadius: 1,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              // Inner frosted glass squircle holding logo
+                              Container(
+                                width: 106,
+                                height: 106,
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: cardSurface,
+                                  borderRadius: BorderRadius.circular(28),
+                                  border: Border.all(
+                                    color: Colors.white.withValues(
+                                        alpha: isDark ? 0.14 : 0.8),
+                                    width: 1.2,
+                                  ),
+                                ),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(18),
+                                  child: Image.asset(
+                                    'assets/app_icon.png',
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => Container(
+                                      decoration: const BoxDecoration(
+                                        gradient: AppTokens.aiGradient,
+                                      ),
+                                      child: const Icon(
+                                        Icons.account_balance_wallet_rounded,
+                                        color: Colors.white,
+                                        size: 42,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 22),
+                      Text(
+                        widget.title,
+                        style: TextStyle(
+                          fontSize: 23,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -0.3,
+                          color: titleColor,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        widget.subtitle,
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                          color: subColor,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      // Glowing sliding progress pill
+                      Container(
+                        width: 152,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          color: glowViolet.withValues(alpha: 0.18),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: LayoutBuilder(
+                          builder: (ctx, box) {
+                            final barW = box.maxWidth * 0.42;
+                            final travel = box.maxWidth - barW;
+                            return Align(
+                              alignment: Alignment.centerLeft,
+                              child: Transform.translate(
+                                offset: Offset(travel * pulse, 0),
+                                child: Container(
+                                  width: barW,
+                                  height: 5,
+                                  decoration: BoxDecoration(
+                                    gradient: AppTokens.aiGradient,
+                                    borderRadius: BorderRadius.circular(999),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: glowPink.withValues(alpha: 0.55),
+                                        blurRadius: 10,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class DashboardLoadingSkeleton extends StatefulWidget {
+  const DashboardLoadingSkeleton({super.key});
+
+  @override
+  State<DashboardLoadingSkeleton> createState() =>
+      _DashboardLoadingSkeletonState();
+}
+
+class _DashboardLoadingSkeletonState extends State<DashboardLoadingSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  Widget _shimmerBox({
+    required double height,
+    double? width,
+    double radius = 12,
+    required double phase,
+    required Color baseColor,
+    required Color highlightColor,
+  }) {
+    final slide = -1.2 + 2.4 * phase;
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(radius),
+        gradient: LinearGradient(
+          begin: Alignment(slide - 0.7, -0.3),
+          end: Alignment(slide + 0.7, 0.3),
+          colors: [baseColor, highlightColor, baseColor],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = isDarkCtx(context);
+    final baseBg =
+        isDark ? const Color(0xFF1F2742) : const Color(0xFFE6EAF3);
+    final hiBg =
+        isDark ? const Color(0xFF2D3860) : const Color(0xFFF3F6FC);
+    final heroBase = Colors.white.withValues(alpha: 0.14);
+    final heroHi = Colors.white.withValues(alpha: 0.30);
+
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (context, _) {
+        final t = _ctrl.value;
+
+        Widget box(double h, {double? w, double r = 10, bool onHero = false}) =>
+            _shimmerBox(
+              height: h,
+              width: w,
+              radius: r,
+              phase: t,
+              baseColor: onHero ? heroBase : baseBg,
+              highlightColor: onHero ? heroHi : hiBg,
+            );
+
+        return ListView(
+          physics: const NeverScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 110),
+          children: [
+            // Date switcher bar placeholder
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: isDark ? AppTokens.cardDark : Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: isDark
+                      ? AppTokens.cardBorderDark
+                      : AppTokens.cardBorderLight,
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  box(28, w: 34, r: 8),
+                  box(18, w: 140, r: 8),
+                  box(28, w: 34, r: 8),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            // Mirror HeroBalanceCard
+            Container(
+              decoration: BoxDecoration(
+                gradient: AppTokens.heroGradient,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppTokens.brand.withValues(alpha: 0.24),
+                    blurRadius: 22,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      box(26, w: 102, r: 20, onHero: true),
+                      box(26, w: 132, r: 20, onHero: true),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  box(14, w: 185, r: 6, onHero: true),
+                  const SizedBox(height: 10),
+                  box(36, w: 220, r: 10, onHero: true),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.20),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.12),
+                      ),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(child: box(36, r: 8, onHero: true)),
+                            const SizedBox(width: 14),
+                            Expanded(child: box(36, r: 8, onHero: true)),
+                          ],
+                        ),
+                        const Divider(color: Colors.white12, height: 18),
+                        Row(
+                          children: [
+                            Expanded(child: box(26, r: 8, onHero: true)),
+                            const SizedBox(width: 10),
+                            Expanded(child: box(26, r: 8, onHero: true)),
+                            const SizedBox(width: 10),
+                            Expanded(child: box(26, r: 8, onHero: true)),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(child: box(52, r: 13, onHero: true)),
+                      const SizedBox(width: 8),
+                      Expanded(child: box(52, r: 13, onHero: true)),
+                      const SizedBox(width: 8),
+                      Expanded(child: box(52, r: 13, onHero: true)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Mirror Quick action row (Jonli Sverka / Smena Tarixi)
+            Row(
+              children: [
+                Expanded(child: box(44, r: 14)),
+                const SizedBox(width: 8),
+                Expanded(child: box(44, r: 14)),
+              ],
+            ),
+            const SizedBox(height: 14),
+
+            // Mirror Analytics Card with chart bars
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        box(18, w: 160, r: 8),
+                        box(24, w: 80, r: 10),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      height: 68,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          for (final h in const [
+                            36.0,
+                            54.0,
+                            42.0,
+                            64.0,
+                            48.0,
+                            58.0,
+                          ]) ...[
+                            Expanded(child: box(h, r: 8)),
+                            const SizedBox(width: 8),
+                          ],
+                          Expanded(child: box(32, r: 8)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(child: box(40, r: 10)),
+                        const SizedBox(width: 8),
+                        Expanded(child: box(40, r: 10)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+
+            // Mirror Kassa Timeline Card
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        box(18, w: 185, r: 8),
+                        box(24, w: 72, r: 8),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    box(58, r: 14),
+                    const SizedBox(height: 8),
+                    box(58, r: 14),
+                    const SizedBox(height: 8),
+                    box(58, r: 14),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}

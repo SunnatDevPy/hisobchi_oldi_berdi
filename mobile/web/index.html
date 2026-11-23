@@ -160,7 +160,7 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: #F3F5FA;
+      background: #090D18;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
     #hisobchi-splash {
@@ -171,45 +171,103 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 14px;
-      background: linear-gradient(145deg, #1E1B4B 0%, #4338CA 55%, #6D28D9 100%);
-      color: #FFFFFF;
-      transition: opacity 0.22s ease;
+      background:
+        radial-gradient(circle at 50% 44%, rgba(124, 58, 237, 0.34) 0%, rgba(236, 72, 153, 0.14) 28%, transparent 62%),
+        radial-gradient(ellipse at 50% 108%, rgba(124, 58, 237, 0.32) 0%, transparent 56%),
+        #090D18;
+      color: #F8FAFC;
+      transition: opacity 0.25s ease;
     }
-    #hisobchi-splash img {
-      width: 68px;
-      height: 68px;
+    #hisobchi-splash .logo-wrap {
+      position: relative;
+      width: 116px;
+      height: 116px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: hbreathe 2.4s ease-in-out infinite;
+    }
+    #hisobchi-splash .logo-ring {
+      position: absolute;
+      inset: 0;
+      border-radius: 31px;
+      background: conic-gradient(from 0deg, #4F46E5, #7C3AED, #EC4899, rgba(124, 58, 237, 0.12), #4F46E5);
+      box-shadow: 0 0 32px rgba(124, 58, 237, 0.55);
+      animation: hspin 2.4s linear infinite;
+    }
+    #hisobchi-splash .logo-inner {
+      position: relative;
+      width: 106px;
+      height: 106px;
+      border-radius: 27px;
+      background: #13192B;
+      border: 1.2px solid rgba(255, 255, 255, 0.14);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 13px;
+      box-sizing: border-box;
+    }
+    #hisobchi-splash .logo-inner img {
+      width: 100%;
+      height: 100%;
       border-radius: 18px;
-      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+      object-fit: cover;
     }
     #hisobchi-splash .title {
-      font-size: 20px;
-      font-weight: 800;
-      letter-spacing: 0.2px;
+      margin-top: 22px;
+      font-size: 22px;
+      font-weight: 900;
+      letter-spacing: -0.3px;
+      color: #F8FAFC;
     }
     #hisobchi-splash .sub {
+      margin-top: 6px;
       font-size: 13px;
-      opacity: 0.85;
+      font-weight: 600;
+      color: #CBD5E1;
     }
-    #hisobchi-splash .spinner {
-      width: 26px;
-      height: 26px;
-      border-radius: 50%;
-      border: 3px solid rgba(255, 255, 255, 0.28);
-      border-top-color: #FFFFFF;
-      animation: hspin 0.8s linear infinite;
+    #hisobchi-splash .bar {
+      margin-top: 20px;
+      width: 152px;
+      height: 5px;
+      border-radius: 999px;
+      background: rgba(124, 58, 237, 0.22);
+      overflow: hidden;
+      position: relative;
+    }
+    #hisobchi-splash .bar-fill {
+      width: 64px;
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #7C3AED, #EC4899);
+      box-shadow: 0 0 10px rgba(236, 72, 153, 0.65);
+      animation: hslide 1.3s ease-in-out infinite alternate;
     }
     @keyframes hspin {
       to { transform: rotate(360deg); }
+    }
+    @keyframes hbreathe {
+      0%, 100% { transform: scale(0.97); }
+      50% { transform: scale(1.03); }
+    }
+    @keyframes hslide {
+      from { transform: translateX(0); }
+      to { transform: translateX(88px); }
     }
   </style>
 </head>
 <body>
   <div id="hisobchi-splash">
-    <img src="icons/Icon-192.png" alt="Hisobchi">
+    <div class="logo-wrap">
+      <div class="logo-ring"></div>
+      <div class="logo-inner">
+        <img src="icons/Icon-192.png" alt="Hisobchi">
+      </div>
+    </div>
     <div class="title">Hisobchi</div>
-    <div class="spinner"></div>
     <div class="sub">Ilova yuklanmoqda...</div>
+    <div class="bar"><div class="bar-fill"></div></div>
   </div>
   <script>
     window.addEventListener('flutter-first-frame', function () {

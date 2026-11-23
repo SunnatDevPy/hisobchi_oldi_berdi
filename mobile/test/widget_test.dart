@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hisobchi_app/api_client.dart';
 import 'package:hisobchi_app/main.dart';
 import 'package:hisobchi_app/theme.dart';
+import 'package:hisobchi_app/widgets.dart';
 
 void main() {
   test('formatUzs and parseUzsInput handle Uzbek amounts properly', () {
@@ -93,5 +94,31 @@ void main() {
     );
     expect(withKeyboard, equals(376.0));
     expect(withKeyboard, lessThan(withHomeBar));
+  });
+
+  testWidgets('HisobchiAnimatedLoadingScreen and DashboardLoadingSkeleton render cleanly',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: const Scaffold(
+          body: HisobchiAnimatedLoadingScreen(
+            subtitle: 'Ilova tayyorlanmoqda...',
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Hisobchi'), findsOneWidget);
+    expect(find.text('Ilova tayyorlanmoqda...'), findsOneWidget);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: const Scaffold(body: DashboardLoadingSkeleton()),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byType(DashboardLoadingSkeleton), findsOneWidget);
   });
 }

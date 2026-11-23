@@ -455,37 +455,9 @@ class _HisobchiAppState extends State<HisobchiApp> {
   Widget build(BuildContext context) {
     Widget home;
     if (_initializing) {
-      home = Scaffold(
-        body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(18),
-                child: Image.asset(
-                  'assets/app_icon.png',
-                  width: 64,
-                  height: 64,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const Icon(
-                    Icons.account_balance_wallet_rounded,
-                    size: 48,
-                    color: AppTokens.brand,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              const CircularProgressIndicator(),
-              const SizedBox(height: 12),
-              Text(
-                'Hisobchi yuklanmoqda...',
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  color: textSecondaryOf(context),
-                ),
-              ),
-            ],
-          ),
+      home = const Scaffold(
+        body: HisobchiAnimatedLoadingScreen(
+          subtitle: 'Ilova tayyorlanmoqda...',
         ),
       );
     } else if (_api.isAuthenticated) {
@@ -1605,7 +1577,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
         ),
       ),
       body: _loading && _summary == null
-          ? const Center(child: CircularProgressIndicator())
+          ? const DashboardLoadingSkeleton()
           : _error != null && _summary == null
               ? _buildErrorState()
               : Column(
