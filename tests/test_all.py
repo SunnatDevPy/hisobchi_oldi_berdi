@@ -1773,7 +1773,14 @@ def test_mobile_apk_rest_api_and_group_posting(tmp_path: Path, monkeypatch):
                 assert r_sup_list.status_code == 200
                 assert any(c["display_name"] == "Ummun" for c in r_sup_list.json()["configs"])
 
-                # 8f3. Supplier Profile & 1-tap Send Excel to Telegram
+                # 8f3. Suppliers Directory, Supplier Profile (with date filter) & 1-tap Send Excel to Telegram
+                r_dir = await client.get("/suppliers/directory", headers=headers)
+                assert r_dir.status_code == 200
+                dir_data = r_dir.json()
+                assert dir_data["suppliers_count"] >= 3
+                assert dir_data["grand_total"] > 0
+                assert any(s["supplier_name"] == "Coca Cola" for s in dir_data["suppliers"])
+
                 r_prof = await client.get(
                     "/suppliers/profile",
                     headers=headers,
@@ -1784,6 +1791,19 @@ def test_mobile_apk_rest_api_and_group_posting(tmp_path: Path, monkeypatch):
                 assert prof["supplier_name"] == "Coca Cola"
                 assert prof["total_count"] >= 1
                 assert len(prof["items"]) >= 1
+
+                r_prof_empty = await client.get(
+                    "/suppliers/profile",
+                    headers=headers,
+                    params={
+                        "supplier": "Coca Cola",
+                        "date_from": "2020-01-01",
+                        "date_to": "2020-01-31",
+                    },
+                )
+                assert r_prof_empty.status_code == 200
+                assert r_prof_empty.json()["total_count"] == 0
+                assert r_prof_empty.json()["date_from"] == "2020-01-01"
 
                 r_tg_sess = await client.post(
                     "/export/send-telegram",

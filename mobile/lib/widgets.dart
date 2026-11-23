@@ -812,7 +812,7 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
                   label: FittedBox(
                     fit: BoxFit.scaleDown,
                     child: Text(
-                      'Nakladnoylar (${summary.nakladnoys.length})',
+                      'Amallar (${summary.nakladnoys.length})',
                       maxLines: 1,
                       style: const TextStyle(
                           fontSize: 12, fontWeight: FontWeight.w800),

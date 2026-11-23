@@ -552,12 +552,113 @@ def create_api_app() -> FastAPI:
             similar = await find_similar_suppliers(db, q.strip(), limit=4, cutoff=0.60)
         return {"query": q.strip(), "similar": similar}
 
+    @app.get("/suppliers/directory")
+    async def get_suppliers_directory_endpoint(
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        async with async_session_maker() as db:
+            stmt = (
+                select(NakladnoyPayment, DailyCashSession)
+                .join(DailyCashSession, DailyCashSession.id == NakladnoyPayment.session_id)
+                .where(NakladnoyPayment.status == "confirmed")
+                .order_by(NakladnoyPayment.id.desc())
+            )
+            rows = (await db.execute(stmt)).all()
+            nasiya_rows = await get_supplier_debt_balances(db)
+            configured = await list_suppliers(db, active_only=True)
+
+        buckets: dict[str, dict] = {}
+
+        def _ensure_bucket(display_name: str) -> dict:
+            key = display_name.strip().lower()
+            entry = buckets.get(key)
+            if entry is None:
+                entry = {
+                    "supplier_name": display_name.strip(),
+                    "total_count": 0,
+                    "total_amount": 0.0,
+                    "cash_amount": 0.0,
+                    "card_amount": 0.0,
+                    "transfer_amount": 0.0,
+                    "unpaid_debt_count": 0,
+                    "unpaid_debt_amount": 0.0,
+                    "nasiya_balance": 0.0,
+                    "first_date": None,
+                    "last_date": None,
+                }
+                buckets[key] = entry
+            return entry
+
+        for cfg in configured:
+            if cfg.display_name and cfg.display_name.strip():
+                _ensure_bucket(cfg.display_name.strip())
+
+        for pay, sess in rows:
+            raw_name = (pay.supplier_name or "").strip()
+            if not raw_name:
+                continue
+            b = _ensure_bucket(raw_name)
+            amt = float(pay.amount or 0.0)
+            b["total_count"] += 1
+            b["total_amount"] += amt
+            rdate = getattr(sess, "report_date", None)
+            if rdate:
+                rdate_s = str(rdate)
+                if b["first_date"] is None or rdate_s < b["first_date"]:
+                    b["first_date"] = rdate_s
+                if b["last_date"] is None or rdate_s > b["last_date"]:
+                    b["last_date"] = rdate_s
+            if bool(getattr(pay, "is_debt", False)):
+                b["unpaid_debt_count"] += 1
+                b["unpaid_debt_amount"] += amt
+            else:
+                pm = normalize_payment_method(getattr(pay, "payment_method", "cash"))
+                if pm == "card":
+                    b["card_amount"] += amt
+                elif pm == "transfer":
+                    b["transfer_amount"] += amt
+                else:
+                    b["cash_amount"] += amt
+
+        for nb in nasiya_rows:
+            sname = str(nb.get("supplier") or "").strip()
+            if not sname:
+                continue
+            b = _ensure_bucket(sname)
+            b["nasiya_balance"] = float(nb.get("balance") or 0.0)
+
+        suppliers_list = sorted(
+            buckets.values(),
+            key=lambda x: (
+                -(x["total_amount"] + x["nasiya_balance"]),
+                x["supplier_name"].lower(),
+            ),
+        )
+        grand_total = sum(s["total_amount"] for s in suppliers_list)
+        total_unpaid_debt = sum(s["unpaid_debt_amount"] for s in suppliers_list)
+        total_nasiya_balance = sum(
+            s["nasiya_balance"] for s in suppliers_list if s["nasiya_balance"] > 0
+        )
+
+        return {
+            "suppliers_count": len(suppliers_list),
+            "grand_total": grand_total,
+            "total_unpaid_debt": total_unpaid_debt,
+            "total_nasiya_balance": total_nasiya_balance,
+            "suppliers": suppliers_list,
+        }
+
     @app.get("/suppliers/profile")
     async def get_supplier_profile_endpoint(
         supplier: str = Query(..., min_length=1),
-        limit: int = Query(default=40, ge=1, le=100),
+        limit: int = Query(default=60, ge=1, le=200),
+        date_from: Optional[str] = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        date_to: Optional[str] = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
         user: AuthenticatedUser = Depends(get_current_user),
     ) -> dict:
+        if date_from and date_to and date_from > date_to:
+            date_from, date_to = date_to, date_from
+
         async with async_session_maker() as db:
             canonical, _ = await resolve_supplier_name(db, supplier.strip())
             stmt = (
@@ -567,8 +668,12 @@ def create_api_app() -> FastAPI:
                     func.lower(NakladnoyPayment.supplier_name) == canonical.lower(),
                     NakladnoyPayment.status == "confirmed",
                 )
-                .order_by(NakladnoyPayment.id.desc())
             )
+            if date_from:
+                stmt = stmt.where(DailyCashSession.report_date >= date_from)
+            if date_to:
+                stmt = stmt.where(DailyCashSession.report_date <= date_to)
+            stmt = stmt.order_by(NakladnoyPayment.id.desc())
             rows = (await db.execute(stmt)).all()
             nasiya_rows = await get_supplier_debt_balances(db)
 
@@ -620,6 +725,8 @@ def create_api_app() -> FastAPI:
 
         return {
             "supplier_name": canonical,
+            "date_from": date_from,
+            "date_to": date_to,
             "total_count": len(rows),
             "total_amount": total_amount,
             "cash_amount": cash_amount,

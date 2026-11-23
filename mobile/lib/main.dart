@@ -901,9 +901,9 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   String _sortMode = 'newest'; // newest | amount_desc | supplier_az
   String _searchQuery = '';
 
-  // Qarzlar tab supplier dropdown filter & sub-tab ('nakladnoy' | 'nasiya')
+  // Ta'minotchilar / Qarzlar tab filter & sub-tab ('directory' | 'nakladnoy' | 'nasiya')
   String _debtSupplierFilter = 'all';
-  String _debtSubTab = 'nakladnoy';
+  String _debtSubTab = 'directory';
 
   // Dashboard Date / Session switcher & Trend Line Chart state
   List<HistorySessionItem> _historySessions = [];
@@ -1596,20 +1596,20 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                 label: Text('$nakCount'),
                 child: const Icon(Icons.receipt_long_rounded),
               ),
-              label: 'Nakladnoylar',
+              label: 'Amallar',
             ),
             NavigationDestination(
               icon: Badge(
                 isLabelVisible: debtCount > 0,
                 label: Text('$debtCount'),
-                child: const Icon(Icons.push_pin_outlined),
+                child: const Icon(Icons.storefront_outlined),
               ),
               selectedIcon: Badge(
                 isLabelVisible: debtCount > 0,
                 label: Text('$debtCount'),
-                child: const Icon(Icons.push_pin_rounded),
+                child: const Icon(Icons.storefront_rounded),
               ),
-              label: 'Qarzlar',
+              label: "Ta'minotchilar",
             ),
             const NavigationDestination(
               icon: Icon(Icons.assessment_outlined),
@@ -2085,7 +2085,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
             children: [
               Expanded(
                 child: Text(
-                  'Nakladnoylar (${filtered.length} ta)',
+                  'Amallar (${filtered.length} ta)',
                   style: const TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w900,
@@ -2440,10 +2440,27 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   }
 
   // --------------------------------------------------------------------------
-  // TAB 3: UNPAID DEBTS + NASIYA DAFTARI (/nasiya)
+  // TAB 3: TA'MINOTCHILAR BAZASI + QARZLAR + NASIYA DAFTARI
   // --------------------------------------------------------------------------
 
   Widget _buildDebtsTab() {
+    if (_debtSubTab == 'directory') {
+      return Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+            child: _buildDebtSectionSwitcher(),
+          ),
+          Expanded(
+            child: SuppliersDirectoryView(
+              api: widget.api,
+              onOpenSupplierProfile: _openSupplierProfile,
+              showSnack: _showSnack,
+            ),
+          ),
+        ],
+      );
+    }
     if (_debtSubTab == 'nasiya') {
       return Column(
         children: [
@@ -2610,59 +2627,59 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
 
   Widget _buildDebtSectionSwitcher() {
     final filledCompact = FilledButton.styleFrom(
-      minimumSize: const Size(0, 44),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+      minimumSize: const Size(0, 42),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 9),
     );
     final outlinedCompact = OutlinedButton.styleFrom(
-      minimumSize: const Size(0, 44),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+      minimumSize: const Size(0, 42),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 9),
     );
+    Widget tabBtn(String key, String label, IconData activeIc, IconData idleIc) {
+      final sel = _debtSubTab == key;
+      return Expanded(
+        child: sel
+            ? FilledButton.icon(
+                style: filledCompact,
+                onPressed: () {},
+                icon: Icon(activeIc, size: 16),
+                label: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(label, maxLines: 1),
+                ),
+              )
+            : OutlinedButton.icon(
+                style: outlinedCompact,
+                onPressed: () => setState(() => _debtSubTab = key),
+                icon: Icon(idleIc, size: 16),
+                label: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(label, maxLines: 1),
+                ),
+              ),
+      );
+    }
+
     return Row(
       children: [
-        Expanded(
-          child: _debtSubTab == 'nakladnoy'
-              ? FilledButton.icon(
-                  style: filledCompact,
-                  onPressed: () {},
-                  icon: const Icon(Icons.push_pin_rounded, size: 17),
-                  label: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child:
-                        Text('Nakladnoy (${_allDebts.length})', maxLines: 1),
-                  ),
-                )
-              : OutlinedButton.icon(
-                  style: outlinedCompact,
-                  onPressed: () => setState(() => _debtSubTab = 'nakladnoy'),
-                  icon: const Icon(Icons.push_pin_outlined, size: 17),
-                  label: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child:
-                        Text('Nakladnoy (${_allDebts.length})', maxLines: 1),
-                  ),
-                ),
+        tabBtn(
+          'directory',
+          'Barchasi',
+          Icons.storefront_rounded,
+          Icons.storefront_outlined,
         ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _debtSubTab == 'nasiya'
-              ? FilledButton.icon(
-                  style: filledCompact,
-                  onPressed: () {},
-                  icon: const Icon(Icons.menu_book_rounded, size: 17),
-                  label: const FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text('Nasiya daftari', maxLines: 1),
-                  ),
-                )
-              : OutlinedButton.icon(
-                  style: outlinedCompact,
-                  onPressed: () => setState(() => _debtSubTab = 'nasiya'),
-                  icon: const Icon(Icons.menu_book_outlined, size: 17),
-                  label: const FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text('Nasiya daftari', maxLines: 1),
-                  ),
-                ),
+        const SizedBox(width: 6),
+        tabBtn(
+          'nakladnoy',
+          'Qarz (${_allDebts.length})',
+          Icons.push_pin_rounded,
+          Icons.push_pin_outlined,
+        ),
+        const SizedBox(width: 6),
+        tabBtn(
+          'nasiya',
+          'Nasiya',
+          Icons.menu_book_rounded,
+          Icons.menu_book_outlined,
         ),
       ],
     );
@@ -3916,6 +3933,81 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
     return null;
   }
 
+  Future<void> _openPreviewPhotoFullscreen() async {
+    final pf = _photoFile;
+    if (pf == null) return;
+    final supLabel = _supCtrl.text.trim().isNotEmpty
+        ? _supCtrl.text.trim()
+        : 'Nakladnoy rasmi';
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog.fullscreen(
+        backgroundColor: Colors.black,
+        child: SafeArea(
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: InteractiveViewer(
+                  minScale: 0.8,
+                  maxScale: 5.0,
+                  child: Center(
+                    child: Image.memory(
+                      pf.bytes,
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                top: 12,
+                left: 14,
+                right: 14,
+                child: Row(
+                  children: [
+                    FilledButton.tonalIcon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.white24,
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size(0, 40),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      onPressed: () => Navigator.pop(ctx),
+                      icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                      label: const Text('Orqaga'),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.black54,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            supLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final q = _supCtrl.text.trim().toLowerCase();
@@ -4023,88 +4115,124 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                               if (_photoFile != null)
-                                Stack(
-                                  children: [
-                                    ClipRRect(
-                                      borderRadius: BorderRadius.circular(12),
-                                      child: Image.memory(
-                                        _photoFile!.bytes,
-                                        height: 120,
-                                        width: double.infinity,
-                                        fit: BoxFit.cover,
-                                      ),
-                                    ),
-                                    if (_aiLoading)
-                                      Positioned.fill(
-                                        child: Container(
-                                          decoration: BoxDecoration(
-                                            color: Colors.black
-                                                .withValues(alpha: 0.60),
-                                            borderRadius:
-                                                BorderRadius.circular(12),
-                                          ),
-                                          alignment: Alignment.center,
-                                          child: const Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.center,
-                                            children: [
-                                              SizedBox(
-                                                width: 20,
-                                                height: 20,
-                                                child:
-                                                    CircularProgressIndicator(
-                                                  strokeWidth: 2.3,
-                                                  color: Colors.white,
-                                                ),
-                                              ),
-                                              SizedBox(width: 12),
-                                              Text(
-                                                "✨ AI nakladnoyni o'qimoqda...",
-                                                style: TextStyle(
-                                                  color: Colors.white,
-                                                  fontWeight: FontWeight.w800,
-                                                  fontSize: 13.5,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
+                                GestureDetector(
+                                  onTap: _openPreviewPhotoFullscreen,
+                                  child: Stack(
+                                    children: [
+                                      ClipRRect(
+                                        borderRadius: BorderRadius.circular(12),
+                                        child: Image.memory(
+                                          _photoFile!.bytes,
+                                          height: 120,
+                                          width: double.infinity,
+                                          fit: BoxFit.cover,
                                         ),
                                       ),
-                                    Positioned(
-                                      top: 6,
-                                      right: 6,
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          IconButton.filledTonal(
-                                            tooltip: "AI qayta o'qish",
-                                            onPressed: _aiLoading
-                                                ? null
-                                                : () =>
-                                                    _runAiExtract(_photoFile!),
-                                            icon: const Icon(
-                                                Icons.auto_awesome_rounded,
-                                                size: 17),
+                                      if (!_aiLoading)
+                                        Positioned(
+                                          left: 8,
+                                          bottom: 8,
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 9, vertical: 4),
+                                            decoration: BoxDecoration(
+                                              color: Colors.black
+                                                  .withValues(alpha: 0.65),
+                                              borderRadius:
+                                                  BorderRadius.circular(9),
+                                            ),
+                                            child: const Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(Icons.zoom_in_rounded,
+                                                    color: Colors.white,
+                                                    size: 15),
+                                                SizedBox(width: 4),
+                                                Text(
+                                                  'Kattalashtirish',
+                                                  style: TextStyle(
+                                                    color: Colors.white,
+                                                    fontSize: 11.5,
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
                                           ),
-                                          const SizedBox(width: 4),
-                                          IconButton.filled(
-                                            onPressed: () => setState(() {
-                                              _photoFile = null;
-                                              _aiBadgeText = null;
-                                              _mathCheck = null;
-                                              _appliedCalculatedAmount = false;
-                                              _writtenAmountBeforeFix = null;
-                                              _writtenOriginalAmountBeforeFix =
-                                                  null;
-                                            }),
-                                            icon: const Icon(
-                                                Icons.close_rounded,
-                                                size: 17),
+                                        ),
+                                      if (_aiLoading)
+                                        Positioned.fill(
+                                          child: Container(
+                                            decoration: BoxDecoration(
+                                              color: Colors.black
+                                                  .withValues(alpha: 0.60),
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                            ),
+                                            alignment: Alignment.center,
+                                            child: const Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              children: [
+                                                SizedBox(
+                                                  width: 20,
+                                                  height: 20,
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                    strokeWidth: 2.3,
+                                                    color: Colors.white,
+                                                  ),
+                                                ),
+                                                SizedBox(width: 12),
+                                                Text(
+                                                  "✨ AI nakladnoyni o'qimoqda...",
+                                                  style: TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.w800,
+                                                    fontSize: 13.5,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
                                           ),
-                                        ],
+                                        ),
+                                      Positioned(
+                                        top: 6,
+                                        right: 6,
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            IconButton.filledTonal(
+                                              tooltip: "AI qayta o'qish",
+                                              onPressed: _aiLoading
+                                                  ? null
+                                                  : () => _runAiExtract(
+                                                      _photoFile!),
+                                              icon: const Icon(
+                                                  Icons.auto_awesome_rounded,
+                                                  size: 17),
+                                            ),
+                                            const SizedBox(width: 4),
+                                            IconButton.filled(
+                                              onPressed: () => setState(() {
+                                                _photoFile = null;
+                                                _aiBadgeText = null;
+                                                _mathCheck = null;
+                                                _appliedCalculatedAmount =
+                                                    false;
+                                                _writtenAmountBeforeFix = null;
+                                                _writtenOriginalAmountBeforeFix =
+                                                    null;
+                                              }),
+                                              icon: const Icon(
+                                                  Icons.close_rounded,
+                                                  size: 17),
+                                            ),
+                                          ],
+                                        ),
                                       ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
                               if (_aiBadgeText != null) ...[
                                 if (_photoFile != null)
@@ -7017,6 +7145,397 @@ class _KeepAliveTabPageState extends State<_KeepAliveTabPage>
 }
 
 // ============================================================================
+// SUPPLIERS DIRECTORY VIEW (/suppliers/directory) INSIDE TA'MINOTCHILAR TAB
+// ============================================================================
+
+class SuppliersDirectoryView extends StatefulWidget {
+  final HisobchiApiClient api;
+  final Future<void> Function(String supplier) onOpenSupplierProfile;
+  final void Function(String, {bool isError}) showSnack;
+
+  const SuppliersDirectoryView({
+    super.key,
+    required this.api,
+    required this.onOpenSupplierProfile,
+    required this.showSnack,
+  });
+
+  @override
+  State<SuppliersDirectoryView> createState() => _SuppliersDirectoryViewState();
+}
+
+class _SuppliersDirectoryViewState extends State<SuppliersDirectoryView> {
+  final TextEditingController _searchCtrl = TextEditingController();
+  Map<String, dynamic>? _data;
+  bool _loading = true;
+  String? _error;
+  String _query = '';
+  String _mode = 'all'; // all | debt | active
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final res = await widget.api.getSuppliersDirectory();
+      if (mounted) {
+        setState(() {
+          _data = res;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  Widget _modeChip(String key, String label) {
+    final sel = _mode == key;
+    return ChoiceChip(
+      label: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: sel ? FontWeight.w900 : FontWeight.w700,
+        ),
+      ),
+      selected: sel,
+      onSelected: (_) => setState(() => _mode = key),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading && _data == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null && _data == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(_error!, textAlign: TextAlign.center),
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: _load,
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Qayta urinish'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final d = _data ?? const <String, dynamic>{};
+    final allSuppliers = ((d['suppliers'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+    final totalCount = ((d['suppliers_count'] as num?) ?? allSuppliers.length)
+        .toInt();
+    final grandTotal = ((d['grand_total'] as num?) ?? 0).toDouble();
+    final totalDebt = ((d['total_unpaid_debt'] as num?) ?? 0).toDouble();
+    final totalNasiya = ((d['total_nasiya_balance'] as num?) ?? 0).toDouble();
+
+    final filtered = allSuppliers.where((s) {
+      final name = (s['supplier_name'] ?? '').toString();
+      if (_query.isNotEmpty &&
+          !name.toLowerCase().contains(_query.toLowerCase())) {
+        return false;
+      }
+      final debtAmt = ((s['unpaid_debt_amount'] as num?) ?? 0).toDouble();
+      final nasAmt = ((s['nasiya_balance'] as num?) ?? 0).toDouble();
+      final cnt = ((s['total_count'] as num?) ?? 0).toInt();
+      if (_mode == 'debt') return debtAmt > 0 || nasAmt > 0;
+      if (_mode == 'active') return cnt > 0;
+      return true;
+    }).toList();
+
+    final (amberFg, amberBg, amberBorder) =
+        AppTokens.semanticSurface(context, AppTokens.debtAmber);
+    final (cashFg, cashBg, _) =
+        AppTokens.semanticSurface(context, AppTokens.cashGreen);
+    final (cardFg, cardBg, _) =
+        AppTokens.semanticSurface(context, AppTokens.cardBlue);
+
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 110),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              gradient: AppTokens.heroGradient,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "BARCHA TA'MINOTCHILAR ($totalCount TA)",
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    formatUzs(grandTotal, withCurrency: true),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 23,
+                      fontWeight: FontWeight.w900,
+                      fontFeatures: AppTokens.tabularNums,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  "To'lanmagan qarz: ${formatUzs(totalDebt, withCurrency: true)}"
+                  "${totalNasiya > 0 ? ' • Nasiya: ${formatUzs(totalNasiya, withCurrency: true)}' : ''}",
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _searchCtrl,
+            onChanged: (v) => setState(() => _query = v.trim()),
+            decoration: InputDecoration(
+              hintText: "Ta'minotchi qidirish...",
+              prefixIcon: const Icon(Icons.search_rounded),
+              isDense: true,
+              suffixIcon: _query.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear_rounded),
+                      onPressed: () {
+                        _searchCtrl.clear();
+                        setState(() => _query = '');
+                      },
+                    )
+                  : null,
+            ),
+          ),
+          const SizedBox(height: 10),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _modeChip('all', 'Barchasi ($totalCount)'),
+                const SizedBox(width: 6),
+                _modeChip('debt', 'Qarzi bor'),
+                const SizedBox(width: 6),
+                _modeChip('active', 'Oldi-berdi bor'),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (filtered.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 32),
+              child: Text(
+                "Mos ta'minotchi topilmadi.",
+                textAlign: TextAlign.center,
+                style: TextStyle(color: textSecondaryOf(context)),
+              ),
+            )
+          else
+            ...filtered.map((s) {
+              final name = (s['supplier_name'] ?? '').toString();
+              final cnt = ((s['total_count'] as num?) ?? 0).toInt();
+              final tot = ((s['total_amount'] as num?) ?? 0).toDouble();
+              final cash = ((s['cash_amount'] as num?) ?? 0).toDouble();
+              final card = ((s['card_amount'] as num?) ?? 0).toDouble();
+              final xfer = ((s['transfer_amount'] as num?) ?? 0).toDouble();
+              final debtAmt =
+                  ((s['unpaid_debt_amount'] as num?) ?? 0).toDouble();
+              final nasBal = ((s['nasiya_balance'] as num?) ?? 0).toDouble();
+              final lastDate = s['last_date']?.toString();
+
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 9),
+                child: TactileScaleTap(
+                  pressedScale: 0.985,
+                  haptic: false,
+                  child: Card(
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(AppTokens.radius),
+                      onTap: () async {
+                        await widget.onOpenSupplierProfile(name);
+                        await _load();
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                CircleAvatar(
+                                  radius: 18,
+                                  backgroundColor:
+                                      AppTokens.brand.withValues(alpha: 0.14),
+                                  child: const Icon(Icons.storefront_rounded,
+                                      size: 18, color: AppTokens.brand),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w900,
+                                          fontSize: 15,
+                                          color: textPrimaryOf(context),
+                                        ),
+                                      ),
+                                      Text(
+                                        cnt > 0
+                                            ? '$cnt ta chek${lastDate != null ? ' • Oxirgi: $lastDate' : ''}'
+                                            : "Hali nakladnoy yo'q",
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: textSecondaryOf(context),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      formatUzs(tot, withCurrency: true),
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: 14.5,
+                                        color: AppTokens.brand,
+                                        fontFeatures: AppTokens.tabularNums,
+                                      ),
+                                    ),
+                                    Icon(
+                                      Icons.chevron_right_rounded,
+                                      size: 18,
+                                      color: textSecondaryOf(context),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                            if (cash > 0 ||
+                                card > 0 ||
+                                xfer > 0 ||
+                                debtAmt > 0 ||
+                                nasBal > 0) ...[
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 5,
+                                children: [
+                                  if (cash > 0)
+                                    _miniBadge(
+                                      'Naqd: ${formatUzs(cash)}',
+                                      cashFg,
+                                      cashBg,
+                                    ),
+                                  if (card + xfer > 0)
+                                    _miniBadge(
+                                      'Karta/O\'tkazma: ${formatUzs(card + xfer)}',
+                                      cardFg,
+                                      cardBg,
+                                    ),
+                                  if (debtAmt > 0 || nasBal > 0)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 7, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color: amberBg,
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(color: amberBorder),
+                                      ),
+                                      child: Text(
+                                        'Qarz: ${formatUzs(debtAmt + (nasBal > 0 ? nasBal : 0))}',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w800,
+                                          color: amberFg,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+
+  Widget _miniBadge(String text, Color fg, Color bg) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: fg,
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
 // SUPPLIER PROFILE SHEET (/suppliers/profile)
 // ============================================================================
 
@@ -7044,6 +7563,9 @@ class _SupplierProfileSheetState extends State<SupplierProfileSheet> {
   bool _changed = false;
   String? _error;
   String _filter = 'all'; // all | cash | card | transfer | debt
+  String _datePreset = 'all'; // all | today | 7d | month | custom
+  String? _dateFrom;
+  String? _dateTo;
 
   @override
   void initState() {
@@ -7057,7 +7579,11 @@ class _SupplierProfileSheetState extends State<SupplierProfileSheet> {
       _error = null;
     });
     try {
-      final res = await widget.api.getSupplierProfile(widget.supplierName);
+      final res = await widget.api.getSupplierProfile(
+        widget.supplierName,
+        dateFrom: _dateFrom,
+        dateTo: _dateTo,
+      );
       if (mounted) {
         setState(() {
           _data = res;
@@ -7072,6 +7598,73 @@ class _SupplierProfileSheetState extends State<SupplierProfileSheet> {
         });
       }
     }
+  }
+
+  String _isoDate(DateTime dt) => DateFormat('yyyy-MM-dd').format(dt);
+
+  void _applyDatePreset(String preset) {
+    final now = DateTime.now();
+    String? dFrom;
+    String? dTo;
+    if (preset == 'today') {
+      dFrom = dTo = _isoDate(now);
+    } else if (preset == '7d') {
+      dFrom = _isoDate(now.subtract(const Duration(days: 6)));
+      dTo = _isoDate(now);
+    } else if (preset == 'month') {
+      dFrom = _isoDate(DateTime(now.year, now.month, 1));
+      dTo = _isoDate(now);
+    }
+    setState(() {
+      _datePreset = preset;
+      _dateFrom = dFrom;
+      _dateTo = dTo;
+    });
+    _load();
+  }
+
+  Future<void> _pickCustomDateRange() async {
+    final now = DateTime.now();
+    final initialStart = _dateFrom != null
+        ? (DateTime.tryParse(_dateFrom!) ??
+            now.subtract(const Duration(days: 6)))
+        : now.subtract(const Duration(days: 6));
+    final initialEnd =
+        _dateTo != null ? (DateTime.tryParse(_dateTo!) ?? now) : now;
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2024, 1, 1),
+      lastDate: DateTime(now.year + 1, 12, 31),
+      initialDateRange: DateTimeRange(start: initialStart, end: initialEnd),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _datePreset = 'custom';
+      _dateFrom = _isoDate(picked.start);
+      _dateTo = _isoDate(picked.end);
+    });
+    _load();
+  }
+
+  Widget _dateChip(String key, String label) {
+    final sel = _datePreset == key;
+    return ChoiceChip(
+      label: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: sel ? FontWeight.w900 : FontWeight.w700,
+        ),
+      ),
+      selected: sel,
+      onSelected: (_) {
+        if (key == 'custom') {
+          _pickCustomDateRange();
+        } else {
+          _applyDatePreset(key);
+        }
+      },
+    );
   }
 
   Widget _statBox(
@@ -7235,7 +7828,60 @@ class _SupplierProfileSheetState extends State<SupplierProfileSheet> {
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    _dateChip('all', 'Barchasi'),
+                    const SizedBox(width: 6),
+                    _dateChip('today', 'Bugun'),
+                    const SizedBox(width: 6),
+                    _dateChip('7d', '7 kun'),
+                    const SizedBox(width: 6),
+                    _dateChip('month', 'Shu oy'),
+                    const SizedBox(width: 6),
+                    _dateChip(
+                      'custom',
+                      _datePreset == 'custom' &&
+                              _dateFrom != null &&
+                              _dateTo != null
+                          ? '📅 $_dateFrom .. $_dateTo'
+                          : '📅 Sana tanlash',
+                    ),
+                  ],
+                ),
+              ),
+              if (_dateFrom != null && _dateTo != null) ...[
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '🗓 Davr: $_dateFrom — $_dateTo',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: textSecondaryOf(context),
+                        ),
+                      ),
+                    ),
+                    TextButton(
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(0, 28),
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                      ),
+                      onPressed: () => _applyDatePreset('all'),
+                      child: const Text('Tozalash'),
+                    ),
+                  ],
+                ),
+              ],
+              if (_loading && _data != null) ...[
+                const SizedBox(height: 4),
+                const LinearProgressIndicator(minHeight: 2.5),
+              ],
+              const SizedBox(height: 8),
               if (_loading && _data == null)
                 const Expanded(
                     child: Center(child: CircularProgressIndicator()))

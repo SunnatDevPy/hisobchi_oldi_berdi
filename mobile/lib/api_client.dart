@@ -894,15 +894,26 @@ class HisobchiApiClient {
     return (data['round_mode'] ?? roundMode).toString();
   }
 
+  Future<Map<String, dynamic>> getSuppliersDirectory() async {
+    final res = await _http
+        .get(_uri('/suppliers/directory'), headers: _headers())
+        .timeout(const Duration(seconds: 15));
+    return _decodeJson(res);
+  }
+
   Future<Map<String, dynamic>> getSupplierProfile(
     String supplier, {
-    int limit = 40,
+    int limit = 60,
+    String? dateFrom,
+    String? dateTo,
   }) async {
     final res = await _http
         .get(
           _uri('/suppliers/profile', {
             'supplier': supplier.trim(),
             'limit': '$limit',
+            if (dateFrom != null && dateFrom.isNotEmpty) 'date_from': dateFrom,
+            if (dateTo != null && dateTo.isNotEmpty) 'date_to': dateTo,
           }),
           headers: _headers(),
         )
