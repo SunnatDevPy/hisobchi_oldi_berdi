@@ -918,6 +918,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
 
   ApkVersionInfo? _remoteVersion;
   bool _updatingApk = false;
+  double _refreshTurns = 0.0;
 
   @override
   void initState() {
@@ -1150,6 +1151,10 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
 
   void _showSnack(String msg, {bool isError = false}) {
     if (!mounted) return;
+    if (Overlay.maybeOf(context, rootOverlay: true) != null) {
+      showActionFeedbackBanner(context, msg, isError: isError);
+      return;
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(msg),
@@ -1500,22 +1505,61 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
         actions: [
           IconButton(
             tooltip: 'Yangilash',
-            onPressed: _refreshAll,
-            icon: const Icon(Icons.refresh_rounded),
+            onPressed: () {
+              HapticFeedback.lightImpact();
+              setState(() => _refreshTurns += 1.0);
+              _refreshAll();
+            },
+            icon: AnimatedRotation(
+              turns: _refreshTurns,
+              duration: const Duration(milliseconds: 520),
+              curve: Curves.easeOutCubic,
+              child: const Icon(Icons.refresh_rounded),
+            ),
           ),
           IconButton(
             tooltip: 'Mavzu (Kun/Tun)',
-            onPressed: widget.onToggleTheme,
-            icon: const Icon(Icons.brightness_6_rounded),
+            onPressed: () {
+              HapticFeedback.selectionClick();
+              widget.onToggleTheme();
+            },
+            icon: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 260),
+              transitionBuilder: (child, anim) => RotationTransition(
+                turns: Tween<double>(begin: 0.75, end: 1.0).animate(anim),
+                child: ScaleTransition(scale: anim, child: child),
+              ),
+              child: Icon(
+                isDarkCtx(context)
+                    ? Icons.light_mode_rounded
+                    : Icons.dark_mode_rounded,
+                key: ValueKey<bool>(isDarkCtx(context)),
+              ),
+            ),
           ),
         ],
       ),
-      // Compact "+" icon FAB (no "+ Nakladnoy" text label)
-      floatingActionButton: _tabIndex <= 2 && widget.api.canWrite
-          ? FloatingActionButton(
-              tooltip: 'Yangi Nakladnoy qo\'shish',
-              onPressed: () => _openAddNakladnoySheet(),
-              child: const Icon(Icons.add_rounded, size: 30),
+      // Compact animated "+" icon FAB (no "+ Nakladnoy" text label)
+      floatingActionButton: widget.api.canWrite
+          ? IgnorePointer(
+              ignoring: _tabIndex > 2,
+              child: AnimatedOpacity(
+                opacity: _tabIndex <= 2 ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 180),
+                child: AnimatedScale(
+                  scale: _tabIndex <= 2 ? 1.0 : 0.0,
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOutBack,
+                  child: TactileScaleTap(
+                    pressedScale: 0.92,
+                    child: FloatingActionButton(
+                      tooltip: 'Yangi Nakladnoy qo\'shish',
+                      onPressed: () => _openAddNakladnoySheet(),
+                      child: const Icon(Icons.add_rounded, size: 30),
+                    ),
+                  ),
+                ),
+              ),
             )
           : null,
       bottomNavigationBar: DecoratedBox(
@@ -4391,30 +4435,34 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
                     Row(
                       children: [
                         Expanded(
-                          child: FilledButton.icon(
-                            style: FilledButton.styleFrom(
-                              minimumSize: const Size(0, 48),
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 14, vertical: 12),
-                            ),
-                            onPressed:
-                                (_submitting || _aiLoading) ? null : _submit,
-                            icon: _submitting
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2, color: Colors.white),
-                                  )
-                                : const Icon(Icons.check_circle_rounded,
-                                    size: 19),
-                            label: FittedBox(
-                              fit: BoxFit.scaleDown,
-                              child: Text(
-                                _submitting
-                                    ? 'Saqlanmoqda...'
-                                    : 'Tasdiqlash va saqlash',
-                                maxLines: 1,
+                          child: TactileScaleTap(
+                            pressedScale: 0.96,
+                            enabled: !(_submitting || _aiLoading),
+                            child: FilledButton.icon(
+                              style: FilledButton.styleFrom(
+                                minimumSize: const Size(0, 48),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 14, vertical: 12),
+                              ),
+                              onPressed:
+                                  (_submitting || _aiLoading) ? null : _submit,
+                              icon: _submitting
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2, color: Colors.white),
+                                    )
+                                  : const Icon(Icons.check_circle_rounded,
+                                      size: 19),
+                              label: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  _submitting
+                                      ? 'Saqlanmoqda...'
+                                      : 'Tasdiqlash va saqlash',
+                                  maxLines: 1,
+                                ),
                               ),
                             ),
                           ),
@@ -4422,38 +4470,46 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
                         const SizedBox(width: 8),
                         Tooltip(
                           message: "Galereyadan AI orqali o'qish",
-                          child: OutlinedButton(
-                            style: OutlinedButton.styleFrom(
-                              minimumSize: const Size(46, 48),
-                              padding: EdgeInsets.zero,
+                          child: TactileScaleTap(
+                            pressedScale: 0.93,
+                            enabled: !(_submitting || _aiLoading),
+                            child: OutlinedButton(
+                              style: OutlinedButton.styleFrom(
+                                minimumSize: const Size(46, 48),
+                                padding: EdgeInsets.zero,
+                              ),
+                              onPressed: (_submitting || _aiLoading)
+                                  ? null
+                                  : () => _pickPhoto(ImageSource.gallery),
+                              child: const Icon(Icons.photo_library_rounded,
+                                  size: 19),
                             ),
-                            onPressed: (_submitting || _aiLoading)
-                                ? null
-                                : () => _pickPhoto(ImageSource.gallery),
-                            child: const Icon(Icons.photo_library_rounded,
-                                size: 19),
                           ),
                         ),
                         const SizedBox(width: 7),
                         Tooltip(
                           message: "Kameradan AI orqali o'qish",
-                          child: FilledButton.tonalIcon(
-                            style: FilledButton.styleFrom(
-                              backgroundColor: AppTokens.brandViolet
-                                  .withValues(alpha: isDark ? 0.28 : 0.14),
-                              foregroundColor: isDark
-                                  ? const Color(0xFFD8B4FE)
-                                  : AppTokens.brandViolet,
-                              minimumSize: const Size(0, 48),
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 11, vertical: 12),
+                          child: TactileScaleTap(
+                            pressedScale: 0.93,
+                            enabled: !(_submitting || _aiLoading),
+                            child: FilledButton.tonalIcon(
+                              style: FilledButton.styleFrom(
+                                backgroundColor: AppTokens.brandViolet
+                                    .withValues(alpha: isDark ? 0.28 : 0.14),
+                                foregroundColor: isDark
+                                    ? const Color(0xFFD8B4FE)
+                                    : AppTokens.brandViolet,
+                                minimumSize: const Size(0, 48),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 11, vertical: 12),
+                              ),
+                              onPressed: (_submitting || _aiLoading)
+                                  ? null
+                                  : () => _pickPhoto(ImageSource.camera),
+                              icon: const Icon(Icons.photo_camera_rounded,
+                                  size: 19),
+                              label: const Text('AI'),
                             ),
-                            onPressed: (_submitting || _aiLoading)
-                                ? null
-                                : () => _pickPhoto(ImageSource.camera),
-                            icon: const Icon(Icons.photo_camera_rounded,
-                                size: 19),
-                            label: const Text('AI'),
                           ),
                         ),
                       ],

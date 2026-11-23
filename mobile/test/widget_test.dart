@@ -121,4 +121,52 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.byType(DashboardLoadingSkeleton), findsOneWidget);
   });
+
+  testWidgets('TactileScaleTap and showActionFeedbackBanner animate cleanly',
+      (WidgetTester tester) async {
+    var tapped = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: Scaffold(
+          body: Center(
+            child: Builder(
+              builder: (ctx) => TactileScaleTap(
+                pressedScale: 0.92,
+                child: FilledButton(
+                  onPressed: () {
+                    tapped = true;
+                    showActionFeedbackBanner(ctx, 'Saqlandi!');
+                  },
+                  child: const Text('Bosing'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.text('Bosing')),
+    );
+    await tester.pump(const Duration(milliseconds: 90));
+    final pressedScaleWidget = tester.widget<AnimatedScale>(
+      find.descendant(
+        of: find.byType(TactileScaleTap),
+        matching: find.byType(AnimatedScale),
+      ),
+    );
+    expect(pressedScaleWidget.scale, equals(0.92));
+
+    await gesture.up();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 280));
+    expect(tapped, isTrue);
+    expect(find.text('Saqlandi!'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(find.text('Saqlandi!'), findsNothing);
+  });
 }

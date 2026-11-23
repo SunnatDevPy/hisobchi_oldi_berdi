@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -142,14 +143,19 @@ class HeroBalanceCard extends StatelessWidget {
           FittedBox(
             fit: BoxFit.scaleDown,
             alignment: Alignment.centerLeft,
-            child: Text(
-              formatUzs(summary.expectedCash, withCurrency: true),
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 33,
-                fontWeight: FontWeight.w900,
-                fontFeatures: AppTokens.tabularNums,
-                letterSpacing: -0.6,
+            child: TweenAnimationBuilder<double>(
+              tween: Tween<double>(end: summary.expectedCash),
+              duration: const Duration(milliseconds: 420),
+              curve: Curves.easeOutCubic,
+              builder: (context, animatedCash, _) => Text(
+                formatUzs(animatedCash, withCurrency: true),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 33,
+                  fontWeight: FontWeight.w900,
+                  fontFeatures: AppTokens.tabularNums,
+                  letterSpacing: -0.6,
+                ),
               ),
             ),
           ),
@@ -364,32 +370,35 @@ class _HeroActionBtn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white.withValues(alpha: 0.16),
-      borderRadius: BorderRadius.circular(13),
-      child: InkWell(
+    return TactileScaleTap(
+      pressedScale: 0.94,
+      child: Material(
+        color: Colors.white.withValues(alpha: 0.16),
         borderRadius: BorderRadius.circular(13),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 18, color: Colors.white),
-              const SizedBox(height: 4),
-              FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w800,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(13),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 18, color: Colors.white),
+                const SizedBox(height: 4),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -2048,8 +2057,11 @@ class _PaymentKpiCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (fg, bg, border) = AppTokens.semanticSurface(context, color);
-    return Card(
-      child: InkWell(
+    return TactileScaleTap(
+      pressedScale: 0.985,
+      haptic: false,
+      child: Card(
+        child: InkWell(
         borderRadius: BorderRadius.circular(AppTokens.radius),
         onTap: onTap,
         child: Padding(
@@ -2139,6 +2151,7 @@ class _PaymentKpiCard extends StatelessWidget {
           ),
         ),
       ),
+    ),
     );
   }
 }
@@ -2226,65 +2239,75 @@ class PaymentModeSelector extends StatelessWidget {
               return Expanded(
                 child: Padding(
                   padding: EdgeInsets.only(right: i < modes.length - 1 ? 4 : 0),
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(12),
-                      onTap: () {
-                        HapticFeedback.selectionClick();
-                        onChanged(key);
-                      },
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 160),
-                        curve: Curves.easeOutCubic,
-                        padding: const EdgeInsets.symmetric(
-                            vertical: 9, horizontal: 4),
-                        decoration: BoxDecoration(
-                          color: isSelected ? bg : Colors.transparent,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: isSelected ? border : Colors.transparent,
-                            width: 1.5,
-                          ),
-                        ),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  ic,
-                                  size: 18,
-                                  color: isSelected
-                                      ? fg
-                                      : textSecondaryOf(context),
-                                ),
-                                if (isSelected) ...[
-                                  const SizedBox(width: 3),
-                                  Icon(Icons.check_circle_rounded,
-                                      size: 12, color: fg),
-                                ],
-                              ],
+                  child: TactileScaleTap(
+                    pressedScale: 0.95,
+                    haptic: false,
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: () {
+                          HapticFeedback.selectionClick();
+                          onChanged(key);
+                        },
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 160),
+                          curve: Curves.easeOutCubic,
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 9, horizontal: 4),
+                          decoration: BoxDecoration(
+                            color: isSelected ? bg : Colors.transparent,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: isSelected ? border : Colors.transparent,
+                              width: 1.5,
                             ),
-                            const SizedBox(height: 4),
-                            FittedBox(
-                              fit: BoxFit.scaleDown,
-                              child: Text(
-                                m['label'] as String,
-                                maxLines: 1,
-                                style: TextStyle(
-                                  fontWeight: isSelected
-                                      ? FontWeight.w900
-                                      : FontWeight.w700,
-                                  fontSize: 12.5,
-                                  color:
-                                      isSelected ? fg : textPrimaryOf(context),
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  AnimatedScale(
+                                    scale: isSelected ? 1.12 : 1.0,
+                                    duration:
+                                        const Duration(milliseconds: 180),
+                                    curve: Curves.easeOutBack,
+                                    child: Icon(
+                                      ic,
+                                      size: 18,
+                                      color: isSelected
+                                          ? fg
+                                          : textSecondaryOf(context),
+                                    ),
+                                  ),
+                                  if (isSelected) ...[
+                                    const SizedBox(width: 3),
+                                    Icon(Icons.check_circle_rounded,
+                                        size: 12, color: fg),
+                                  ],
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  m['label'] as String,
+                                  maxLines: 1,
+                                  style: TextStyle(
+                                    fontWeight: isSelected
+                                        ? FontWeight.w900
+                                        : FontWeight.w700,
+                                    fontSize: 12.5,
+                                    color:
+                                        isSelected ? fg : textPrimaryOf(context),
+                                  ),
                                 ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -2361,8 +2384,11 @@ class NakladnoyListCard extends StatelessWidget {
     final (grpFg, _, _) =
         AppTokens.semanticSurface(context, AppTokens.cashGreen);
 
-    return Card(
-      child: InkWell(
+    return TactileScaleTap(
+      pressedScale: 0.985,
+      haptic: false,
+      child: Card(
+        child: InkWell(
         borderRadius: BorderRadius.circular(AppTokens.radius),
         onTap: onTap,
         child: Padding(
@@ -2540,6 +2566,7 @@ class NakladnoyListCard extends StatelessWidget {
           ),
         ),
       ),
+    ),
     );
   }
 }
@@ -3553,6 +3580,249 @@ class _DashboardLoadingSkeletonState extends State<DashboardLoadingSkeleton>
           ],
         );
       },
+    );
+  }
+}
+
+// ============================================================================
+// TACTILE BUTTON PRESS & FLOATING ACTION-COMPLETION FEEDBACK ANIMATIONS
+// ============================================================================
+
+/// Adds a springy scale-down press micro-interaction and optional haptic feedback
+/// without interfering with child InkWell / Button / Scroll gestures.
+class TactileScaleTap extends StatefulWidget {
+  final Widget child;
+  final double pressedScale;
+  final bool enabled;
+  final bool haptic;
+
+  const TactileScaleTap({
+    super.key,
+    required this.child,
+    this.pressedScale = 0.96,
+    this.enabled = true,
+    this.haptic = true,
+  });
+
+  @override
+  State<TactileScaleTap> createState() => _TactileScaleTapState();
+}
+
+class _TactileScaleTapState extends State<TactileScaleTap> {
+  bool _pressed = false;
+
+  void _setPressed(bool value) {
+    if (_pressed == value) return;
+    if (value && widget.enabled && widget.haptic) {
+      HapticFeedback.lightImpact();
+    }
+    if (mounted) {
+      setState(() => _pressed = value);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: widget.enabled ? (_) => _setPressed(true) : null,
+      onPointerUp: (_) => _setPressed(false),
+      onPointerCancel: (_) => _setPressed(false),
+      child: AnimatedScale(
+        scale: (_pressed && widget.enabled) ? widget.pressedScale : 1.0,
+        duration: Duration(milliseconds: _pressed ? 90 : 150),
+        curve: _pressed ? Curves.easeOutCubic : Curves.easeOutBack,
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+OverlayEntry? _activeFeedbackEntry;
+
+/// Shows a sleek spring-animated floating confirmation / error pill at the top
+/// of the screen with haptic feedback.
+void showActionFeedbackBanner(
+  BuildContext context,
+  String message, {
+  bool isError = false,
+  Duration duration = const Duration(milliseconds: 2200),
+}) {
+  if (isError) {
+    HapticFeedback.heavyImpact();
+  } else {
+    HapticFeedback.mediumImpact();
+  }
+
+  final overlay = Overlay.maybeOf(context, rootOverlay: true);
+  if (overlay == null) return;
+
+  _activeFeedbackEntry?.remove();
+  _activeFeedbackEntry = null;
+
+  late OverlayEntry entry;
+  entry = OverlayEntry(
+    builder: (ctx) => _ActionFeedbackOverlayWidget(
+      message: message,
+      isError: isError,
+      duration: duration,
+      onDismissed: () {
+        if (_activeFeedbackEntry == entry) {
+          _activeFeedbackEntry = null;
+        }
+        if (entry.mounted) {
+          entry.remove();
+        }
+      },
+    ),
+  );
+  _activeFeedbackEntry = entry;
+  overlay.insert(entry);
+}
+
+class _ActionFeedbackOverlayWidget extends StatefulWidget {
+  final String message;
+  final bool isError;
+  final Duration duration;
+  final VoidCallback onDismissed;
+
+  const _ActionFeedbackOverlayWidget({
+    required this.message,
+    required this.isError,
+    required this.duration,
+    required this.onDismissed,
+  });
+
+  @override
+  State<_ActionFeedbackOverlayWidget> createState() =>
+      _ActionFeedbackOverlayWidgetState();
+}
+
+class _ActionFeedbackOverlayWidgetState
+    extends State<_ActionFeedbackOverlayWidget>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _opacity;
+  late final Animation<double> _scale;
+  late final Animation<Offset> _slide;
+  Timer? _timer;
+  bool _closing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 260),
+      reverseDuration: const Duration(milliseconds: 180),
+    );
+    _opacity = CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic);
+    _scale = Tween<double>(begin: 0.90, end: 1.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeOutBack),
+    );
+    _slide = Tween<Offset>(
+      begin: const Offset(0, -0.35),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic));
+
+    _ctrl.forward();
+    _timer = Timer(widget.duration, _dismiss);
+  }
+
+  Future<void> _dismiss() async {
+    if (_closing || !mounted) return;
+    _closing = true;
+    _timer?.cancel();
+    await _ctrl.reverse();
+    if (mounted) {
+      widget.onDismissed();
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final topPad = MediaQuery.paddingOf(context).top;
+    final bgColor =
+        widget.isError ? AppTokens.dangerRed : const Color(0xFF065F46);
+    final accentColor =
+        widget.isError ? const Color(0xFFFCA5A5) : const Color(0xFF34D399);
+
+    return Positioned(
+      top: topPad + 10,
+      left: 16,
+      right: 16,
+      child: SafeArea(
+        bottom: false,
+        child: Material(
+          color: Colors.transparent,
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: SlideTransition(
+              position: _slide,
+              child: FadeTransition(
+                opacity: _opacity,
+                child: ScaleTransition(
+                  scale: _scale,
+                  child: GestureDetector(
+                    onTap: _dismiss,
+                    child: Container(
+                      constraints: const BoxConstraints(maxWidth: 460),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 11),
+                      decoration: BoxDecoration(
+                        color: bgColor,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: accentColor.withValues(alpha: 0.55),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.25),
+                            blurRadius: 18,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            widget.isError
+                                ? Icons.error_rounded
+                                : Icons.check_circle_rounded,
+                            color: accentColor,
+                            size: 22,
+                          ),
+                          const SizedBox(width: 10),
+                          Flexible(
+                            child: Text(
+                              widget.message,
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
