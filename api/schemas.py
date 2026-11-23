@@ -158,4 +158,23 @@ class ExcelSendTelegramRequest(BaseModel):
     month: Optional[str] = None
 
 
+class GroupBindRequest(BaseModel):
+    role: str = Field(..., pattern="^(nakladnoy|prixod|kassa)$")
+    chat_id: int
+    title: str = Field(default="", max_length=255)
+
+
+class BotPrefsUpdateRequest(BaseModel):
+    apk_post_to_group: Optional[bool] = None
+    auto_confirm: Optional[bool] = None
+    auto_report_enabled: Optional[bool] = None
+    auto_report_time: Optional[str] = Field(default=None, pattern="^(21:00|22:00|23:00)$")
+
+
+class UserRoleSaveRequest(BaseModel):
+    user_id: int = Field(..., gt=0)
+    role: str = Field(..., pattern="^(admin|kassir|viewer)$")
+    label: str = Field(default="", max_length=120)
+
+
 

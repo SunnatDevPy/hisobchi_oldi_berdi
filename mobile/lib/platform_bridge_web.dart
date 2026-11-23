@@ -26,6 +26,9 @@ external void _jsDownloadBlob(JSUint8Array bytes, JSString filename);
 @JS('HisobchiWebBridge.pickFile')
 external JSPromise<JSObject?> _jsPickFile(JSString accept);
 
+@JS('HisobchiWebBridge.openTelegramLink')
+external JSBoolean _jsOpenTelegramLink(JSString url);
+
 extension type _JsPickedFile(JSObject _) implements JSObject {
   external JSString get name;
   external JSUint8Array get bytes;
@@ -97,6 +100,14 @@ Future<PickedBytesFile?> pickYesPosDocument() async {
     bytes: picked.bytes.toDart,
     filename: name.isNotEmpty ? name : 'yespos_report.xlsx',
   );
+}
+
+Future<bool> openExternalTelegramUrl(String url) async {
+  try {
+    return _jsOpenTelegramLink(url.toJS).toDart;
+  } catch (_) {
+    return false;
+  }
 }
 
 Future<void> showInAppApkUpdateDialog({

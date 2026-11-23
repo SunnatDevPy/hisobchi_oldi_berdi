@@ -42,12 +42,14 @@ from api.deps import (
     sync_existing_group_message,
 )
 from api.schemas import (
+    BotPrefsUpdateRequest,
     CashCreateRequest,
     CashTxOut,
     CashUpdateRequest,
     DayCloseRequest,
     DayCloseResponse,
     ExcelSendTelegramRequest,
+    GroupBindRequest,
     GroupConfigInfo,
     LoginRequest,
     LoginResponse,
@@ -61,8 +63,18 @@ from api.schemas import (
     SupplierConfigCreateRequest,
     TelegramWebAppAuthRequest,
     UserProfileResponse,
+    UserRoleSaveRequest,
 )
-from bot.auth import ROLE_ADMIN, can_write_role, get_user_role, is_admin_role, is_webapp_allowed
+from bot.auth import (
+    ROLE_ADMIN,
+    ROLE_LABELS,
+    can_write_role,
+    get_user_role,
+    is_admin_role,
+    is_webapp_allowed,
+    refresh_role_cache,
+)
+from bot.keyboards import build_add_to_group_url
 from config import BASE_DIR, get_settings
 from database.crud import (
     add_cash_transaction,
@@ -73,11 +85,15 @@ from database.crud import (
     confirm_nakladnoy,
     create_pending_nakladnoy,
     delete_cash_transaction,
+    delete_group_config,
     delete_nakladnoy,
     delete_supplier,
     delete_supplier_debt,
+    delete_user_role,
     find_similar_suppliers,
     format_local_dt,
+    get_ai_usage_stats,
+    get_all_group_configs,
     get_all_known_suppliers,
     get_app_setting,
     get_group_config,
@@ -96,6 +112,7 @@ from database.crud import (
     list_supplier_debt_entries,
     list_suppliers,
     list_unpaid_debt_nakladnoys,
+    list_user_roles,
     mark_nakladnoy_as_debt,
     mark_nakladnoy_as_paid,
     mark_prixod_published,
@@ -107,13 +124,16 @@ from database.crud import (
     save_prixod_report,
     search_nakladnoys,
     set_app_setting,
+    set_group_config,
     set_nakladnoy_payment_method,
+    set_user_role,
     today_iso,
     update_cash_transaction,
     update_nakladnoy,
 )
 from database.models import CashTransaction, DailyCashSession, NakladnoyPayment
 from database.session import async_session_maker
+from services.backup import send_backup
 from services.excel_export import build_range_excel, build_session_excel, build_sverka_excel
 from services.gemini_ai import extract_nakladnoy_from_image
 from services.prixod_parser import parse_manual_itog_text, parse_yespos_table
@@ -230,6 +250,22 @@ async def _load_group_info(db) -> GroupConfigInfo:
             apk_post_to_group=post_enabled,
         )
     return GroupConfigInfo(bound=False, chat_id=None, title="", apk_post_to_group=post_enabled)
+
+
+_GROUP_ROLES: tuple[tuple[str, str], ...] = (
+    ("nakladnoy", "📸 Nakladnoy guruhi"),
+    ("prixod", "👑 Prixod (ITOG) guruhi"),
+    ("kassa", "💰 Kassa / Rahbariyat guruhi"),
+)
+_GROUP_ROLE_TITLES = dict(_GROUP_ROLES)
+
+
+def _require_admin_user(user: AuthenticatedUser) -> None:
+    if not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Ushbu bo'lim faqat admin huquqiga ega foydalanuvchi uchun.",
+        )
 
 
 def create_api_app() -> FastAPI:
@@ -1686,5 +1722,261 @@ def create_api_app() -> FastAPI:
         async with async_session_maker() as db:
             await set_app_setting(db, "round_mode", payload.round_mode)
         return {"ok": True, "round_mode": payload.round_mode}
+
+    # -----------------------------------------------------------------------
+    # Telegram Groups, Bot Preferences, RBAC Roles & Backup (/settings/...)
+    # -----------------------------------------------------------------------
+
+    @app.get("/settings/telegram-hub")
+    async def get_telegram_hub_endpoint(
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        _require_admin_user(user)
+        bot = get_bot()
+        bot_username = "hisobchi_my_bot"
+        if bot is not None and hasattr(bot, "get_me"):
+            try:
+                me = await bot.get_me()
+                if getattr(me, "username", None):
+                    bot_username = me.username
+            except Exception:
+                pass
+
+        async with async_session_maker() as db:
+            all_groups = await get_all_group_configs(db)
+            apk_post = await get_app_setting(db, "apk_post_to_group", "on")
+            auto_confirm = await get_app_setting(db, "auto_confirm", "on")
+            ar_enabled = await get_app_setting(db, "auto_report_enabled", "1")
+            ar_time = await get_app_setting(db, "auto_report_time", "23:00")
+            round_mode = await get_app_setting(db, "round_mode", "floor_1000")
+            ai_stats = await get_ai_usage_stats(db)
+            db_roles = await list_user_roles(db)
+
+        groups = []
+        for role_key, role_title in _GROUP_ROLES:
+            cfg = all_groups.get(role_key)
+            bound = bool(cfg and cfg.chat_id)
+            groups.append(
+                {
+                    "role": role_key,
+                    "role_title": role_title,
+                    "bound": bound,
+                    "chat_id": int(cfg.chat_id) if bound else None,
+                    "title": (cfg.title or str(cfg.chat_id)) if bound else "",
+                    "bind_url": build_add_to_group_url(bot_username, role_key),
+                }
+            )
+
+        super_admins = set(get_settings().admin_id_list)
+        users = [
+            {
+                "user_id": int(aid),
+                "role": ROLE_ADMIN,
+                "role_label": "👑 Asosiy Admin",
+                "label": "Asosiy Admin",
+                "is_super_admin": True,
+            }
+            for aid in get_settings().admin_id_list
+        ]
+        for ur in db_roles:
+            uid = int(ur.user_id)
+            if uid in super_admins:
+                continue
+            users.append(
+                {
+                    "user_id": uid,
+                    "role": ur.role,
+                    "role_label": ROLE_LABELS.get(ur.role, ur.role),
+                    "label": ur.label or str(uid),
+                    "is_super_admin": False,
+                }
+            )
+
+        return {
+            "bot_username": bot_username,
+            "groups": groups,
+            "prefs": {
+                "apk_post_to_group": (apk_post or "on").strip().lower() != "off",
+                "auto_confirm": (auto_confirm or "on").strip().lower() != "off",
+                "auto_report_enabled": (ar_enabled or "1").strip() == "1",
+                "auto_report_time": ar_time or "23:00",
+                "round_mode": round_mode or "floor_1000",
+            },
+            "ai_stats": ai_stats,
+            "users": users,
+        }
+
+    @app.post("/settings/groups")
+    async def bind_telegram_group_endpoint(
+        payload: GroupBindRequest,
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        _require_admin_user(user)
+        resolved_title = payload.title.strip()
+        if not resolved_title:
+            bot = get_bot()
+            if bot is not None and hasattr(bot, "get_chat"):
+                try:
+                    chat = await bot.get_chat(payload.chat_id)
+                    if getattr(chat, "title", None):
+                        resolved_title = str(chat.title).strip()
+                except Exception:
+                    pass
+        if not resolved_title:
+            resolved_title = f"Guruh ({payload.chat_id})"
+
+        async with async_session_maker() as db:
+            await set_group_config(
+                db,
+                role=payload.role,
+                chat_id=payload.chat_id,
+                title=resolved_title,
+            )
+
+        return {
+            "ok": True,
+            "role": payload.role,
+            "chat_id": payload.chat_id,
+            "title": resolved_title,
+            "message": f"✅ «{resolved_title}» ulandi!",
+        }
+
+    @app.delete("/settings/groups/{role}")
+    async def unbind_telegram_group_endpoint(
+        role: str,
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        _require_admin_user(user)
+        if role not in _GROUP_ROLE_TITLES:
+            raise HTTPException(status_code=400, detail="Noto'g'ri guruh turi")
+        async with async_session_maker() as db:
+            deleted = await delete_group_config(db, role)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Guruh avval ham bog'lanmagan")
+        return {"ok": True, "role": role, "message": "Guruh ulanishi uzildi"}
+
+    @app.post("/settings/groups/{role}/test")
+    async def test_telegram_group_endpoint(
+        role: str,
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        _require_admin_user(user)
+        if role not in _GROUP_ROLE_TITLES:
+            raise HTTPException(status_code=400, detail="Noto'g'ri guruh turi")
+        bot = get_bot()
+        if bot is None:
+            raise HTTPException(status_code=503, detail="Telegram bot ulanmagan")
+        async with async_session_maker() as db:
+            grp = await get_group_config(db, role)
+        if grp is None or not grp.chat_id:
+            raise HTTPException(status_code=400, detail="Ushbu vazifa uchun guruh bog'lanmagan")
+
+        role_title = _GROUP_ROLE_TITLES[role]
+        try:
+            await bot.send_message(
+                chat_id=grp.chat_id,
+                text=(
+                    f"🔔 <b>Hisobchi APK / Mini App test xabari</b>\n"
+                    f"📌 Vazifa: <b>{html.escape(role_title)}</b>\n"
+                    f"✅ Aloqa va yozish huquqi 100% ishlayapti!"
+                ),
+                parse_mode="HTML",
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Guruhga test xabar yuborib bo'lmadi: {exc}",
+            ) from exc
+
+        return {
+            "ok": True,
+            "message": f"✅ Test xabar «{grp.title or grp.chat_id}» guruhiga yuborildi!",
+        }
+
+    @app.post("/settings/bot-prefs")
+    async def update_bot_prefs_endpoint(
+        payload: BotPrefsUpdateRequest,
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        _require_admin_user(user)
+        async with async_session_maker() as db:
+            if payload.apk_post_to_group is not None:
+                await set_app_setting(
+                    db, "apk_post_to_group", "on" if payload.apk_post_to_group else "off"
+                )
+            if payload.auto_confirm is not None:
+                await set_app_setting(
+                    db, "auto_confirm", "on" if payload.auto_confirm else "off"
+                )
+            if payload.auto_report_enabled is not None:
+                await set_app_setting(
+                    db, "auto_report_enabled", "1" if payload.auto_report_enabled else "0"
+                )
+            if payload.auto_report_time is not None:
+                await set_app_setting(db, "auto_report_time", payload.auto_report_time)
+        return {"ok": True, "message": "✅ Bot sozlamalari saqlandi"}
+
+    @app.post("/settings/roles")
+    async def save_user_role_endpoint(
+        payload: UserRoleSaveRequest,
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        _require_admin_user(user)
+        async with async_session_maker() as db:
+            await set_user_role(
+                db,
+                user_id=payload.user_id,
+                role=payload.role,
+                label=payload.label.strip(),
+            )
+            await refresh_role_cache(db)
+        return {
+            "ok": True,
+            "user_id": payload.user_id,
+            "role": payload.role,
+            "message": "✅ Foydalanuvchi roli saqlandi",
+        }
+
+    @app.delete("/settings/roles/{target_user_id}")
+    async def delete_user_role_endpoint(
+        target_user_id: int,
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        _require_admin_user(user)
+        if target_user_id in get_settings().admin_id_list:
+            raise HTTPException(
+                status_code=400,
+                detail="Asosiy adminni o'chirib bo'lmaydi",
+            )
+        async with async_session_maker() as db:
+            deleted = await delete_user_role(db, target_user_id)
+            if not deleted:
+                raise HTTPException(status_code=404, detail="Foydalanuvchi roli topilmadi")
+            await refresh_role_cache(db)
+        return {
+            "ok": True,
+            "deleted_user_id": target_user_id,
+            "message": "Foydalanuvchi huquqi olib tashlandi",
+        }
+
+    @app.post("/settings/backup-now")
+    async def trigger_backup_now_endpoint(
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        _require_admin_user(user)
+        bot = get_bot()
+        if bot is None:
+            raise HTTPException(status_code=503, detail="Telegram bot ulanmagan")
+        ok = await send_backup(
+            bot,
+            chat_ids=[user.user_id],
+            session_maker_override=async_session_maker,
+        )
+        if not ok:
+            raise HTTPException(
+                status_code=502,
+                detail="Backup yaratish yoki Telegramga yuborishda xatolik",
+            )
+        return {"ok": True, "message": "💾 Backup Telegram botingizga yuborildi!"}
 
     return app

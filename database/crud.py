@@ -123,6 +123,16 @@ async def get_all_group_configs(db: AsyncSession) -> Dict[str, GroupConfig]:
     return {row.role: row for row in rows}
 
 
+async def delete_group_config(db: AsyncSession, role: str) -> bool:
+    """Remove a configured Telegram group binding for a role."""
+    obj = await db.scalar(select(GroupConfig).where(GroupConfig.role == role))
+    if obj is None:
+        return False
+    await db.delete(obj)
+    await db.commit()
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Supplier configuration
 # ---------------------------------------------------------------------------

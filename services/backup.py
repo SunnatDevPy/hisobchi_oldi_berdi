@@ -66,10 +66,11 @@ def decrypt_backup_bytes(blob: bytes, password: str) -> bytes:
     return Fernet(_derive_fernet_key(password, salt)).decrypt(token)
 
 
-async def build_backup_bytes() -> bytes:
+async def build_backup_bytes(session_maker_override=None) -> bytes:
     """Dump all persistent tables (excluding transient FSM states) to gzip-compressed JSON."""
     dump: dict[str, list[dict[str, Any]]] = {}
-    async with async_session_maker() as db:
+    maker = session_maker_override or async_session_maker
+    async with maker() as db:
         for table in Base.metadata.sorted_tables:
             if table.name == "fsm_states":
                 continue
@@ -86,14 +87,16 @@ async def build_backup_bytes() -> bytes:
     return buf.getvalue()
 
 
-async def send_backup(bot: Bot, chat_ids: list[int] | None = None) -> bool:
+async def send_backup(
+    bot: Bot, chat_ids: list[int] | None = None, session_maker_override=None
+) -> bool:
     """Send a fresh (optionally encrypted) backup file to admins' private chats."""
     settings = get_settings()
     targets = chat_ids or settings.admin_id_list
     if not targets:
         logger.warning("Backup skipped: ADMIN_IDS is empty.")
         return False
-    raw_gz = await build_backup_bytes()
+    raw_gz = await build_backup_bytes(session_maker_override=session_maker_override)
     pwd = (settings.BACKUP_PASSWORD or "").strip()
     if pwd:
         data = encrypt_backup_bytes(raw_gz, pwd)

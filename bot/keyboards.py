@@ -83,7 +83,7 @@ def get_webapp_url() -> Optional[str]:
 
 
 def more_menu_kb(role: str = ROLE_ADMIN, show_webapp: bool = False) -> InlineKeyboardMarkup:
-    """Extended operations & settings hub opened from ⚙️ Boshqa (T2)."""
+    """Streamlined operations & settings hub opened from ⚙️ Boshqa."""
     rows: list[list[InlineKeyboardButton]] = []
     if show_webapp:
         webapp_url = get_webapp_url()
@@ -96,20 +96,7 @@ def more_menu_kb(role: str = ROLE_ADMIN, show_webapp: bool = False) -> InlineKey
                     )
                 ]
             )
-    if role == ROLE_ADMIN:
-        rows.append(
-            [
-                InlineKeyboardButton(text="✏️ Tahrirlash", callback_data="more:edit"),
-                InlineKeyboardButton(text="🏁 Kunni yakunlash", callback_data="more:close_day"),
-            ]
-        )
     if role in (ROLE_ADMIN, ROLE_KASSIR):
-        rows.append(
-            [
-                InlineKeyboardButton(text="🏦 Kassa qarzi", callback_data="more:kassa_debt"),
-                InlineKeyboardButton(text="📒 Nasiya (Qarz)", callback_data="more:nasiya"),
-            ]
-        )
         rows.append(
             [
                 InlineKeyboardButton(text="👑 Prixod (ITOG)", callback_data="more:prixod"),
@@ -119,27 +106,22 @@ def more_menu_kb(role: str = ROLE_ADMIN, show_webapp: bool = False) -> InlineKey
     else:
         rows.append(
             [
-                InlineKeyboardButton(text="📒 Nasiya (Qarz)", callback_data="more:nasiya"),
                 InlineKeyboardButton(text="📥 Excel hisobotlar", callback_data="export:menu"),
             ]
         )
-
-    rows.append(
-        [
-            InlineKeyboardButton(text="📈 Statistika & Sverka", callback_data="more:stats"),
-            InlineKeyboardButton(text="📜 History / Qidiruv", callback_data="set:history"),
-        ]
-    )
+    if role == ROLE_ADMIN:
+        rows.append(
+            [
+                InlineKeyboardButton(text="🏁 Kunni yakunlash", callback_data="more:close_day"),
+                InlineKeyboardButton(text="🔗 Guruhlar va Sozlamalar", callback_data="more:settings"),
+            ]
+        )
     rows.append(
         [
             InlineKeyboardButton(text="📱 Mobil ilova (APK)", callback_data="apk:home"),
+            InlineKeyboardButton(text="🔙 Yopish", callback_data="menu:dismiss"),
         ]
     )
-    if role == ROLE_ADMIN:
-        rows.append(
-            [InlineKeyboardButton(text="⚙️ Sozlamalar (Admin)", callback_data="more:settings")]
-        )
-    rows.append([InlineKeyboardButton(text="🔙 Yopish", callback_data="menu:dismiss")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -765,31 +747,19 @@ def close_day_confirm_kb(session_id: int, counted: float) -> InlineKeyboardMarku
 
 
 def settings_menu_kb() -> InlineKeyboardMarkup:
-    """Admin Settings & Tools inline menu (T8)."""
+    """Streamlined Admin Settings & Tools inline menu."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(text="🔗 Guruhlarni sozlash", callback_data="set:groups"),
-                InlineKeyboardButton(text="🏢 Ta'minotchilar", callback_data="set:suppliers"),
-            ],
-            [
-                InlineKeyboardButton(text="📜 History & Qidiruv", callback_data="set:history"),
                 InlineKeyboardButton(text="👑 Prixod (ITOG) tarixi", callback_data="set:prixod_history"),
             ],
             [
-                InlineKeyboardButton(text="⚡ Tez rejim & Yaxlitlash", callback_data="set:ai_prefs"),
-                InlineKeyboardButton(text="⏰ Avto kunlik hisobot", callback_data="set:auto_report"),
-            ],
-            [
+                InlineKeyboardButton(text="🏢 Ta'minotchilar", callback_data="set:suppliers"),
                 InlineKeyboardButton(text="👥 Foydalanuvchi rollari", callback_data="set:roles"),
-                InlineKeyboardButton(text="🤖 AI sarfi (Token)", callback_data="set:ai_stats"),
             ],
             [
-                InlineKeyboardButton(text="🧾 Audit jurnali", callback_data="set:audit"),
                 InlineKeyboardButton(text="💾 Backup olish", callback_data="set:backup"),
-            ],
-            [
-                InlineKeyboardButton(text="📥 Excel hisobotlar", callback_data="export:menu"),
                 InlineKeyboardButton(text="⬅️ Bosh menyu", callback_data="more:open"),
             ],
         ]

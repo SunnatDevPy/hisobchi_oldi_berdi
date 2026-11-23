@@ -1494,6 +1494,12 @@ def test_mobile_apk_rest_api_and_group_posting(tmp_path: Path, monkeypatch):
             self.sent_documents.append((chat_id, fname, caption))
             return SimpleNamespace(message_id=903)
 
+        async def get_me(self):
+            return SimpleNamespace(username="hisobchi_test_bot")
+
+        async def get_chat(self, chat_id: int):
+            return SimpleNamespace(id=chat_id, title=f"Resolved Group {chat_id}")
+
     async def scenario():
         db_file = tmp_path / "test_apk_api.db"
         eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
@@ -1805,6 +1811,102 @@ def test_mobile_apk_rest_api_and_group_posting(tmp_path: Path, monkeypatch):
                 r_rm_get = await client.get("/settings/round-mode", headers=headers)
                 assert r_rm_get.status_code == 200
                 assert r_rm_get.json()["round_mode"] == "floor_1000"
+
+                # 8f4. Telegram Groups, Bot Prefs, RBAC Roles & Manual Backup Hub
+                from bot.auth import clear_role_cache
+                from bot.keyboards import more_menu_kb, settings_menu_kb
+
+                more_cbs = [
+                    b.callback_data
+                    for r in more_menu_kb("admin", show_webapp=True).inline_keyboard
+                    for b in r
+                    if b.callback_data
+                ]
+                assert "more:prixod" in more_cbs
+                assert "more:settings" in more_cbs
+                assert "more:kassa_debt" not in more_cbs
+                set_cbs = [
+                    b.callback_data
+                    for r in settings_menu_kb().inline_keyboard
+                    for b in r
+                    if b.callback_data
+                ]
+                assert set_cbs == [
+                    "set:groups",
+                    "set:prixod_history",
+                    "set:suppliers",
+                    "set:roles",
+                    "set:backup",
+                    "more:open",
+                ]
+
+                r_hub1 = await client.get("/settings/telegram-hub", headers=headers)
+                assert r_hub1.status_code == 200
+                hub1 = r_hub1.json()
+                assert hub1["bot_username"] == "hisobchi_test_bot"
+                assert len(hub1["groups"]) == 3
+                assert "startgroup=bind_prixod" in hub1["groups"][1]["bind_url"]
+
+                r_bind_kassa = await client.post(
+                    "/settings/groups",
+                    headers=headers,
+                    json={"role": "kassa", "chat_id": -100555444},
+                )
+                assert r_bind_kassa.status_code == 200
+                assert "Resolved Group -100555444" in r_bind_kassa.json()["title"]
+
+                sent_before_test = len(fake_bot.sent_messages)
+                r_test_kassa = await client.post(
+                    "/settings/groups/kassa/test",
+                    headers=headers,
+                )
+                assert r_test_kassa.status_code == 200
+                assert len(fake_bot.sent_messages) == sent_before_test + 1
+                assert fake_bot.sent_messages[-1][0] == -100555444
+
+                r_unbind_kassa = await client.delete(
+                    "/settings/groups/kassa",
+                    headers=headers,
+                )
+                assert r_unbind_kassa.status_code == 200
+
+                r_prefs = await client.post(
+                    "/settings/bot-prefs",
+                    headers=headers,
+                    json={
+                        "apk_post_to_group": False,
+                        "auto_confirm": False,
+                        "auto_report_enabled": False,
+                        "auto_report_time": "22:00",
+                    },
+                )
+                assert r_prefs.status_code == 200
+
+                r_role_add = await client.post(
+                    "/settings/roles",
+                    headers=headers,
+                    json={"user_id": 222001, "role": "kassir", "label": "Ali Kassir"},
+                )
+                assert r_role_add.status_code == 200
+
+                r_hub2 = await client.get("/settings/telegram-hub", headers=headers)
+                assert r_hub2.status_code == 200
+                hub2 = r_hub2.json()
+                assert hub2["prefs"]["apk_post_to_group"] is False
+                assert hub2["prefs"]["auto_confirm"] is False
+                assert hub2["prefs"]["auto_report_enabled"] is False
+                assert hub2["prefs"]["auto_report_time"] == "22:00"
+                assert any(u["user_id"] == 222001 and u["role"] == "kassir" for u in hub2["users"])
+
+                r_role_del = await client.delete("/settings/roles/222001", headers=headers)
+                assert r_role_del.status_code == 200
+                clear_role_cache()
+
+                docs_before_backup = len(fake_bot.sent_documents)
+                r_bak = await client.post("/settings/backup-now", headers=headers)
+                assert r_bak.status_code == 200
+                assert len(fake_bot.sent_documents) == docs_before_backup + 1
+                assert "hisobchi_backup_" in fake_bot.sent_documents[-1][1]
 
                 r_sv = await client.get("/sverka", headers=headers)
                 assert r_sv.status_code == 200

@@ -224,6 +224,7 @@ class HisobchiApiClient {
 
   bool get isAuthenticated => accessToken != null && accessToken!.isNotEmpty;
   bool get canWrite => role == 'admin' || role == 'kassir';
+  bool get isAdmin => role == 'admin';
 
   static String normalizeBaseUrl(String raw) {
     var trimmed = raw.trim();
@@ -931,6 +932,108 @@ class HisobchiApiClient {
         .timeout(const Duration(seconds: 30));
     final data = _decodeJson(res);
     return (data['message'] ?? '📤 Telegram botga yuborildi!').toString();
+  }
+
+  Future<Map<String, dynamic>> getTelegramHubSettings() async {
+    final res = await _http
+        .get(_uri('/settings/telegram-hub'), headers: _headers())
+        .timeout(const Duration(seconds: 15));
+    return _decodeJson(res);
+  }
+
+  Future<String> bindTelegramGroup({
+    required String role,
+    required int chatId,
+    String title = '',
+  }) async {
+    final res = await _http
+        .post(
+          _uri('/settings/groups'),
+          headers: _headers(),
+          body: jsonEncode({
+            'role': role,
+            'chat_id': chatId,
+            'title': title.trim(),
+          }),
+        )
+        .timeout(const Duration(seconds: 15));
+    final data = _decodeJson(res);
+    return (data['message'] ?? '✅ Guruh ulandi!').toString();
+  }
+
+  Future<String> unbindTelegramGroup(String role) async {
+    final res = await _http
+        .delete(_uri('/settings/groups/$role'), headers: _headers())
+        .timeout(const Duration(seconds: 12));
+    final data = _decodeJson(res);
+    return (data['message'] ?? 'Guruh uzildi').toString();
+  }
+
+  Future<String> testTelegramGroup(String role) async {
+    final res = await _http
+        .post(_uri('/settings/groups/$role/test'), headers: _headers())
+        .timeout(const Duration(seconds: 15));
+    final data = _decodeJson(res);
+    return (data['message'] ?? '✅ Test xabar yuborildi!').toString();
+  }
+
+  Future<String> updateBotPrefs({
+    bool? apkPostToGroup,
+    bool? autoConfirm,
+    bool? autoReportEnabled,
+    String? autoReportTime,
+  }) async {
+    final res = await _http
+        .post(
+          _uri('/settings/bot-prefs'),
+          headers: _headers(),
+          body: jsonEncode({
+            if (apkPostToGroup != null) 'apk_post_to_group': apkPostToGroup,
+            if (autoConfirm != null) 'auto_confirm': autoConfirm,
+            if (autoReportEnabled != null)
+              'auto_report_enabled': autoReportEnabled,
+            if (autoReportTime != null) 'auto_report_time': autoReportTime,
+          }),
+        )
+        .timeout(const Duration(seconds: 12));
+    final data = _decodeJson(res);
+    return (data['message'] ?? '✅ Saqlandi').toString();
+  }
+
+  Future<String> saveUserRole({
+    required int userId,
+    required String role,
+    String label = '',
+  }) async {
+    final res = await _http
+        .post(
+          _uri('/settings/roles'),
+          headers: _headers(),
+          body: jsonEncode({
+            'user_id': userId,
+            'role': role,
+            'label': label.trim(),
+          }),
+        )
+        .timeout(const Duration(seconds: 12));
+    final data = _decodeJson(res);
+    return (data['message'] ?? '✅ Saqlandi').toString();
+  }
+
+  Future<String> deleteUserRole(int userId) async {
+    final res = await _http
+        .delete(_uri('/settings/roles/$userId'), headers: _headers())
+        .timeout(const Duration(seconds: 12));
+    final data = _decodeJson(res);
+    return (data['message'] ?? "O'chirildi").toString();
+  }
+
+  Future<String> triggerManualBackup() async {
+    final res = await _http
+        .post(_uri('/settings/backup-now'), headers: _headers())
+        .timeout(const Duration(seconds: 30));
+    final data = _decodeJson(res);
+    return (data['message'] ?? '💾 Backup yuborildi!').toString();
   }
 }
 

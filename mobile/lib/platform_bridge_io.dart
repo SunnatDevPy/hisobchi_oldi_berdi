@@ -55,6 +55,18 @@ Future<PickedBytesFile?> pickYesPosDocument() async {
   return PickedBytesFile(bytes: bytes, filename: filename);
 }
 
+Future<bool> openExternalTelegramUrl(String url) async {
+  try {
+    final res = await _installerChannel.invokeMethod<bool>(
+      'openExternalUrl',
+      {'url': url},
+    );
+    return res == true;
+  } catch (_) {
+    return false;
+  }
+}
+
 Future<void> showInAppApkUpdateDialog({
   required BuildContext context,
   required Uri downloadUri,

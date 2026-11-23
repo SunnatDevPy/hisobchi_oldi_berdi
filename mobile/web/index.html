@@ -73,6 +73,23 @@
           } catch (_) {}
           return false;
         },
+        openTelegramLink: function (url) {
+          try {
+            var tg = getTg();
+            if (tg && url && url.indexOf('https://t.me/') === 0 && typeof tg.openTelegramLink === 'function') {
+              tg.openTelegramLink(url);
+              return true;
+            }
+            if (tg && typeof tg.openLink === 'function') {
+              tg.openLink(url);
+              return true;
+            }
+            window.open(url, '_blank');
+            return true;
+          } catch (_) {
+            return false;
+          }
+        },
         downloadBlob: function (bytes, filename) {
           var blob = new Blob([bytes], {
             type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'

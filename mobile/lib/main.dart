@@ -1719,6 +1719,19 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     await _refreshAll();
   }
 
+  Future<void> _openTelegramHubSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (ctx) => TelegramGroupsAndBotSettingsSheet(
+        api: widget.api,
+        showSnack: _showSnack,
+      ),
+    );
+    await _refreshAll();
+  }
+
   // --------------------------------------------------------------------------
   // TAB 1: HAQIQIY ANALITIK DASHBOARD & PUL OLDI-BERDI TARIXI
   // --------------------------------------------------------------------------
@@ -2586,6 +2599,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
       onOpenLiveSverka: _openLiveSverkaSheet,
       onOpenPrixod: _openPrixodSheet,
       onOpenSupplierSettings: _openSupplierSettingsSheet,
+      onOpenTelegramSettings: _openTelegramHubSheet,
       onCheckUpdate: () => _downloadAndShareApkUpdate(manualCheck: true),
     );
   }
@@ -2601,6 +2615,7 @@ class _SmenaAndReportsView extends StatefulWidget {
   final VoidCallback onOpenLiveSverka;
   final VoidCallback onOpenPrixod;
   final VoidCallback onOpenSupplierSettings;
+  final VoidCallback onOpenTelegramSettings;
   final VoidCallback onCheckUpdate;
 
   const _SmenaAndReportsView({
@@ -2613,6 +2628,7 @@ class _SmenaAndReportsView extends StatefulWidget {
     required this.onOpenLiveSverka,
     required this.onOpenPrixod,
     required this.onOpenSupplierSettings,
+    required this.onOpenTelegramSettings,
     required this.onCheckUpdate,
   });
 
@@ -3092,13 +3108,32 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                 const SizedBox(height: 6),
                 _infoRow('Rol:', widget.api.role.toUpperCase()),
                 const Divider(height: 24),
-                Text(
-                  "💡 Nakladnoylar yuboriladigan guruhni o'zgartirish uchun Telegram botda (@hisobchi_my_bot) /apk yoki ⚙️ Sozlamalar -> 🔗 Guruhlarni sozlash bo'limiga kiring.",
-                  style: TextStyle(
-                      fontSize: 12.5,
-                      height: 1.4,
-                      color: textSecondaryOf(context)),
-                ),
+                if (widget.api.isAdmin) ...[
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: widget.onOpenTelegramSettings,
+                      icon: const Icon(Icons.hub_rounded),
+                      label: const Text("🔗 Guruhlar, Bot va Xodimlarni boshqarish"),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    "💡 Nakladnoy, Prixod (ITOG) va Kassa guruhlarini shu yerdan 1 bosishda ulang, test xabar yuboring, xodim rollari hamda backupni boshqaring.",
+                    style: TextStyle(
+                        fontSize: 12.5,
+                        height: 1.4,
+                        color: textSecondaryOf(context)),
+                  ),
+                ] else ...[
+                  Text(
+                    "💡 Guruhlar va xodim rollarini faqat Admin boshqarishi mumkin.",
+                    style: TextStyle(
+                        fontSize: 12.5,
+                        height: 1.4,
+                        color: textSecondaryOf(context)),
+                  ),
+                ],
                 if (!kIsWeb) ...[
                   const SizedBox(height: 14),
                   SizedBox(
@@ -7282,6 +7317,713 @@ class _SupplierProfileSheetState extends State<SupplierProfileSheet> {
                             ),
                           ),
                         ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// TELEGRAM GROUPS, BOT PREFS, RBAC ROLES & BACKUP HUB SHEET
+// ============================================================================
+
+class TelegramGroupsAndBotSettingsSheet extends StatefulWidget {
+  final HisobchiApiClient api;
+  final void Function(String, {bool isError}) showSnack;
+
+  const TelegramGroupsAndBotSettingsSheet({
+    super.key,
+    required this.api,
+    required this.showSnack,
+  });
+
+  @override
+  State<TelegramGroupsAndBotSettingsSheet> createState() =>
+      _TelegramGroupsAndBotSettingsSheetState();
+}
+
+class _TelegramGroupsAndBotSettingsSheetState
+    extends State<TelegramGroupsAndBotSettingsSheet> {
+  Map<String, dynamic>? _hub;
+  bool _loading = true;
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final data = await widget.api.getTelegramHubSettings();
+      if (!mounted) return;
+      setState(() {
+        _hub = data;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _runAction(Future<String> Function() action) async {
+    setState(() => _busy = true);
+    try {
+      final msg = await action();
+      if (!mounted) return;
+      widget.showSnack(msg);
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      widget.showSnack(e.toString(), isError: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _openTelegramGroupPicker(Map<String, dynamic> grp) async {
+    final bindUrl = (grp['bind_url'] ?? '').toString();
+    if (bindUrl.isEmpty) {
+      widget.showSnack("Telegram havolasi topilmadi", isError: true);
+      return;
+    }
+    final opened = await openExternalTelegramUrl(bindUrl);
+    if (!mounted) return;
+    if (opened) {
+      widget.showSnack(
+        "Telegram ochildi. Guruhni tanlagach, shu yerdan Yangilash tugmasini bosing.",
+      );
+    } else {
+      widget.showSnack(
+        "Telegramni ochib bo'lmadi. Qo'lda Chat ID orqali ulashingiz mumkin.",
+        isError: true,
+      );
+    }
+  }
+
+  Future<void> _openManualBindDialog(Map<String, dynamic> grp) async {
+    final role = (grp['role'] ?? 'nakladnoy').toString();
+    final roleTitle = (grp['role_title'] ?? role).toString();
+    final idCtrl = TextEditingController(
+      text: grp['chat_id'] != null ? grp['chat_id'].toString() : '-100',
+    );
+    final titleCtrl = TextEditingController(
+      text: (grp['title'] ?? '').toString(),
+    );
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dlgCtx) => AlertDialog(
+        title: Text('$roleTitle — Chat ID'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              "Guruh ichida botga /group_id yozsangiz aniq Chat ID chiqadi (masalan: -1001234567890).",
+              style: TextStyle(fontSize: 12.5, color: textSecondaryOf(dlgCtx)),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: idCtrl,
+              keyboardType: const TextInputType.numberWithOptions(signed: true),
+              decoration: const InputDecoration(
+                labelText: 'Guruh Chat ID (-100...)',
+                prefixIcon: Icon(Icons.tag_rounded),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: titleCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Guruh nomi (ixtiyoriy)',
+                prefixIcon: Icon(Icons.groups_rounded),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dlgCtx).pop(false),
+            child: const Text('Bekor'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dlgCtx).pop(true),
+            child: const Text('Saqlash'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final parsedId = int.tryParse(idCtrl.text.trim());
+    if (parsedId == null) {
+      widget.showSnack("To'g'ri Chat ID kiriting (masalan -100...)", isError: true);
+      return;
+    }
+    await _runAction(
+      () => widget.api.bindTelegramGroup(
+        role: role,
+        chatId: parsedId,
+        title: titleCtrl.text.trim(),
+      ),
+    );
+  }
+
+  Future<void> _confirmUnbindGroup(Map<String, dynamic> grp) async {
+    final role = (grp['role'] ?? '').toString();
+    final roleTitle = (grp['role_title'] ?? role).toString();
+    final title = (grp['title'] ?? '').toString();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dlgCtx) => AlertDialog(
+        title: Text('$roleTitle uzilsinmi?'),
+        content: Text('«$title» guruhini ushbu vazifadan uzmoqchimisiz?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dlgCtx).pop(false),
+            child: const Text('Bekor'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppTokens.dangerRed),
+            onPressed: () => Navigator.of(dlgCtx).pop(true),
+            child: const Text('Ha, uzilsin'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await _runAction(() => widget.api.unbindTelegramGroup(role));
+  }
+
+  Future<void> _openAddRoleDialog() async {
+    final uidCtrl = TextEditingController();
+    final labelCtrl = TextEditingController();
+    var pickedRole = 'kassir';
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dlgCtx) => StatefulBuilder(
+        builder: (stCtx, setDlgState) => AlertDialog(
+          title: const Text("Xodim qo'shish (RBAC)"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextField(
+                controller: uidCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Telegram User ID',
+                  hintText: 'Botga /start yozganda ko\'rinadi',
+                  prefixIcon: Icon(Icons.badge_outlined),
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: labelCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Xodim ismi',
+                  prefixIcon: Icon(Icons.person_outline_rounded),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Rolni tanlang:',
+                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final item in const [
+                    ('kassir', '💼 Kassir'),
+                    ('admin', '👑 Admin'),
+                    ('viewer', '👁 Kuzatuvchi'),
+                  ])
+                    ChoiceChip(
+                      label: Text(item.$2),
+                      selected: pickedRole == item.$1,
+                      onSelected: (_) =>
+                          setDlgState(() => pickedRole = item.$1),
+                    ),
+                ],
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dlgCtx).pop(false),
+              child: const Text('Bekor'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dlgCtx).pop(true),
+              child: const Text('Saqlash'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final parsedUid = int.tryParse(uidCtrl.text.trim());
+    if (parsedUid == null || parsedUid <= 0) {
+      widget.showSnack("To'g'ri Telegram User ID kiriting", isError: true);
+      return;
+    }
+    await _runAction(
+      () => widget.api.saveUserRole(
+        userId: parsedUid,
+        role: pickedRole,
+        label: labelCtrl.text.trim(),
+      ),
+    );
+  }
+
+  Widget _buildGroupCard(Map<String, dynamic> grp) {
+    final bound = grp['bound'] == true;
+    final role = (grp['role'] ?? '').toString();
+    final roleTitle = (grp['role_title'] ?? role).toString();
+    final title = (grp['title'] ?? '').toString();
+    final chatId = grp['chat_id'];
+    final accent = bound ? AppTokens.cashGreen : AppTokens.debtAmber;
+    final (fg, bg, border) = AppTokens.semanticSurface(context, accent);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  roleTitle,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    color: fg,
+                  ),
+                ),
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: fg.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  bound ? '✅ Ulangan' : "⚠️ Bog'lanmagan",
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    color: fg,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            bound
+                ? '$title (ID: $chatId)'
+                : "Hali Telegram guruhi tanlanmagan.",
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: bound ? null : textSecondaryOf(context),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.tonalIcon(
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 38),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                ),
+                onPressed:
+                    _busy ? null : () => _openTelegramGroupPicker(grp),
+                icon: const Icon(Icons.telegram, size: 17),
+                label: Text(bound ? 'Almashtirish' : 'Telegramda tanlash'),
+              ),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(0, 38),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                ),
+                onPressed: _busy ? null : () => _openManualBindDialog(grp),
+                icon: const Icon(Icons.tag_rounded, size: 16),
+                label: const Text('Chat ID'),
+              ),
+              if (bound) ...[
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, 38),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                  ),
+                  onPressed: _busy
+                      ? null
+                      : () => _runAction(
+                            () => widget.api.testTelegramGroup(role),
+                          ),
+                  icon: const Icon(Icons.notifications_active_outlined, size: 16),
+                  label: const Text('Test'),
+                ),
+                IconButton(
+                  tooltip: 'Uzish',
+                  onPressed:
+                      _busy ? null : () => _confirmUnbindGroup(grp),
+                  icon: const Icon(
+                    Icons.link_off_rounded,
+                    color: AppTokens.dangerRed,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPrefsSection(
+    Map<String, dynamic> prefs,
+    Map<String, dynamic> aiStats,
+  ) {
+    final apkPost = prefs['apk_post_to_group'] != false;
+    final autoConfirm = prefs['auto_confirm'] != false;
+    final arEnabled = prefs['auto_report_enabled'] == true;
+    final arTime = (prefs['auto_report_time'] ?? '23:00').toString();
+    final calls = (aiStats['calls'] as num?)?.toInt() ?? 0;
+    final monthTokens = (aiStats['month_tokens'] as num?)?.toInt() ?? 0;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              '⚙️ Bot, Avto-hisobot va Backup',
+              style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 4),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: const Text(
+                'APK/Mini App dan guruhga yuborish',
+                style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
+              ),
+              subtitle: const Text(
+                'Saqlangan nakladnoylar Nakladnoy guruhiga ham tushadi',
+                style: TextStyle(fontSize: 12),
+              ),
+              value: apkPost,
+              onChanged: _busy
+                  ? null
+                  : (v) => _runAction(
+                        () => widget.api.updateBotPrefs(apkPostToGroup: v),
+                      ),
+            ),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: const Text(
+                'Botda tez rejim (Avto-tasdiqlash)',
+                style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
+              ),
+              subtitle: const Text(
+                "AI aniq o'qigan nakladnoyni kutmasdan tasdiqlash",
+                style: TextStyle(fontSize: 12),
+              ),
+              value: autoConfirm,
+              onChanged: _busy
+                  ? null
+                  : (v) => _runAction(
+                        () => widget.api.updateBotPrefs(autoConfirm: v),
+                      ),
+            ),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: const Text(
+                'Kunlik avto-hisobot',
+                style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
+              ),
+              subtitle: Text(
+                'Kassa / Admin guruhiga soat $arTime da yuboriladi',
+                style: const TextStyle(fontSize: 12),
+              ),
+              value: arEnabled,
+              onChanged: _busy
+                  ? null
+                  : (v) => _runAction(
+                        () => widget.api.updateBotPrefs(autoReportEnabled: v),
+                      ),
+            ),
+            if (arEnabled) ...[
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (final t in const ['21:00', '22:00', '23:00'])
+                    ChoiceChip(
+                      label: Text(t),
+                      selected: arTime == t,
+                      onSelected: _busy
+                          ? null
+                          : (_) => _runAction(
+                                () => widget.api.updateBotPrefs(
+                                  autoReportTime: t,
+                                ),
+                              ),
+                    ),
+                ],
+              ),
+            ],
+            const Divider(height: 22),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '🤖 Bugun AI: $calls ta | Oy token: ${formatUzs(monthTokens)}',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: textSecondaryOf(context),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            FilledButton.tonalIcon(
+              onPressed: _busy
+                  ? null
+                  : () => _runAction(() => widget.api.triggerManualBackup()),
+              icon: const Icon(Icons.backup_rounded),
+              label: const Text('💾 Hozir backup olish (Telegram botga)'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRolesSection(List<Map<String, dynamic>> users) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    '👥 Xodimlar va Rollar',
+                    style: TextStyle(
+                      fontSize: 15.5,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                FilledButton.tonalIcon(
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(0, 36),
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                  ),
+                  onPressed: _busy ? null : _openAddRoleDialog,
+                  icon: const Icon(Icons.person_add_alt_1_rounded, size: 17),
+                  label: const Text("Qo'shish"),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ...users.map((u) {
+              final isSuper = u['is_super_admin'] == true;
+              final uid = (u['user_id'] as num).toInt();
+              final label = (u['label'] ?? '$uid').toString();
+              final roleLbl = (u['role_label'] ?? u['role'] ?? '').toString();
+              return ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: CircleAvatar(
+                  radius: 17,
+                  backgroundColor: AppTokens.brand.withValues(alpha: 0.14),
+                  child: Icon(
+                    isSuper ? Icons.verified_user_rounded : Icons.person_rounded,
+                    size: 18,
+                    color: AppTokens.brand,
+                  ),
+                ),
+                title: Text(
+                  label,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                subtitle: Text('$roleLbl • ID: $uid'),
+                trailing: isSuper
+                    ? null
+                    : IconButton(
+                        tooltip: "O'chirish",
+                        icon: const Icon(
+                          Icons.delete_outline_rounded,
+                          color: AppTokens.dangerRed,
+                        ),
+                        onPressed: _busy
+                            ? null
+                            : () => _runAction(
+                                  () => widget.api.deleteUserRole(uid),
+                                ),
+                      ),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final groups = ((_hub?['groups'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+    final prefs = _hub?['prefs'] is Map
+        ? Map<String, dynamic>.from(_hub!['prefs'] as Map)
+        : <String, dynamic>{};
+    final aiStats = _hub?['ai_stats'] is Map
+        ? Map<String, dynamic>.from(_hub!['ai_stats'] as Map)
+        : <String, dynamic>{};
+    final users = ((_hub?['users'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+    final botUsername = (_hub?['bot_username'] ?? 'hisobchi_my_bot').toString();
+
+    return SafeArea(
+      top: false,
+      child: FractionallySizedBox(
+        heightFactor: 0.92,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 10, 18, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 44,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.withValues(alpha: 0.35),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  const Icon(Icons.hub_rounded, color: AppTokens.brand),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Telegram Guruhlar va Boshqaruv',
+                          style: TextStyle(
+                            fontSize: 17.5,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        Text(
+                          '@$botUsername bilan sinxron',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: textSecondaryOf(context),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Yangilash',
+                    onPressed: _loading || _busy ? null : _load,
+                    icon: const Icon(Icons.refresh_rounded),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (_loading)
+                const Expanded(
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (_error != null)
+                Expanded(
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _error!,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: AppTokens.dangerRed),
+                        ),
+                        const SizedBox(height: 12),
+                        FilledButton.icon(
+                          onPressed: _load,
+                          icon: const Icon(Icons.refresh_rounded),
+                          label: const Text('Qayta urinish'),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else
+                Expanded(
+                  child: ListView(
+                    children: [
+                      const Text(
+                        '🔗 Telegram Guruhlar',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      ...groups.map(_buildGroupCard),
+                      const SizedBox(height: 6),
+                      _buildPrefsSection(prefs, aiStats),
+                      const SizedBox(height: 10),
+                      _buildRolesSection(users),
+                      const SizedBox(height: 14),
                     ],
                   ),
                 ),
