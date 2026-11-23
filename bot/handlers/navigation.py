@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
 from aiogram import F, Router
-from aiogram.filters import Command, CommandStart, StateFilter
+from aiogram.filters import Command, CommandObject, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
@@ -38,8 +40,11 @@ router = Router(name="navigation")
 
 
 @router.message(StateFilter("*"), CommandStart(), F.chat.type == "private")
-async def nav_start(message: Message, state: FSMContext) -> None:
-    await cmd_start(message, state)
+async def nav_start(
+    message: Message, state: FSMContext, command: Optional[CommandObject] = None
+) -> None:
+    start_arg = ((command.args if command else None) or "").strip()
+    await cmd_start(message, state, start_arg=start_arg)
 
 
 @router.message(StateFilter("*"), Command("cancel"), F.chat.type == "private")

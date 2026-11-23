@@ -285,6 +285,24 @@ def create_api_app() -> FastAPI:
     )
     app.add_middleware(GZipMiddleware, minimum_size=1024)
 
+    cached_bot_username: Optional[str] = None
+
+    async def _resolve_bot_username() -> str:
+        nonlocal cached_bot_username
+        if cached_bot_username:
+            return cached_bot_username
+        bot = get_bot()
+        if bot is not None and hasattr(bot, "get_me"):
+            try:
+                me = await bot.get_me()
+                uname = (getattr(me, "username", None) or "").strip().lstrip("@")
+                if uname:
+                    cached_bot_username = uname
+                    return uname
+            except Exception:
+                pass
+        return "hisobchi_my_bot"
+
     @app.get("/health")
     async def health() -> dict:
         meta = get_apk_version_metadata()
@@ -293,6 +311,7 @@ def create_api_app() -> FastAPI:
             "service": "hisobchi-api",
             "apk_version": meta["version"],
             "apk_build": meta["build"],
+            "bot_username": await _resolve_bot_username(),
         }
 
     @app.get("/apk/version")
@@ -1839,15 +1858,7 @@ def create_api_app() -> FastAPI:
         user: AuthenticatedUser = Depends(get_current_user),
     ) -> dict:
         _require_admin_user(user)
-        bot = get_bot()
-        bot_username = "hisobchi_my_bot"
-        if bot is not None and hasattr(bot, "get_me"):
-            try:
-                me = await bot.get_me()
-                if getattr(me, "username", None):
-                    bot_username = me.username
-            except Exception:
-                pass
+        bot_username = await _resolve_bot_username()
 
         async with async_session_maker() as db:
             all_groups = await get_all_group_configs(db)

@@ -132,7 +132,7 @@ async def _safe_edit(message: Message, text: str, reply_markup=None) -> None:
             logger.debug("edit fallback: %s", exc)
 
 
-async def cmd_start(message: Message, state: FSMContext) -> None:
+async def cmd_start(message: Message, state: FSMContext, start_arg: str = "") -> None:
     """Handle /start in private chat."""
     uid = message.from_user.id if message.from_user else None
     if not is_authorized(uid):
@@ -143,6 +143,12 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         )
         return
     await state.clear()
+    if start_arg.strip().lower() in {"apk_login", "apk", "login"} and uid:
+        from bot.handlers.apk_link import _render_apk_home
+
+        text, kb = await _render_apk_home(uid)
+        await message.answer(text, parse_mode="HTML", reply_markup=kb)
+        return
     role = get_user_role(uid) or "viewer"
     webapp_allowed = is_webapp_allowed(uid)
     webapp_url = get_webapp_url() if webapp_allowed else None

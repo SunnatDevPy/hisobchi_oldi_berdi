@@ -2516,4 +2516,107 @@ def test_telegram_webapp_auth_owner_only_and_static_routes(tmp_path: Path, monke
         get_settings.cache_clear()
 
 
+def test_telegram_apk_login_deeplink_and_health_bot_username(tmp_path: Path, monkeypatch):
+    import re
+    from types import SimpleNamespace
+
+    import httpx
+    from aiogram.filters import CommandObject
+    import api.app as api_app_mod
+    import api.auth as api_auth_mod
+    import bot.handlers.apk_link as apk_link_mod
+    from bot.auth import clear_role_cache
+    from bot.handlers.navigation import nav_start
+    from config import get_settings
+
+    monkeypatch.setenv("BOT_TOKEN", "987654:TEST_BOT_TOKEN_DEEPLINK")
+    monkeypatch.setenv("ADMIN_IDS", "111")
+    monkeypatch.setenv("API_PUBLIC_URL", "https://hisobchi.okaposai.uz")
+    get_settings.cache_clear()
+    clear_role_cache()
+
+    class FakeBot:
+        async def get_me(self):
+            return SimpleNamespace(username="test_hisobchi_bot")
+
+    class FakeState:
+        def __init__(self) -> None:
+            self.cleared = 0
+
+        async def clear(self) -> None:
+            self.cleared += 1
+
+    class FakeMsg:
+        def __init__(self, uid: int) -> None:
+            self.from_user = SimpleNamespace(id=uid)
+            self.bot = None
+            self.replies: list[tuple[str, object]] = []
+
+        async def answer(self, text: str, parse_mode: str = "", reply_markup=None):
+            self.replies.append((text, reply_markup))
+
+    async def scenario() -> None:
+        db_file = tmp_path / "deeplink_login.db"
+        eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+        monkeypatch.setattr(apk_link_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_auth_mod, "async_session_maker", maker)
+        api_auth_mod.clear_auth_memory_state()
+        try:
+            await init_db(engine_override=eng, session_maker_override=maker)
+
+            # 1. /health returns fallback bot_username when bot isn't initialized yet
+            monkeypatch.setattr(api_app_mod, "get_bot", lambda: None)
+            app_no_bot = api_app_mod.create_api_app()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app_no_bot), base_url="http://test"
+            ) as client:
+                r0 = await client.get("/health")
+                assert r0.status_code == 200
+                assert r0.json()["bot_username"] == "hisobchi_my_bot"
+
+            # 2. /health exposes live bot_username from bot.get_me()
+            monkeypatch.setattr(api_app_mod, "get_bot", lambda: FakeBot())
+            app_with_bot = api_app_mod.create_api_app()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app_with_bot), base_url="http://test"
+            ) as client:
+                r1 = await client.get("/health")
+                assert r1.status_code == 200
+                assert r1.json()["bot_username"] == "test_hisobchi_bot"
+
+            # 3. /start apk_login for authorized owner emits 8-digit code + inline keyboard
+            state = FakeState()
+            auth_msg = FakeMsg(111)
+            await nav_start(
+                auth_msg,
+                state,
+                command=CommandObject(prefix="/", command="start", args="apk_login"),
+            )
+            assert state.cleared == 1
+            assert len(auth_msg.replies) == 1
+            reply_text, reply_kb = auth_msg.replies[0]
+            assert re.search(r"<code>\d{8}</code>", reply_text)
+            assert reply_kb is not None
+
+            # 4. Unauthorized user tapping /start apk_login gets denied without code
+            unauth_msg = FakeMsg(999)
+            await nav_start(
+                unauth_msg,
+                state,
+                command=CommandObject(prefix="/", command="start", args="apk_login"),
+            )
+            assert len(unauth_msg.replies) == 1
+            assert "huquqi yo'q" in unauth_msg.replies[0][0]
+            assert not re.search(r"<code>\d{8}</code>", unauth_msg.replies[0][0])
+        finally:
+            await eng.dispose()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        clear_role_cache()
+        get_settings.cache_clear()
+
+
+
 

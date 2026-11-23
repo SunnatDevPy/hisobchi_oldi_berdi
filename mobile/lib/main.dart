@@ -743,25 +743,134 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _LoginScreenState extends State<LoginScreen> with WidgetsBindingObserver {
   final TextEditingController _codeCtrl = TextEditingController();
   final TextEditingController _deviceCtrl =
       TextEditingController(text: 'Android APK');
   bool _loading = false;
+  bool _openingTelegram = false;
+  bool _waitingFromTelegram = false;
+  String _botUsername = 'hisobchi_my_bot';
   String? _error;
+  String? _infoBanner;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _loadBotUsername();
+  }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _codeCtrl.dispose();
     _deviceCtrl.dispose();
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _waitingFromTelegram) {
+      Future<void>.delayed(const Duration(milliseconds: 220), () {
+        if (mounted && _waitingFromTelegram) {
+          _tryAutoFillFromClipboard(silent: true);
+        }
+      });
+    }
+  }
+
+  Future<void> _loadBotUsername() async {
+    final uname = await widget.api.fetchBotUsername(fallback: _botUsername);
+    if (!mounted) return;
+    if (uname.isNotEmpty && uname != _botUsername) {
+      setState(() => _botUsername = uname);
+    }
+  }
+
+  Future<void> _openTelegramForCode() async {
+    if (_openingTelegram || _loading) return;
+    setState(() {
+      _openingTelegram = true;
+      _error = null;
+    });
+    try {
+      final uname = _botUsername.trim().replaceAll('@', '');
+      final tgUri = 'tg://resolve?domain=$uname&start=apk_login';
+      final httpsUri = 'https://t.me/$uname?start=apk_login';
+      var opened = await openExternalTelegramUrl(tgUri);
+      if (!opened) {
+        opened = await openExternalTelegramUrl(httpsUri);
+      }
+      if (!mounted) return;
+      if (opened) {
+        setState(() {
+          _waitingFromTelegram = true;
+          _infoBanner =
+              "Telegram (@$uname) ochildi. Botda START tugmasini bosing — 8 xonali kod chiqadi, nusxalab ilovaga qayting.";
+        });
+      } else {
+        setState(() {
+          _error =
+              "Telegram ilovasini ochib bo'lmadi. Telegramda @$uname ga kirib /apk yuboring.";
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _openingTelegram = false);
+      }
+    }
+  }
+
+  Future<void> _tryAutoFillFromClipboard({bool silent = false}) async {
+    try {
+      final clip = await Clipboard.getData(Clipboard.kTextPlain);
+      final raw = (clip?.text ?? '').trim();
+      String? extracted;
+      final match = RegExp(r'(?<!\d)(\d{4}[-\s]?\d{4})(?!\d)').firstMatch(raw);
+      if (match != null) {
+        extracted = match.group(1)!.replaceAll(RegExp(r'\D+'), '');
+      } else {
+        final digitsOnly = raw.replaceAll(RegExp(r'\D+'), '');
+        if (digitsOnly.length == 8) {
+          extracted = digitsOnly;
+        }
+      }
+      if (!mounted) return;
+      if (extracted != null && extracted.length == 8) {
+        setState(() {
+          _codeCtrl.text = extracted!;
+          _codeCtrl.selection =
+              TextSelection.collapsed(offset: extracted.length);
+          _error = null;
+          _waitingFromTelegram = false;
+          _infoBanner =
+              "✅ 8 xonali kod joylandi! Endi 'Ilovaga kirish' tugmasini bosing.";
+        });
+      } else if (!silent) {
+        setState(() {
+          _error =
+              "Buferda 8 xonali kod topilmadi. Telegram botdagi kod ustiga bosib nusxalang.";
+        });
+      }
+    } catch (_) {
+      if (!silent && mounted) {
+        setState(() {
+          _error = "Buferdan o'qib bo'lmadi. Kodni qo'lda kiriting.";
+        });
+      }
+    }
+  }
+
   Future<void> _submitLogin() async {
     final code = _codeCtrl.text.replaceAll(RegExp(r'\D+'), '');
+    if (code.isEmpty) {
+      await _openTelegramForCode();
+      return;
+    }
     if (code.length != 8) {
-      setState(() =>
-          _error = 'Telegram botdan (/apk) olingan 8 xonali kodni kiriting.');
+      setState(() => _error =
+          "Telegram botdan olingan 8 xonali kodni kiriting yoki 'Telegramdan parol (kod) olish' tugmasini bosing.");
       return;
     }
     setState(() {
@@ -787,6 +896,8 @@ class _LoginScreenState extends State<LoginScreen> {
     final isDark = isDarkCtx(context);
     final (errFg, errBg, errBorder) =
         AppTokens.semanticSurface(context, AppTokens.dangerRed);
+    final (infoFg, infoBg, infoBorder) =
+        AppTokens.semanticSurface(context, AppTokens.cardBlue);
 
     return Scaffold(
       body: Stack(
@@ -905,9 +1016,42 @@ class _LoginScreenState extends State<LoginScreen> {
                                   letterSpacing: 3,
                                   fontFeatures: AppTokens.tabularNums,
                                 ),
-                                decoration: const InputDecoration(
+                                decoration: InputDecoration(
                                   hintText: '1234-5678',
-                                  prefixIcon: Icon(Icons.vpn_key_rounded),
+                                  prefixIcon: const Icon(Icons.vpn_key_rounded),
+                                  suffixIcon: IconButton(
+                                    tooltip: 'Buferdan kodni joylash',
+                                    onPressed: _loading
+                                        ? null
+                                        : () => _tryAutoFillFromClipboard(),
+                                    icon: const Icon(Icons.content_paste_rounded),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              TactileScaleTap(
+                                pressedScale: 0.97,
+                                enabled: !_openingTelegram && !_loading,
+                                child: FilledButton.icon(
+                                  style: FilledButton.styleFrom(
+                                    minimumSize: const Size(0, 46),
+                                    backgroundColor: const Color(0xFF229ED9),
+                                    foregroundColor: Colors.white,
+                                  ),
+                                  onPressed: (_openingTelegram || _loading)
+                                      ? null
+                                      : _openTelegramForCode,
+                                  icon: _openingTelegram
+                                      ? const SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white,
+                                          ),
+                                        )
+                                      : const Icon(Icons.telegram),
+                                  label: const Text('Telegramdan parol (kod) olish'),
                                 ),
                               ),
                               const SizedBox(height: 14),
@@ -926,6 +1070,26 @@ class _LoginScreenState extends State<LoginScreen> {
                                   prefixIcon: Icon(Icons.phone_android_rounded),
                                 ),
                               ),
+                              if (_infoBanner != null) ...[
+                                const SizedBox(height: 14),
+                                Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: infoBg,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: infoBorder),
+                                  ),
+                                  child: Text(
+                                    _infoBanner!,
+                                    style: TextStyle(
+                                      color: infoFg,
+                                      fontSize: 12.8,
+                                      height: 1.35,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ],
                               if (_error != null) ...[
                                 const SizedBox(height: 14),
                                 Container(
@@ -990,10 +1154,10 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               const SizedBox(height: 8),
                               _stepRow('1',
-                                  'Telegramda @hisobchi_my_bot ga kiring va /apk buyrug\'ini yuboring.'),
+                                  "Yuqoridagi 'Telegramdan parol (kod) olish' tugmasini bosing — Telegram (@$_botUsername) ochiladi va START bosganda 8 xonali kod chiqadi."),
                               const SizedBox(height: 6),
                               _stepRow('2',
-                                  'Bot bergan 8 xonali bir martalik kodni yuqoriga kiriting.'),
+                                  'Bot bergan kod ustiga bosib nusxalang va ilovaga qayting — kod avtomatik joylanadi.'),
                               const SizedBox(height: 6),
                               _stepRow('3',
                                   'Kirgach tezkor 4 xonali PIN kod va otpechatkani sozlashingiz mumkin.'),

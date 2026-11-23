@@ -36,6 +36,8 @@ void main() {
 
     expect(find.text('Hisobchi Mobil'), findsOneWidget);
     expect(find.text('Ilovaga kirish'), findsOneWidget);
+    expect(find.text('Telegramdan parol (kod) olish'), findsOneWidget);
+    expect(find.byIcon(Icons.content_paste_rounded), findsOneWidget);
     expect(find.textContaining('8 xonali kirish kodi'), findsOneWidget);
   });
 

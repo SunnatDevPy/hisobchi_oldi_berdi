@@ -321,6 +321,20 @@ class HisobchiApiClient {
     return data['status'] == 'ok';
   }
 
+  Future<String> fetchBotUsername({String fallback = 'hisobchi_my_bot'}) async {
+    try {
+      final clean = normalizeBaseUrl(baseUrl);
+      final res = await _http
+          .get(Uri.parse('$clean/health'))
+          .timeout(const Duration(seconds: 5));
+      final data = _decodeJson(res);
+      final raw = (data['bot_username'] ?? '').toString().trim().replaceAll('@', '');
+      return raw.isNotEmpty ? raw : fallback;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
   Future<void> login({
     required String serverUrl,
     required String code,
