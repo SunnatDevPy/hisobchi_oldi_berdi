@@ -2606,6 +2606,8 @@ class HisobchiCustomDropdown<T> extends StatelessWidget {
     final result = await showModalBottomSheet<T>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: false,
       backgroundColor: Colors.transparent,
       builder: (ctx) => _CustomDropdownSheet<T>(
         title: sheetTitle ?? labelText ?? 'Tanlang',
@@ -2792,10 +2794,17 @@ class _CustomDropdownSheetState<T> extends State<_CustomDropdownSheet<T>> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final sheetBg = isDark ? AppTokens.cardDark : Colors.white;
-    final maxH = MediaQuery.sizeOf(context).height * 0.74;
-    final insets = MediaQuery.viewInsetsOf(context).bottom;
-    final navBar = MediaQuery.viewPaddingOf(context).bottom;
-    final bottomPad = (insets > navBar ? insets : navBar) + 18;
+    final mq = MediaQuery.of(context);
+    final available = (mq.size.height -
+            mq.viewPadding.top -
+            mq.viewPadding.bottom -
+            mq.viewInsets.bottom)
+        .clamp(120.0, mq.size.height);
+    final target = mq.size.height * 0.74;
+    final maxH = (target < available ? target : available)
+        .clamp(available < 240.0 ? available : 240.0, mq.size.height);
+    final insets = mq.viewInsets.bottom;
+    final bottomPad = (insets > 0 ? insets : 0.0) + 18.0;
 
     final filtered = _query.isEmpty
         ? widget.options
@@ -2807,6 +2816,7 @@ class _CustomDropdownSheetState<T> extends State<_CustomDropdownSheet<T>> {
 
     return SafeArea(
       top: false,
+      maintainBottomViewPadding: true,
       child: Container(
         constraints: BoxConstraints(maxHeight: maxH),
         decoration: BoxDecoration(

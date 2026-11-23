@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hisobchi_app/api_client.dart';
 import 'package:hisobchi_app/main.dart';
@@ -35,5 +36,62 @@ void main() {
     expect(find.text('Hisobchi Mobil'), findsOneWidget);
     expect(find.text('Ilovaga kirish'), findsOneWidget);
     expect(find.textContaining('8 xonali kirish kodi'), findsOneWidget);
+  });
+
+  testWidgets('sheetMaxHeight adapts cleanly for 3-button bar, full screen, and keyboard',
+      (WidgetTester tester) async {
+    Future<double> measureWith({
+      required Size size,
+      required EdgeInsets viewPadding,
+      EdgeInsets viewInsets = EdgeInsets.zero,
+      double fraction = 0.92,
+    }) async {
+      late double result;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: MediaQueryData(
+              size: size,
+              viewPadding: viewPadding,
+              padding: viewPadding,
+              viewInsets: viewInsets,
+            ),
+            child: Builder(
+              builder: (ctx) {
+                result = sheetMaxHeight(ctx, fraction: fraction);
+                return const SizedBox.shrink();
+              },
+            ),
+          ),
+        ),
+      );
+      return result;
+    }
+
+    const screenSize = Size(400, 800);
+    // 1. Phone WITH 3-button Android home bar (48dp bottom viewPadding)
+    final withHomeBar = await measureWith(
+      size: screenSize,
+      viewPadding: const EdgeInsets.only(top: 28, bottom: 48),
+    );
+    expect(withHomeBar, lessThanOrEqualTo(676.0));
+    expect(withHomeBar, equals(676.0));
+
+    // 2. Phone WITHOUT bottom bar (0dp bottom viewPadding)
+    final withoutBar = await measureWith(
+      size: screenSize,
+      viewPadding: const EdgeInsets.only(top: 28, bottom: 0),
+    );
+    expect(withoutBar, lessThanOrEqualTo(724.0));
+    expect(withoutBar - withHomeBar, equals(48.0));
+
+    // 3. Soft keyboard open (300dp viewInsets.bottom) shrinks height safely
+    final withKeyboard = await measureWith(
+      size: screenSize,
+      viewPadding: const EdgeInsets.only(top: 28, bottom: 48),
+      viewInsets: const EdgeInsets.only(bottom: 300),
+    );
+    expect(withKeyboard, equals(376.0));
+    expect(withKeyboard, lessThan(withHomeBar));
   });
 }

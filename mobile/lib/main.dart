@@ -13,13 +13,35 @@ import 'widgets.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  if (!kIsWeb) {
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  }
   runApp(const HisobchiApp());
 }
 
 /// Computes safe bottom padding inside modal bottom sheets for soft keyboard clearance.
-/// Callers already wrap sheet content in `SafeArea(top: false)` for system nav bars.
-double sheetBottomPadding(BuildContext context) {
-  return MediaQuery.viewInsetsOf(context).bottom + 14;
+/// Callers already wrap sheet content in `SafeArea(top: false, maintainBottomViewPadding: true)`.
+double sheetBottomPadding(BuildContext context, {double extra = 14}) {
+  return MediaQuery.viewInsetsOf(context).bottom + extra;
+}
+
+/// Computes the maximum modal bottom-sheet height that stays above the device's
+/// status bar, bottom system bar (3-button or gesture pill), soft keyboard,
+/// and Material 3 drag handle across every phone form factor.
+double sheetMaxHeight(BuildContext context, {double fraction = 0.88}) {
+  final mq = MediaQuery.of(context);
+  final available = mq.size.height -
+      mq.viewPadding.top -
+      mq.viewPadding.bottom -
+      mq.viewInsets.bottom -
+      kMinInteractiveDimension;
+  if (available <= 120.0) {
+    return available > 0 ? available : 120.0;
+  }
+  final target = mq.size.height * fraction;
+  final capped = target < available ? target : available;
+  final minBound = available < 240.0 ? available : 240.0;
+  return capped < minBound ? minBound : capped;
 }
 
 const Map<String, String> _kCyrToLat = {
@@ -246,6 +268,7 @@ Future<String?> showSupplierPickerDialog(
             .toList();
         return SafeArea(
           top: false,
+          maintainBottomViewPadding: true,
           child: Padding(
             padding: EdgeInsets.only(
               left: 18,
@@ -254,7 +277,7 @@ Future<String?> showSupplierPickerDialog(
             ),
             child: ConstrainedBox(
               constraints: BoxConstraints(
-                maxHeight: MediaQuery.sizeOf(ctx).height * 0.68,
+                maxHeight: sheetMaxHeight(ctx, fraction: 0.72),
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -484,13 +507,30 @@ class _HisobchiAppState extends State<HisobchiApp> {
       );
     }
 
-    return MaterialApp(
-      title: 'Hisobchi',
-      debugShowCheckedModeBanner: false,
-      theme: buildAppTheme(Brightness.light),
-      darkTheme: buildAppTheme(Brightness.dark),
-      themeMode: _themeMode,
-      home: home,
+    final isDark = _themeMode == ThemeMode.dark ||
+        (_themeMode == ThemeMode.system &&
+            MediaQuery.platformBrightnessOf(context) == Brightness.dark);
+    final overlayStyle = SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
+      statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
+      systemNavigationBarColor: Colors.transparent,
+      systemNavigationBarDividerColor: Colors.transparent,
+      systemNavigationBarContrastEnforced: false,
+      systemNavigationBarIconBrightness:
+          isDark ? Brightness.light : Brightness.dark,
+    );
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: overlayStyle,
+      child: MaterialApp(
+        title: 'Hisobchi',
+        debugShowCheckedModeBanner: false,
+        theme: buildAppTheme(Brightness.light),
+        darkTheme: buildAppTheme(Brightness.dark),
+        themeMode: _themeMode,
+        home: home,
+      ),
     );
   }
 }
@@ -1207,6 +1247,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
       useSafeArea: true,
       builder: (ctx) => SafeArea(
         top: false,
+        maintainBottomViewPadding: true,
         child: Padding(
           padding: EdgeInsets.only(
             left: 20,
@@ -1214,58 +1255,65 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
             top: 4,
             bottom: sheetBottomPadding(ctx),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: sheetMaxHeight(ctx, fraction: 0.90),
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Icon(icons[sourceType] ?? Icons.payments_rounded,
-                      color: AppTokens.brand),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      titles[sourceType] ?? 'Kassa amali',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
+                  Row(
+                    children: [
+                      Icon(icons[sourceType] ?? Icons.payments_rounded,
+                          color: AppTokens.brand),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          titles[sourceType] ?? 'Kassa amali',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
                       ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: amtCtrl,
+                    autofocus: true,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: const [UzsAmountInputFormatter()],
+                    style: const TextStyle(
+                      fontSize: 21,
+                      fontWeight: FontWeight.w900,
+                      fontFeatures: AppTokens.tabularNums,
                     ),
+                    decoration: const InputDecoration(
+                      labelText: "Summa (so'm)",
+                      hintText: '5 000 000',
+                      prefixIcon: Icon(Icons.payments_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: noteCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Izoh (kimdan / nima uchun)',
+                      prefixIcon: Icon(Icons.notes_rounded),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  FilledButton.icon(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    icon: const Icon(Icons.check_rounded),
+                    label: Text(existing != null ? 'Yangilash' : 'Saqlash'),
                   ),
                 ],
               ),
-              const SizedBox(height: 14),
-              TextField(
-                controller: amtCtrl,
-                autofocus: true,
-                keyboardType: TextInputType.number,
-                inputFormatters: const [UzsAmountInputFormatter()],
-                style: const TextStyle(
-                  fontSize: 21,
-                  fontWeight: FontWeight.w900,
-                  fontFeatures: AppTokens.tabularNums,
-                ),
-                decoration: const InputDecoration(
-                  labelText: "Summa (so'm)",
-                  hintText: '5 000 000',
-                  prefixIcon: Icon(Icons.payments_outlined),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: noteCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Izoh (kimdan / nima uchun)',
-                  prefixIcon: Icon(Icons.notes_rounded),
-                ),
-              ),
-              const SizedBox(height: 18),
-              FilledButton.icon(
-                onPressed: () => Navigator.pop(ctx, true),
-                icon: const Icon(Icons.check_rounded),
-                label: Text(existing != null ? 'Yangilash' : 'Saqlash'),
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -1363,48 +1411,56 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
       useSafeArea: true,
       builder: (ctx) => SafeArea(
         top: false,
+        maintainBottomViewPadding: true,
         child: Padding(
           padding: EdgeInsets.fromLTRB(20, 4, 20, sheetBottomPadding(ctx)),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                "Qarzni to'lash (${item.displayNum})",
-                style:
-                    const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: sheetMaxHeight(ctx, fraction: 0.90),
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    "Qarzni to'lash (${item.displayNum})",
+                    style:
+                        const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '${item.supplierName} — ${formatUzs(item.amount, withCurrency: true)}',
+                    style: const TextStyle(
+                        fontSize: 14.5, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                        backgroundColor: AppTokens.cashGreen),
+                    onPressed: () => Navigator.pop(ctx, 'cash'),
+                    icon: const Icon(Icons.payments_rounded),
+                    label: const Text("Naqd to'landi (kassadan ayriladi)"),
+                  ),
+                  const SizedBox(height: 10),
+                  FilledButton.icon(
+                    style:
+                        FilledButton.styleFrom(backgroundColor: AppTokens.cardBlue),
+                    onPressed: () => Navigator.pop(ctx, 'card'),
+                    icon: const Icon(Icons.credit_card_rounded),
+                    label: const Text("Karta orqali (naqddan ayrilmaydi)"),
+                  ),
+                  const SizedBox(height: 10),
+                  FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                        backgroundColor: AppTokens.transferPurple),
+                    onPressed: () => Navigator.pop(ctx, 'transfer'),
+                    icon: const Icon(Icons.account_balance_rounded),
+                    label: const Text("Perechesleniya / O'tkazma"),
+                  ),
+                ],
               ),
-              const SizedBox(height: 6),
-              Text(
-                '${item.supplierName} — ${formatUzs(item.amount, withCurrency: true)}',
-                style: const TextStyle(
-                    fontSize: 14.5, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                style: FilledButton.styleFrom(
-                    backgroundColor: AppTokens.cashGreen),
-                onPressed: () => Navigator.pop(ctx, 'cash'),
-                icon: const Icon(Icons.payments_rounded),
-                label: const Text("Naqd to'landi (kassadan ayriladi)"),
-              ),
-              const SizedBox(height: 10),
-              FilledButton.icon(
-                style:
-                    FilledButton.styleFrom(backgroundColor: AppTokens.cardBlue),
-                onPressed: () => Navigator.pop(ctx, 'card'),
-                icon: const Icon(Icons.credit_card_rounded),
-                label: const Text("Karta orqali (naqddan ayrilmaydi)"),
-              ),
-              const SizedBox(height: 10),
-              FilledButton.icon(
-                style: FilledButton.styleFrom(
-                    backgroundColor: AppTokens.transferPurple),
-                onPressed: () => Navigator.pop(ctx, 'transfer'),
-                icon: const Icon(Icons.account_balance_rounded),
-                label: const Text("Perechesleniya / O'tkazma"),
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -1490,9 +1546,21 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
               child: const Icon(Icons.add_rounded, size: 30),
             )
           : null,
-      bottomNavigationBar: SafeArea(
-        top: false,
-        child: NavigationBar(
+      bottomNavigationBar: DecoratedBox(
+        decoration: BoxDecoration(
+          color: isDarkCtx(context) ? AppTokens.cardDark : Colors.white,
+          border: Border(
+            top: BorderSide(
+              color: isDarkCtx(context)
+                  ? AppTokens.cardBorderDark
+                  : AppTokens.cardBorderLight,
+            ),
+          ),
+        ),
+        child: SafeArea(
+          top: false,
+          maintainBottomViewPadding: true,
+          child: NavigationBar(
           selectedIndex: _tabIndex,
           onDestinationSelected: _switchToTab,
           destinations: [
@@ -1533,6 +1601,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
               label: 'Smena',
             ),
           ],
+        ),
         ),
       ),
       body: _loading && _summary == null
@@ -3874,11 +3943,12 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
 
     return SafeArea(
       top: false,
+      maintainBottomViewPadding: true,
       child: Padding(
         padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxHeight: MediaQuery.sizeOf(context).height * 0.92,
+            maxHeight: sheetMaxHeight(context, fraction: 0.92),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -4769,14 +4839,19 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
 
     return SafeArea(
       top: false,
+      maintainBottomViewPadding: true,
       child: Padding(
         padding: EdgeInsets.only(
           left: 18,
           right: 18,
           bottom: sheetBottomPadding(context),
         ),
-        child: SingleChildScrollView(
-          child: Column(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: sheetMaxHeight(context, fraction: 0.90),
+          ),
+          child: SingleChildScrollView(
+            child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -5057,6 +5132,7 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                 ),
               ],
             ],
+            ),
           ),
         ),
       ),
@@ -5160,6 +5236,7 @@ class _HistorySessionsSheetState extends State<HistorySessionsSheet> {
   Widget build(BuildContext context) {
     return SafeArea(
       top: false,
+      maintainBottomViewPadding: true,
       child: Padding(
         padding: EdgeInsets.only(
           left: 18,
@@ -5167,7 +5244,7 @@ class _HistorySessionsSheetState extends State<HistorySessionsSheet> {
           bottom: sheetBottomPadding(context),
         ),
         child: SizedBox(
-          height: MediaQuery.sizeOf(context).height * 0.78,
+          height: sheetMaxHeight(context, fraction: 0.80),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -5421,6 +5498,7 @@ class _GlobalHistorySearchSheetState extends State<GlobalHistorySearchSheet> {
   Widget build(BuildContext context) {
     return SafeArea(
       top: false,
+      maintainBottomViewPadding: true,
       child: Padding(
         padding: EdgeInsets.only(
           left: 18,
@@ -5428,7 +5506,7 @@ class _GlobalHistorySearchSheetState extends State<GlobalHistorySearchSheet> {
           bottom: sheetBottomPadding(context),
         ),
         child: SizedBox(
-          height: MediaQuery.sizeOf(context).height * 0.78,
+          height: sheetMaxHeight(context, fraction: 0.80),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -5611,6 +5689,7 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
   Widget build(BuildContext context) {
     return SafeArea(
       top: false,
+      maintainBottomViewPadding: true,
       child: Padding(
         padding: EdgeInsets.only(
           left: 18,
@@ -5618,7 +5697,7 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
           bottom: sheetBottomPadding(context),
         ),
         child: SizedBox(
-          height: MediaQuery.sizeOf(context).height * 0.80,
+          height: sheetMaxHeight(context, fraction: 0.85),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -6032,62 +6111,70 @@ class _NasiyaLedgerViewState extends State<NasiyaLedgerView> {
       useSafeArea: true,
       builder: (ctx) => SafeArea(
         top: false,
+        maintainBottomViewPadding: true,
         child: Padding(
           padding: EdgeInsets.fromLTRB(20, 8, 20, sheetBottomPadding(ctx)),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                isDebt
-                    ? '➕ Qarzga mol olindi (Nasiya)'
-                    : '➖ Qarz uzildi (To\'lov)',
-                style:
-                    const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: supCtrl,
-                decoration: InputDecoration(
-                  labelText: 'Postavshik nomi',
-                  prefixIcon: const Icon(Icons.storefront_rounded),
-                  suffixIcon: buildSupplierInputSuffix(
-                    context: ctx,
-                    controller: supCtrl,
-                    suppliers: _suppliers,
-                    onPicked: (picked) async {
-                      supCtrl.text = picked;
-                    },
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: sheetMaxHeight(ctx, fraction: 0.90),
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    isDebt
+                        ? '➕ Qarzga mol olindi (Nasiya)'
+                        : '➖ Qarz uzildi (To\'lov)',
+                    style:
+                        const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
                   ),
-                ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: supCtrl,
+                    decoration: InputDecoration(
+                      labelText: 'Postavshik nomi',
+                      prefixIcon: const Icon(Icons.storefront_rounded),
+                      suffixIcon: buildSupplierInputSuffix(
+                        context: ctx,
+                        controller: supCtrl,
+                        suppliers: _suppliers,
+                        onPicked: (picked) async {
+                          supCtrl.text = picked;
+                        },
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: amtCtrl,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: const [UzsAmountInputFormatter()],
+                    style: const TextStyle(
+                        fontSize: 20, fontWeight: FontWeight.w900),
+                    decoration: const InputDecoration(
+                      labelText: "Summa (so'm)",
+                      prefixIcon: Icon(Icons.payments_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: noteCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Izoh (ixtiyoriy)',
+                      prefixIcon: Icon(Icons.notes_rounded),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    icon: const Icon(Icons.check_rounded),
+                    label: const Text('Saqlash'),
+                  ),
+                ],
               ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: amtCtrl,
-                keyboardType: TextInputType.number,
-                inputFormatters: const [UzsAmountInputFormatter()],
-                style: const TextStyle(
-                    fontSize: 20, fontWeight: FontWeight.w900),
-                decoration: const InputDecoration(
-                  labelText: "Summa (so'm)",
-                  prefixIcon: Icon(Icons.payments_outlined),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: noteCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Izoh (ixtiyoriy)',
-                  prefixIcon: Icon(Icons.notes_rounded),
-                ),
-              ),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                onPressed: () => Navigator.pop(ctx, true),
-                icon: const Icon(Icons.check_rounded),
-                label: const Text('Saqlash'),
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -6373,6 +6460,7 @@ class _PrixodItogSheetState extends State<PrixodItogSheet> {
   Widget build(BuildContext context) {
     return SafeArea(
       top: false,
+      maintainBottomViewPadding: true,
       child: Padding(
         padding: EdgeInsets.only(
           left: 18,
@@ -6380,7 +6468,7 @@ class _PrixodItogSheetState extends State<PrixodItogSheet> {
           bottom: sheetBottomPadding(context),
         ),
         child: SizedBox(
-          height: MediaQuery.sizeOf(context).height * 0.82,
+          height: sheetMaxHeight(context, fraction: 0.85),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -6665,6 +6753,7 @@ class _SupplierAndRoundingSettingsSheetState
   Widget build(BuildContext context) {
     return SafeArea(
       top: false,
+      maintainBottomViewPadding: true,
       child: Padding(
         padding: EdgeInsets.only(
           left: 18,
@@ -6672,7 +6761,7 @@ class _SupplierAndRoundingSettingsSheetState
           bottom: sheetBottomPadding(context),
         ),
         child: SizedBox(
-          height: MediaQuery.sizeOf(context).height * 0.84,
+          height: sheetMaxHeight(context, fraction: 0.85),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -7064,6 +7153,7 @@ class _SupplierProfileSheetState extends State<SupplierProfileSheet> {
 
     return SafeArea(
       top: false,
+      maintainBottomViewPadding: true,
       child: Padding(
         padding: EdgeInsets.only(
           left: 18,
@@ -7071,7 +7161,7 @@ class _SupplierProfileSheetState extends State<SupplierProfileSheet> {
           bottom: sheetBottomPadding(context),
         ),
         child: SizedBox(
-          height: MediaQuery.sizeOf(context).height * 0.85,
+          height: sheetMaxHeight(context, fraction: 0.85),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -7926,24 +8016,14 @@ class _TelegramGroupsAndBotSettingsSheetState
 
     return SafeArea(
       top: false,
-      child: FractionallySizedBox(
-        heightFactor: 0.92,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 10, 18, 14),
+      maintainBottomViewPadding: true,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(18, 4, 18, sheetBottomPadding(context)),
+        child: SizedBox(
+          height: sheetMaxHeight(context, fraction: 0.88),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Center(
-                child: Container(
-                  width: 44,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.withValues(alpha: 0.35),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
               Row(
                 children: [
                   const Icon(Icons.hub_rounded, color: AppTokens.brand),
