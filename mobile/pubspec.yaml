@@ -1,7 +1,7 @@
 ﻿name: hisobchi_app
 description: "Hisobchi вЂ” Kunlik kassa va nakladnoy mobil ilovasi (Telegram bot bilan sinxron)."
 publish_to: 'none'
-version: 1.0.26+26
+version: 1.0.27+27
 
 environment:
   sdk: ^3.14.0
