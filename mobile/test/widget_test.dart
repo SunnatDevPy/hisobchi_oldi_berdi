@@ -1,9 +1,15 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hisobchi_app/api_client.dart';
 import 'package:hisobchi_app/main.dart';
+import 'package:hisobchi_app/offline_sync.dart';
 import 'package:hisobchi_app/theme.dart';
 import 'package:hisobchi_app/widgets.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   test('formatUzs and parseUzsInput handle Uzbek amounts properly', () {
@@ -317,5 +323,115 @@ void main() {
     expect(find.text('PIN kodni tasdiqlang'), findsOneWidget);
     await enterDigits('4321');
     expect(completedPin, equals('4321'));
+  });
+
+  test('computeSupplierAnomalyWarning flags abnormal spikes and ignores normal amounts',
+      () {
+    expect(computeSupplierAnomalyWarning(450000, [400000, 420000]), isNull);
+    final warn = computeSupplierAnomalyWarning(1200000, [380000, 420000]);
+    expect(warn, isNotNull);
+    expect(warn, contains('+200%'));
+  });
+
+  test('OfflineOutboxStore queues offline writes and flushes FIFO when online',
+      () async {
+    SharedPreferences.setMockInitialValues({});
+    await OfflineOutboxStore.clearAll();
+
+    await OfflineOutboxStore.enqueueCash(
+      amount: 500000,
+      sourceType: 'main',
+      note: 'Oflayn kirim',
+    );
+    await OfflineOutboxStore.enqueueNakladnoy(
+      supplierName: 'Coca Cola',
+      amount: 320000,
+      paymentMode: 'cash',
+    );
+    expect(await OfflineOutboxStore.count(), equals(2));
+
+    final hitPaths = <String>[];
+    final mockHttp = MockClient((req) async {
+      hitPaths.add(req.url.path);
+      if (req.url.path == '/cash') {
+        return http.Response(
+          jsonEncode({
+            'id': 1,
+            'session_id': 1,
+            'amount': 500000,
+            'source_type': 'main',
+            'note': 'Oflayn kirim',
+            'created_at': '2026-11-24 12:00',
+            'time_hm': '12:00',
+          }),
+          200,
+        );
+      }
+      if (req.url.path == '/nakladnoy') {
+        return http.Response(jsonEncode({'ok': true}), 200);
+      }
+      return http.Response('Not found', 404);
+    });
+
+    final api = HisobchiApiClient(
+      baseUrl: 'https://hisobchi.domen.uz',
+      accessToken: 'test-token',
+      httpClient: mockHttp,
+    );
+    final res = await OfflineOutboxStore.flushAll(api);
+    expect(res.sent, equals(2));
+    expect(res.remaining, equals(0));
+    expect(hitPaths, equals(['/cash', '/nakladnoy']));
+    expect(await OfflineOutboxStore.count(), equals(0));
+  });
+
+  testWidgets('SwipeableNakladnoyTile triggers quickPay and duplicate without dismissing',
+      (WidgetTester tester) async {
+    var paid = 0;
+    var duplicated = 0;
+    const item = NakladnoyItem(
+      id: 42,
+      sessionId: 1,
+      displayNum: '#42',
+      supplierName: 'Coca Cola',
+      amount: 450000,
+      paymentMethod: 'cash',
+      isDebt: true,
+      note: '',
+      hasPhoto: false,
+      inGroup: true,
+      createdAt: '2026-11-20 10:00',
+      timeHm: '10:00',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: Scaffold(
+          body: Padding(
+            padding: const EdgeInsets.all(16),
+            child: SwipeableNakladnoyTile(
+              item: item,
+              onTap: () {},
+              onQuickPay: () => paid++,
+              onDuplicate: () => duplicated++,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    // Swipe right -> Quick pay
+    await tester.drag(find.byType(SwipeableNakladnoyTile), const Offset(280, 0));
+    await tester.pumpAndSettle();
+    expect(paid, equals(1));
+    expect(find.text('Coca Cola'), findsOneWidget);
+
+    // Swipe left -> Duplicate
+    await tester.drag(
+        find.byType(SwipeableNakladnoyTile), const Offset(-280, 0));
+    await tester.pumpAndSettle();
+    expect(duplicated, equals(1));
+    expect(find.text('Coca Cola'), findsOneWidget);
   });
 }

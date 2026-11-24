@@ -1215,7 +1215,7 @@ class _DonutStatisticsCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Dumaloq Statistika (Xarajatlar ulushi)',
+                        'Statistika',
                         style: TextStyle(
                           fontSize: 15.5,
                           fontWeight: FontWeight.w900,
@@ -1223,7 +1223,7 @@ class _DonutStatisticsCard extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        '$reportDate sanadagi nakladnoylar taqsimoti',
+                        'Xarajatlar taqsimoti • $reportDate',
                         style: TextStyle(
                           fontSize: 12,
                           color: textSecondaryOf(context),
@@ -1523,9 +1523,7 @@ class _TrendLineStatisticsCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        isHourly
-                            ? 'Chiziqli Statistika (Soatlik)'
-                            : 'Chiziqli Statistika (Kunlik)',
+                        'Dinamika',
                         style: TextStyle(
                           fontSize: 15.5,
                           fontWeight: FontWeight.w900,
@@ -2203,21 +2201,21 @@ class PaymentModeSelector extends StatelessWidget {
       'key': 'cash',
       'label': 'Naqd',
       'icon': Icons.payments_rounded,
-      'sub': "Qo'ldagi naqd puldan ayriladi (standart)",
+      'sub': 'Kassadan ayriladi',
       'color': AppTokens.cashGreen,
     },
     {
       'key': 'card',
       'label': 'Karta',
       'icon': Icons.credit_card_rounded,
-      'sub': 'Naqddan ayrilmaydi — faqat statistikada',
+      'sub': 'Statistikada',
       'color': AppTokens.cardBlue,
     },
     {
       'key': 'transfer',
       'label': "O'tkazma",
       'icon': Icons.account_balance_rounded,
-      'sub': 'Perechesleniya — naqddan ayrilmaydi',
+      'sub': 'Perechesleniya',
       'color': AppTokens.transferPurple,
     },
     {
@@ -4492,6 +4490,130 @@ class _PinLockScreenState extends State<PinLockScreen>
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Computes a concise Uzbek warning if [enteredAmount] spikes >=1.75x above [recentAmounts] average.
+String? computeSupplierAnomalyWarning(
+  double? enteredAmount,
+  List<double> recentAmounts,
+) {
+  if (enteredAmount == null || enteredAmount <= 0 || recentAmounts.length < 2) {
+    return null;
+  }
+  final valid = recentAmounts.where((e) => e > 0).toList();
+  if (valid.length < 2) return null;
+  final avg = valid.fold<double>(0, (a, b) => a + b) / valid.length;
+  if (avg <= 0) return null;
+  if (enteredAmount >= avg * 1.75 && (enteredAmount - avg) >= 150000) {
+    final pct = ((enteredAmount / avg - 1.0) * 100).round();
+    return "Odatdagidan +$pct% ko'p (o'rtacha ${formatUzs(avg)} so'm)";
+  }
+  return null;
+}
+
+/// Wraps [NakladnoyListCard] with spring-back swipe actions:
+/// - Swipe Right (`startToEnd`): quick pay debt ("To'landi")
+/// - Swipe Left (`endToStart`): duplicate ("Nusxa")
+class SwipeableNakladnoyTile extends StatelessWidget {
+  final NakladnoyItem item;
+  final VoidCallback onTap;
+  final VoidCallback? onQuickPay;
+  final VoidCallback? onDuplicate;
+
+  const SwipeableNakladnoyTile({
+    super.key,
+    required this.item,
+    required this.onTap,
+    this.onQuickPay,
+    this.onDuplicate,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final canPay = item.isDebt && onQuickPay != null;
+    final canDup = onDuplicate != null;
+    final card = NakladnoyListCard(
+      item: item,
+      onTap: onTap,
+      onQuickPay: onQuickPay,
+    );
+    if (!canPay && !canDup) {
+      return card;
+    }
+
+    final direction = (canPay && canDup)
+        ? DismissDirection.horizontal
+        : (canPay ? DismissDirection.startToEnd : DismissDirection.endToStart);
+
+    return Dismissible(
+      key: ValueKey<String>('swipe_nak_${item.id}_${item.isDebt}'),
+      direction: direction,
+      dismissThresholds: const {
+        DismissDirection.startToEnd: 0.28,
+        DismissDirection.endToStart: 0.28,
+      },
+      confirmDismiss: (dir) async {
+        HapticFeedback.mediumImpact();
+        if (dir == DismissDirection.startToEnd && canPay) {
+          onQuickPay?.call();
+        } else if (dir == DismissDirection.endToStart && canDup) {
+          onDuplicate?.call();
+        }
+        return false;
+      },
+      background: Container(
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        decoration: BoxDecoration(
+          color: AppTokens.cashGreen.withValues(alpha: 0.18),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: AppTokens.cashGreen.withValues(alpha: 0.45),
+          ),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.check_circle_rounded, color: AppTokens.cashGreen),
+            SizedBox(width: 8),
+            Text(
+              "To'landi",
+              style: TextStyle(
+                color: AppTokens.cashGreen,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ],
+        ),
+      ),
+      secondaryBackground: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        decoration: BoxDecoration(
+          color: AppTokens.brandViolet.withValues(alpha: 0.18),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: AppTokens.brandViolet.withValues(alpha: 0.45),
+          ),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Nusxa',
+              style: TextStyle(
+                color: AppTokens.brandViolet,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            SizedBox(width: 8),
+            Icon(Icons.copy_rounded, color: AppTokens.brandViolet),
+          ],
+        ),
+      ),
+      child: card,
     );
   }
 }

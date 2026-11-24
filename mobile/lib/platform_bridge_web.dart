@@ -74,10 +74,11 @@ void syncTelegramChromeColors({required bool isDark}) {
   } catch (_) {}
 }
 
-Future<void> saveAndShareExcel({
+Future<void> saveAndShareBinaryFile({
   required Future<Uint8List> Function() fetchBytes,
   required String filename,
   required String authenticatedDownloadUrl,
+  String shareText = '',
 }) async {
   try {
     if (_jsTryTelegramDownload(
@@ -89,6 +90,18 @@ Future<void> saveAndShareExcel({
   } catch (_) {}
   final bytes = await fetchBytes();
   _jsDownloadBlob(bytes.toJS, filename.toJS);
+}
+
+Future<void> saveAndShareExcel({
+  required Future<Uint8List> Function() fetchBytes,
+  required String filename,
+  required String authenticatedDownloadUrl,
+}) {
+  return saveAndShareBinaryFile(
+    fetchBytes: fetchBytes,
+    filename: filename,
+    authenticatedDownloadUrl: authenticatedDownloadUrl,
+  );
 }
 
 Future<PickedBytesFile?> pickYesPosDocument() async {
@@ -117,6 +130,12 @@ Future<bool> authenticateBiometric({
   String subtitle = 'Ilovaga kirish uchun barmoq izini tasdiqlang',
 }) async =>
     false;
+
+Future<String> startVoiceRecording() async => 'UNSUPPORTED';
+
+Future<PickedBytesFile?> stopVoiceRecording() async => null;
+
+Future<void> cancelVoiceRecording() async {}
 
 Future<void> showInAppApkUpdateDialog({
   required BuildContext context,

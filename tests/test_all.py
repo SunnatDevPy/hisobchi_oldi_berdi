@@ -2618,5 +2618,99 @@ def test_telegram_apk_login_deeplink_and_health_bot_username(tmp_path: Path, mon
         get_settings.cache_clear()
 
 
+def test_voice_command_anomaly_check_and_supplier_sverka_pdf(tmp_path: Path, monkeypatch):
+    import httpx
+    import api.app as api_app_mod
+    import api.auth as api_auth_mod
+    from bot.auth import clear_role_cache
+    from config import get_settings
+
+    monkeypatch.setenv("BOT_TOKEN", "987654:TEST_BOT_TOKEN_VOICE_PDF")
+    monkeypatch.setenv("ADMIN_IDS", "111")
+    monkeypatch.setenv("API_PUBLIC_URL", "https://hisobchi.okaposai.uz")
+    get_settings.cache_clear()
+    clear_role_cache()
+
+    # 1. Supplier spike anomaly detector
+    assert api_app_mod._compute_supplier_anomaly(420_000, [380_000, 400_000]) is None
+    warn = api_app_mod._compute_supplier_anomaly(1_200_000, [380_000, 420_000])
+    assert warn is not None and "+200%" in warn
+
+    async def scenario() -> None:
+        db_file = tmp_path / "voice_pdf.db"
+        eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+        monkeypatch.setattr(api_app_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_auth_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_app_mod, "get_bot", lambda: None)
+        api_auth_mod.clear_auth_memory_state()
+        try:
+            await init_db(engine_override=eng, session_maker_override=maker)
+            async with maker() as db:
+                raw_token, _ = await api_auth_mod.issue_api_token(
+                    db, user_id=111, device_name="Pytest APK"
+                )
+            headers = {"Authorization": f"Bearer {raw_token}"}
+
+            app = api_app_mod.create_api_app()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                # 2. Voice/text command parsing endpoint (zero-token deterministic text)
+                r_cash = await client.post(
+                    "/ai/voice",
+                    data={"text": "Kassaga 2 million oldim"},
+                    headers=headers,
+                )
+                assert r_cash.status_code == 200
+                j_cash = r_cash.json()
+                assert j_cash["ok"] is True
+                assert j_cash["intent"] == "cash_in"
+                assert j_cash["amount"] == 2_000_000.0
+
+                r_sup = await client.post(
+                    "/ai/voice",
+                    data={"text": "Coca Cola ga 450 ming berdim"},
+                    headers=headers,
+                )
+                assert r_sup.status_code == 200
+                j_sup = r_sup.json()
+                assert j_sup["ok"] is True
+                assert j_sup["intent"] == "pay_supplier"
+                assert j_sup["amount"] == 450_000.0
+                assert "coca" in (j_sup["supplier_name"] or "").lower()
+
+                # Create a nakladnoy and verify 1-page PDF Akt-Sverka export
+                r_nak = await client.post(
+                    "/nakladnoy",
+                    data={
+                        "supplier_name": "Coca Cola",
+                        "amount": "450000",
+                        "payment_mode": "debt",
+                        "send_to_group": "false",
+                    },
+                    headers=headers,
+                )
+                assert r_nak.status_code == 200
+
+                r_pdf = await client.get(
+                    "/suppliers/sverka-pdf",
+                    params={"supplier": "Coca Cola"},
+                    headers=headers,
+                )
+                assert r_pdf.status_code == 200
+                assert r_pdf.headers["content-type"].startswith("application/pdf")
+                assert r_pdf.content.startswith(b"%PDF-")
+                assert len(r_pdf.content) > 1000
+        finally:
+            await eng.dispose()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        clear_role_cache()
+        get_settings.cache_clear()
+
+
+
 
 

@@ -3,6 +3,8 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'offline_sync.dart';
+
 class ApiException implements Exception {
   final String message;
   final int statusCode;
@@ -212,6 +214,7 @@ class HisobchiApiClient {
   String? accessToken;
   String role;
   int? userId;
+  bool lastFetchUsedOfflineCache = false;
   final http.Client _http;
 
   HisobchiApiClient({
@@ -400,10 +403,25 @@ class HisobchiApiClient {
   }
 
   Future<StatusSummary> getStatus() async {
-    final res = await _http
-        .get(_uri('/status'), headers: _headers())
-        .timeout(const Duration(seconds: 15));
-    return StatusSummary.fromJson(_decodeJson(res));
+    try {
+      final res = await _http
+          .get(_uri('/status'), headers: _headers())
+          .timeout(const Duration(seconds: 15));
+      final json = _decodeJson(res);
+      lastFetchUsedOfflineCache = false;
+      await OfflineCacheStore.saveJson(OfflineCacheStore.slotStatus, json);
+      return StatusSummary.fromJson(json);
+    } catch (e) {
+      if (isNetworkOfflineError(e)) {
+        final cached =
+            await OfflineCacheStore.loadJson(OfflineCacheStore.slotStatus);
+        if (cached != null) {
+          lastFetchUsedOfflineCache = true;
+          return StatusSummary.fromJson(cached);
+        }
+      }
+      rethrow;
+    }
   }
 
   Future<CashTxItem> addCash({
@@ -451,14 +469,33 @@ class HisobchiApiClient {
   }
 
   Future<List<String>> getSuppliers({String query = ''}) async {
-    final res = await _http
-        .get(_uri('/suppliers', query.isEmpty ? null : {'q': query}),
-            headers: _headers())
-        .timeout(const Duration(seconds: 10));
-    final data = _decodeJson(res);
-    return ((data['suppliers'] as List?) ?? const [])
-        .map((e) => e.toString())
-        .toList();
+    try {
+      final res = await _http
+          .get(_uri('/suppliers', query.isEmpty ? null : {'q': query}),
+              headers: _headers())
+          .timeout(const Duration(seconds: 10));
+      final data = _decodeJson(res);
+      if (query.isEmpty) {
+        await OfflineCacheStore.saveJson(OfflineCacheStore.slotSuppliers, data);
+      }
+      return ((data['suppliers'] as List?) ?? const [])
+          .map((e) => e.toString())
+          .toList();
+    } catch (e) {
+      if (isNetworkOfflineError(e)) {
+        final cached =
+            await OfflineCacheStore.loadJson(OfflineCacheStore.slotSuppliers);
+        if (cached != null) {
+          final all = ((cached['suppliers'] as List?) ?? const [])
+              .map((e) => e.toString())
+              .toList();
+          if (query.isEmpty) return all;
+          final q = query.toLowerCase();
+          return all.where((s) => s.toLowerCase().contains(q)).toList();
+        }
+      }
+      rethrow;
+    }
   }
 
   Future<List<double>> getSupplierAmounts(String supplier) async {
@@ -583,13 +620,28 @@ class HisobchiApiClient {
   }
 
   Future<List<NakladnoyItem>> getUnpaidDebts() async {
-    final res = await _http
-        .get(_uri('/debts'), headers: _headers())
-        .timeout(const Duration(seconds: 15));
-    final data = _decodeJson(res);
-    return ((data['items'] as List?) ?? const [])
-        .map((e) => NakladnoyItem.fromJson(e as Map<String, dynamic>))
-        .toList();
+    try {
+      final res = await _http
+          .get(_uri('/debts'), headers: _headers())
+          .timeout(const Duration(seconds: 15));
+      final data = _decodeJson(res);
+      await OfflineCacheStore.saveJson(OfflineCacheStore.slotDebts, data);
+      return ((data['items'] as List?) ?? const [])
+          .map((e) => NakladnoyItem.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      if (isNetworkOfflineError(e)) {
+        final cached =
+            await OfflineCacheStore.loadJson(OfflineCacheStore.slotDebts);
+        if (cached != null) {
+          lastFetchUsedOfflineCache = true;
+          return ((cached['items'] as List?) ?? const [])
+              .map((e) => NakladnoyItem.fromJson(e as Map<String, dynamic>))
+              .toList();
+        }
+      }
+      rethrow;
+    }
   }
 
   Future<Map<String, dynamic>> closeDay(double actualCountedCash) async {
@@ -652,6 +704,53 @@ class HisobchiApiClient {
     return AiExtractResult.fromJson(_decodeJson(res));
   }
 
+  Future<Map<String, dynamic>> parseVoiceCommand({
+    Uint8List? audioBytes,
+    String filename = 'voice.m4a',
+    String text = '',
+  }) async {
+    final req = http.MultipartRequest('POST', _uri('/ai/voice'));
+    if (accessToken != null) {
+      req.headers['Authorization'] = 'Bearer $accessToken';
+    }
+    if (text.trim().isNotEmpty) {
+      req.fields['text'] = text.trim();
+    }
+    if (audioBytes != null && audioBytes.isNotEmpty) {
+      req.files.add(
+        http.MultipartFile.fromBytes(
+          'audio',
+          audioBytes,
+          filename: filename.isNotEmpty ? filename : 'voice.m4a',
+        ),
+      );
+    }
+    final streamed = await _http.send(req).timeout(const Duration(seconds: 40));
+    final res = await http.Response.fromStream(streamed);
+    return _decodeJson(res);
+  }
+
+  Future<Uint8List> downloadSupplierSverkaPdf(
+    String supplier, {
+    String? dateFrom,
+    String? dateTo,
+  }) async {
+    final query = <String, String>{
+      'supplier': supplier.trim(),
+      if (dateFrom != null && dateFrom.isNotEmpty) 'date_from': dateFrom,
+      if (dateTo != null && dateTo.isNotEmpty) 'date_to': dateTo,
+    };
+    final res = await _http
+        .get(_uri('/suppliers/sverka-pdf', query),
+            headers: _headers(jsonBody: false))
+        .timeout(const Duration(seconds: 30));
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      return res.bodyBytes;
+    }
+    _decodeJson(res);
+    throw const ApiException('PDF Sverka yuklashda xatolik');
+  }
+
   Uri get apkDownloadUri => _uri('/download/hisobchi.apk');
 
   Future<ApkVersionInfo> checkApkVersion() async {
@@ -673,13 +772,28 @@ class HisobchiApiClient {
 
   // Stage 1: History sessions, detail, reopen & global search
   Future<List<HistorySessionItem>> getHistorySessions({int limit = 25}) async {
-    final res = await _http
-        .get(_uri('/history/sessions', {'limit': '$limit'}), headers: _headers())
-        .timeout(const Duration(seconds: 15));
-    final data = _decodeJson(res);
-    return ((data['sessions'] as List?) ?? const [])
-        .map((e) => HistorySessionItem.fromJson(e as Map<String, dynamic>))
-        .toList();
+    try {
+      final res = await _http
+          .get(_uri('/history/sessions', {'limit': '$limit'}),
+              headers: _headers())
+          .timeout(const Duration(seconds: 15));
+      final data = _decodeJson(res);
+      await OfflineCacheStore.saveJson(OfflineCacheStore.slotHistory, data);
+      return ((data['sessions'] as List?) ?? const [])
+          .map((e) => HistorySessionItem.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      if (isNetworkOfflineError(e)) {
+        final cached =
+            await OfflineCacheStore.loadJson(OfflineCacheStore.slotHistory);
+        if (cached != null) {
+          return ((cached['sessions'] as List?) ?? const [])
+              .map((e) => HistorySessionItem.fromJson(e as Map<String, dynamic>))
+              .toList();
+        }
+      }
+      rethrow;
+    }
   }
 
   Future<StatusSummary> getHistorySessionDetail(int sessionId) async {
@@ -1209,6 +1323,7 @@ class AiExtractResult {
   final double? originalAmount;
   final bool isClear;
   final List<double> recentAmounts;
+  final String? anomalyWarning;
   final MathCheckResult? mathCheck;
   final String? errorCode;
   final String message;
@@ -1222,6 +1337,7 @@ class AiExtractResult {
     this.originalAmount,
     required this.isClear,
     required this.recentAmounts,
+    this.anomalyWarning,
     this.mathCheck,
     this.errorCode,
     required this.message,
@@ -1240,6 +1356,7 @@ class AiExtractResult {
         recentAmounts: ((j['recent_amounts'] as List?) ?? const [])
             .map((e) => (e as num).toDouble())
             .toList(),
+        anomalyWarning: j['anomaly_warning']?.toString(),
         mathCheck: j['math_check'] is Map<String, dynamic>
             ? MathCheckResult.fromJson(j['math_check'] as Map<String, dynamic>)
             : null,

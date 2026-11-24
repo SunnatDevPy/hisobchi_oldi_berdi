@@ -135,7 +135,8 @@ from database.models import CashTransaction, DailyCashSession, NakladnoyPayment
 from database.session import async_session_maker
 from services.backup import send_backup
 from services.excel_export import build_range_excel, build_session_excel, build_sverka_excel
-from services.gemini_ai import extract_nakladnoy_from_image
+from services.gemini_ai import extract_nakladnoy_from_image, parse_voice_or_text
+from services.pdf_sverka import generate_supplier_sverka_pdf
 from services.prixod_parser import parse_manual_itog_text, parse_yespos_table
 
 WEBAPP_DIR = BASE_DIR / "data" / "webapp"
@@ -266,6 +267,25 @@ def _require_admin_user(user: AuthenticatedUser) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Ushbu bo'lim faqat admin huquqiga ega foydalanuvchi uchun.",
         )
+
+
+def _compute_supplier_anomaly(
+    amount: Optional[float], recent_amounts: list[float]
+) -> Optional[str]:
+    """Return a concise Uzbek warning if amount spikes >=1.75x above supplier's recent average."""
+    if amount is None or amount <= 0 or len(recent_amounts) < 2:
+        return None
+    valid = [float(x) for x in recent_amounts if float(x) > 0]
+    if len(valid) < 2:
+        return None
+    avg = sum(valid) / len(valid)
+    if avg <= 0:
+        return None
+    if amount >= avg * 1.75 and (amount - avg) >= 150_000:
+        pct = int(round((amount / avg - 1.0) * 100))
+        avg_str = f"{int(round(avg)):,}".replace(",", " ")
+        return f"Odatdagidan +{pct}% ko'p (o'rtacha {avg_str} so'm)"
+    return None
 
 
 def create_api_app() -> FastAPI:
@@ -667,13 +687,11 @@ def create_api_app() -> FastAPI:
             "suppliers": suppliers_list,
         }
 
-    @app.get("/suppliers/profile")
-    async def get_supplier_profile_endpoint(
-        supplier: str = Query(..., min_length=1),
-        limit: int = Query(default=60, ge=1, le=200),
-        date_from: Optional[str] = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
-        date_to: Optional[str] = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
-        user: AuthenticatedUser = Depends(get_current_user),
+    async def _build_supplier_profile_data(
+        supplier: str,
+        limit: int = 60,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
     ) -> dict:
         if date_from and date_to and date_from > date_to:
             date_from, date_to = date_to, date_from
@@ -762,6 +780,46 @@ def create_api_app() -> FastAPI:
             "items": items,
         }
 
+    @app.get("/suppliers/profile")
+    async def get_supplier_profile_endpoint(
+        supplier: str = Query(..., min_length=1),
+        limit: int = Query(default=60, ge=1, le=200),
+        date_from: Optional[str] = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        date_to: Optional[str] = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        return await _build_supplier_profile_data(
+            supplier=supplier,
+            limit=limit,
+            date_from=date_from,
+            date_to=date_to,
+        )
+
+    @app.get("/suppliers/sverka-pdf")
+    async def export_supplier_sverka_pdf_endpoint(
+        supplier: str = Query(..., min_length=1),
+        date_from: Optional[str] = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        date_to: Optional[str] = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> StreamingResponse:
+        profile = await _build_supplier_profile_data(
+            supplier=supplier,
+            limit=100,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        pdf_bytes = await asyncio.to_thread(generate_supplier_sverka_pdf, profile)
+        safe_sup = "".join(
+            ch if ch.isalnum() or ch in ("_", "-") else "_"
+            for ch in str(profile.get("supplier_name") or "postavshik")
+        ).strip("_") or "postavshik"
+        filename = f"Sverka_{safe_sup}_{today_iso()}.pdf"
+        return StreamingResponse(
+            io.BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
     @app.post("/ai/extract")
     async def ai_extract_nakladnoy(
         photo: UploadFile = File(...),
@@ -840,7 +898,65 @@ def create_api_app() -> FastAPI:
             "original_amount": float(amount_raw) if amount_raw else None,
             "is_clear": bool(res.get("is_clear")),
             "recent_amounts": amounts,
+            "anomaly_warning": _compute_supplier_anomaly(rounded, amounts),
             "math_check": math_check,
+            "error_code": err,
+            "message": messages.get(err or "", ""),
+        }
+
+    @app.post("/ai/voice")
+    async def ai_parse_voice_command(
+        audio: Optional[UploadFile] = File(default=None),
+        text: str = Form(default=""),
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> dict:
+        """Parse spoken Uzbek voice clip or text command into cash/nakladnoy intent."""
+        raw_audio: Optional[bytes] = None
+        mime_type = "audio/mp4"
+        if audio is not None:
+            raw_audio = await audio.read()
+            if raw_audio and len(raw_audio) > 10 * 1024 * 1024:
+                raise HTTPException(status_code=400, detail="Ovoz fayli 10 MB dan oshmasligi kerak")
+            fname = (audio.filename or "").lower()
+            ctype = (audio.content_type or "").lower()
+            if fname.endswith((".m4a", ".mp4", ".aac")) or "mp4" in ctype or "aac" in ctype:
+                mime_type = "audio/mp4"
+            elif fname.endswith(".wav") or "wav" in ctype:
+                mime_type = "audio/wav"
+            elif ctype.startswith("audio/"):
+                mime_type = ctype
+            else:
+                mime_type = "audio/ogg"
+
+        if not raw_audio and not text.strip():
+            raise HTTPException(status_code=400, detail="Ovoz yoki matn yuborilmadi")
+
+        res = await parse_voice_or_text(
+            audio_bytes=raw_audio if raw_audio else None,
+            text=text.strip() or None,
+            mime_type=mime_type,
+        )
+        err = res.get("error_code")
+        intent = str(res.get("intent") or "unknown")
+        amount = res.get("amount")
+        sup_raw = res.get("supplier_name")
+        resolved_sup: Optional[str] = None
+        if sup_raw:
+            async with async_session_maker() as db:
+                canonical, suggestion = await resolve_supplier_name(db, str(sup_raw))
+                resolved_sup = suggestion or canonical or str(sup_raw)
+
+        messages = {
+            "no_key": "AI kaliti sozlanmagan",
+            "rate_limit": "AI limiti tugadi, matn bilan yozing",
+            "api_error": "Ovozni tushunib bo'lmadi",
+        }
+        return {
+            "ok": err is None and intent != "unknown",
+            "intent": intent,
+            "amount": float(amount) if amount is not None else None,
+            "supplier_name": resolved_sup,
+            "transcript": str(res.get("transcript") or text.strip()),
             "error_code": err,
             "message": messages.get(err or "", ""),
         }

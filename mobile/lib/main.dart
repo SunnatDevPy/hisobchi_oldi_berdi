@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
@@ -7,6 +9,7 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_client.dart';
+import 'offline_sync.dart';
 import 'platform_bridge.dart';
 import 'theme.dart';
 import 'version.dart';
@@ -425,7 +428,8 @@ class HisobchiApp extends StatefulWidget {
   State<HisobchiApp> createState() => _HisobchiAppState();
 }
 
-class _HisobchiAppState extends State<HisobchiApp> {
+class _HisobchiAppState extends State<HisobchiApp> with WidgetsBindingObserver {
+  static const Duration _autoLockTimeout = Duration(minutes: 3);
   late final HisobchiApiClient _api;
   ThemeMode _themeMode = ThemeMode.system;
   bool _initializing = true;
@@ -435,13 +439,40 @@ class _HisobchiAppState extends State<HisobchiApp> {
   String? _savedPin;
   bool _bioEnabled = false;
   String? _webAuthError;
+  DateTime? _backgroundedAt;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _api = widget.apiOverride ??
         HisobchiApiClient(baseUrl: resolveDefaultApiBaseUrl());
     _bootstrap();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (kIsWeb) return;
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _backgroundedAt ??= DateTime.now();
+    } else if (state == AppLifecycleState.resumed) {
+      final bgAt = _backgroundedAt;
+      _backgroundedAt = null;
+      if (bgAt != null &&
+          _api.isAuthenticated &&
+          _savedPin != null &&
+          !_pinLocked &&
+          DateTime.now().difference(bgAt) >= _autoLockTimeout) {
+        setState(() => _pinLocked = true);
+      }
+    }
   }
 
   Future<void> _bootstrap() async {
@@ -1235,7 +1266,8 @@ class MainWorkspaceScreen extends StatefulWidget {
   State<MainWorkspaceScreen> createState() => _MainWorkspaceScreenState();
 }
 
-class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
+class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
+    with WidgetsBindingObserver {
   int _tabIndex = 0;
   late final PageController _pageController;
   int? _programmaticTargetTab;
@@ -1260,7 +1292,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   List<Map<String, dynamic>> _dailySeries = [];
   String _seriesGranularity = 'daily';
   String _activePeriodKey = '7d';
-  String _periodLabel = 'Oxirgi 7 kunlik dinamika';
+  String _periodLabel = '7 kunlik';
   String? _customDateFrom;
   String? _customDateTo;
 
@@ -1268,18 +1300,69 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   bool _updatingApk = false;
   double _refreshTurns = 0.0;
   int _dataAnimSeed = 0;
+  Timer? _outboxTimer;
+  int _outboxCount = 0;
+  bool _syncingOutbox = false;
+  bool _isOfflineMode = false;
+  double? _voiceCountedCashPreset;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _pageController = PageController(initialPage: _tabIndex);
+    _refreshOutboxBadge();
+    _outboxTimer = Timer.periodic(
+      const Duration(seconds: 20),
+      (_) => _trySyncOutbox(silent: true),
+    );
     _refreshAll();
   }
 
   @override
   void dispose() {
+    _outboxTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     _pageController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _trySyncOutbox(silent: true);
+    }
+  }
+
+  Future<void> _refreshOutboxBadge() async {
+    final c = await OfflineOutboxStore.count();
+    if (mounted && c != _outboxCount) {
+      setState(() => _outboxCount = c);
+    }
+  }
+
+  Future<void> _trySyncOutbox({bool silent = false}) async {
+    if (_syncingOutbox) return;
+    final pending = await OfflineOutboxStore.count();
+    if (pending == 0) {
+      if (mounted && _outboxCount != 0) setState(() => _outboxCount = 0);
+      return;
+    }
+    if (mounted) setState(() => _syncingOutbox = true);
+    try {
+      final res = await OfflineOutboxStore.flushAll(widget.api);
+      if (!mounted) return;
+      setState(() => _outboxCount = res.remaining);
+      if (res.sent > 0) {
+        _showSnack("✅ Oflayn ${res.sent} ta amal yuborildi!");
+        await _refreshAll();
+      } else if (!silent && res.remaining > 0) {
+        _showSnack("Internet ulanmagan (${res.remaining} ta navbatda)",
+            isError: true);
+      }
+    } finally {
+      if (mounted) setState(() => _syncingOutbox = false);
+    }
   }
 
   Future<void> _switchToTab(int index, {bool animate = true}) async {
@@ -1338,12 +1421,18 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
       _error = null;
     });
     try {
+      final prePending = await OfflineOutboxStore.count();
+      if (prePending > 0) {
+        await OfflineOutboxStore.flushAll(widget.api);
+      }
+      final postPending = await OfflineOutboxStore.count();
       final results = await Future.wait([
         widget.api.getStatus(),
         widget.api.getUnpaidDebts(),
       ]);
+      final usedOffline = widget.api.lastFetchUsedOfflineCache;
       ApkVersionInfo? ver;
-      if (!kIsWeb) {
+      if (!kIsWeb && !usedOffline) {
         try {
           ver = await widget.api.checkApkVersion();
         } catch (_) {}
@@ -1354,15 +1443,17 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
       } catch (_) {}
       List<Map<String, dynamic>> series = _dailySeries;
       String granularity = _seriesGranularity;
-      try {
-        final p = await _fetchPeriodStatsForKey(_activePeriodKey);
-        series = ((p['daily_series'] as List?) ?? const [])
-            .map((e) => Map<String, dynamic>.from(e as Map))
-            .toList();
-        granularity = (p['granularity'] ?? 'daily').toString();
-      } catch (_) {}
+      if (!usedOffline) {
+        try {
+          final p = await _fetchPeriodStatsForKey(_activePeriodKey);
+          series = ((p['daily_series'] as List?) ?? const [])
+              .map((e) => Map<String, dynamic>.from(e as Map))
+              .toList();
+          granularity = (p['granularity'] ?? 'daily').toString();
+        } catch (_) {}
+      }
       StatusSummary? refreshedViewed;
-      if (_viewedSessionSummary != null) {
+      if (_viewedSessionSummary != null && !usedOffline) {
         try {
           refreshedViewed = await widget.api
               .getHistorySessionDetail(_viewedSessionSummary!.sessionId);
@@ -1375,10 +1466,12 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
           _historySessions = hist;
           _dailySeries = series;
           _seriesGranularity = granularity;
-          if (_viewedSessionSummary != null) {
+          if (_viewedSessionSummary != null && refreshedViewed != null) {
             _viewedSessionSummary = refreshedViewed;
           }
           if (ver != null) _remoteVersion = ver;
+          _outboxCount = postPending;
+          _isOfflineMode = usedOffline;
           _dataAnimSeed++;
           _loading = false;
         });
@@ -1430,19 +1523,19 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     final String label;
     switch (key) {
       case 'today':
-        label = 'Bugun • Soatlik dinamika';
+        label = 'Bugun (soatlik)';
         break;
       case 'yesterday':
-        label = 'Kecha • Soatlik dinamika';
+        label = 'Kecha (soatlik)';
         break;
       case '14d':
-        label = 'Oxirgi 14 kunlik dinamika';
+        label = '14 kunlik';
         break;
       case '30d':
-        label = 'Oxirgi 30 kunlik dinamika';
+        label = '30 kunlik';
         break;
       default:
-        label = 'Oxirgi 7 kunlik dinamika';
+        label = '7 kunlik';
     }
     setState(() {
       _activePeriodKey = key;
@@ -1662,23 +1755,44 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
             amount: val,
             note: noteCtrl.text,
           );
-          _showSnack('✅ Kassa amali yangilandi!');
+          _showSnack('✅ Yangilandi');
         } else {
           await widget.api.addCash(
             amount: val,
             sourceType: sourceType,
             note: noteCtrl.text,
           );
-          _showSnack('✅ Kassa amali saqlandi!');
+          _showSnack('✅ Saqlandi');
         }
         await _refreshAll();
       } catch (e) {
-        _showSnack(e.toString(), isError: true);
+        if (existing == null && isNetworkOfflineError(e)) {
+          final cnt = await OfflineOutboxStore.enqueueCash(
+            amount: val,
+            sourceType: sourceType,
+            note: noteCtrl.text,
+          );
+          if (mounted) {
+            setState(() {
+              _outboxCount = cnt;
+              _isOfflineMode = true;
+            });
+          }
+          _showSnack("📥 Oflayn saqlandi — internet kelganda yuboriladi");
+        } else {
+          _showSnack(e.toString(), isError: true);
+        }
       }
     }
   }
 
-  Future<void> _openAddNakladnoySheet({PickedBytesFile? initialPhoto}) async {
+  Future<void> _openAddNakladnoySheet({
+    PickedBytesFile? initialPhoto,
+    String? initialSupplier,
+    double? initialAmount,
+    String? initialPaymentMode,
+    String? initialNote,
+  }) async {
     final grpInfo = _summary?.groupInfo ??
         const GroupInfo(bound: false, title: '', apkPostToGroup: true);
     final saved = await showModalBottomSheet<bool>(
@@ -1689,9 +1803,14 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
         api: widget.api,
         groupInfo: grpInfo,
         initialPhoto: initialPhoto,
+        initialSupplier: initialSupplier,
+        initialAmount: initialAmount,
+        initialPaymentMode: initialPaymentMode,
+        initialNote: initialNote,
         existingTodayNakladnoys: _summary?.nakladnoys ?? const [],
       ),
     );
+    await _refreshOutboxBadge();
     if (saved == true) {
       await _refreshAll();
     }
@@ -1770,7 +1889,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                         backgroundColor: AppTokens.cashGreen),
                     onPressed: () => Navigator.pop(ctx, 'cash'),
                     icon: const Icon(Icons.payments_rounded),
-                    label: const Text("Naqd to'landi (kassadan ayriladi)"),
+                    label: const Text('Naqd'),
                   ),
                   const SizedBox(height: 10),
                   FilledButton.icon(
@@ -1778,7 +1897,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                         FilledButton.styleFrom(backgroundColor: AppTokens.cardBlue),
                     onPressed: () => Navigator.pop(ctx, 'card'),
                     icon: const Icon(Icons.credit_card_rounded),
-                    label: const Text("Karta orqali (naqddan ayrilmaydi)"),
+                    label: const Text('Karta'),
                   ),
                   const SizedBox(height: 10),
                   FilledButton.icon(
@@ -1786,7 +1905,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                         backgroundColor: AppTokens.transferPurple),
                     onPressed: () => Navigator.pop(ctx, 'transfer'),
                     icon: const Icon(Icons.account_balance_rounded),
-                    label: const Text("Perechesleniya / O'tkazma"),
+                    label: const Text("O'tkazma"),
                   ),
                 ],
               ),
@@ -1799,10 +1918,26 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     if (method != null) {
       try {
         await widget.api.payDebt(paymentId: item.id, paymentMethod: method);
-        _showSnack("✅ Qarz to'landi va guruh xabari yangilandi!");
+        _showSnack("✅ Qarz to'landi");
         await _refreshAll();
       } catch (e) {
-        _showSnack(e.toString(), isError: true);
+        if (isNetworkOfflineError(e)) {
+          final cnt = await OfflineOutboxStore.enqueuePayDebt(
+            paymentId: item.id,
+            paymentMethod: method,
+            supplierName: item.supplierName,
+            amount: item.amount,
+          );
+          if (mounted) {
+            setState(() {
+              _outboxCount = cnt;
+              _isOfflineMode = true;
+            });
+          }
+          _showSnack("📥 Oflayn saqlandi — internet kelganda yuboriladi");
+        } else {
+          _showSnack(e.toString(), isError: true);
+        }
       }
     }
   }
@@ -1856,6 +1991,12 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
           ],
         ),
         actions: [
+          if (widget.api.canWrite)
+            IconButton(
+              tooltip: 'AI Ovozli buyruq',
+              onPressed: _openVoiceCommandSheet,
+              icon: const Icon(Icons.mic_rounded),
+            ),
           IconButton(
             tooltip: 'Yangilash',
             onPressed: () {
@@ -1979,6 +2120,8 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
               ? _buildErrorState()
               : Column(
                   children: [
+                    if (_isOfflineMode || _outboxCount > 0)
+                      _buildOfflineStatusBanner(),
                     if (!kIsWeb &&
                         _remoteVersion != null &&
                         _remoteVersion!.build > kAppBuildNumber)
@@ -2062,6 +2205,137 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                   ],
                 ),
     );
+  }
+
+  Widget _buildOfflineStatusBanner() {
+    final (ambFg, ambBg, ambBorder) =
+        AppTokens.semanticSurface(context, AppTokens.debtAmber);
+    final label = _isOfflineMode && _outboxCount > 0
+        ? '📡 Oflayn • Navbatda: $_outboxCount ta'
+        : (_isOfflineMode
+            ? '📡 Oflayn rejim (saqlangan ma\'lumotlar)'
+            : '⏳ Navbatda: $_outboxCount ta amal');
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: ambBg,
+        border: Border(bottom: BorderSide(color: ambBorder)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            _isOfflineMode ? Icons.cloud_off_rounded : Icons.cloud_upload_rounded,
+            size: 18,
+            color: ambFg,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w800,
+                color: ambFg,
+              ),
+            ),
+          ),
+          if (_outboxCount > 0)
+            TextButton.icon(
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                foregroundColor: ambFg,
+              ),
+              onPressed: _syncingOutbox ? null : () => _trySyncOutbox(),
+              icon: _syncingOutbox
+                  ? SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: ambFg,
+                      ),
+                    )
+                  : const Icon(Icons.sync_rounded, size: 16),
+              label: Text(_syncingOutbox ? 'Kuting...' : 'Yuborish'),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openVoiceCommandSheet() async {
+    final result = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (ctx) => VoiceCommandSheet(api: widget.api),
+    );
+    if (result == null || !mounted) return;
+    final intent = (result['intent'] ?? '').toString();
+    final amount = (result['amount'] as num?)?.toDouble();
+    final supplier = result['supplier_name']?.toString();
+    final transcript = (result['transcript'] ?? '').toString();
+
+    if (intent == 'cash_in' ||
+        intent == 'kassa_debt' ||
+        intent == 'kassa_repay') {
+      final src = intent == 'cash_in' ? 'main' : intent;
+      if (amount != null && amount > 0) {
+        try {
+          await widget.api.addCash(
+            amount: amount,
+            sourceType: src,
+            note: transcript,
+          );
+          _showSnack('✅ Saqlandi');
+          await _refreshAll();
+        } catch (e) {
+          if (isNetworkOfflineError(e)) {
+            final cnt = await OfflineOutboxStore.enqueueCash(
+              amount: amount,
+              sourceType: src,
+              note: transcript,
+            );
+            if (mounted) {
+              setState(() {
+                _outboxCount = cnt;
+                _isOfflineMode = true;
+              });
+            }
+            _showSnack('📥 Oflayn saqlandi');
+          } else {
+            _showSnack(e.toString(), isError: true);
+          }
+        }
+      } else {
+        await _openCashDialog(src);
+      }
+      return;
+    }
+
+    if (intent == 'pay_supplier') {
+      await _openAddNakladnoySheet(
+        initialSupplier: supplier,
+        initialAmount: amount,
+        initialPaymentMode: 'cash',
+        initialNote: transcript,
+      );
+      return;
+    }
+
+    if (intent == 'count_cash' && amount != null && amount >= 0) {
+      setState(() => _voiceCountedCashPreset = amount);
+      await _switchToTab(3);
+      _showSnack('🧮 Sanalgan pul joylandi');
+      return;
+    }
+
+    if (intent == 'status') {
+      await _switchToTab(0);
+      await _refreshAll();
+    }
   }
 
   Widget _buildErrorState() {
@@ -2179,6 +2453,19 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     final isViewingPast = _viewedSessionSummary != null &&
         _viewedSessionSummary!.sessionId != _summary!.sessionId;
 
+    final now = DateTime.now();
+    final overdueDebts = _allDebts.where((d) {
+      final raw = d.reportDate ?? d.createdAt;
+      if (raw.length < 10) return false;
+      final dt = DateTime.tryParse(raw.substring(0, 10));
+      if (dt == null) return false;
+      return now.difference(dt).inDays >= 3;
+    }).toList();
+    final overdueSum =
+        overdueDebts.fold<double>(0, (acc, elem) => acc + elem.amount);
+    final (overFg, overBg, overBorder) =
+        AppTokens.semanticSurface(context, AppTokens.debtAmber);
+
     return RefreshIndicator(
       onRefresh: _refreshAll,
       child: ListView(
@@ -2186,6 +2473,46 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
         children: [
           _buildDashboardDateSwitcherBar(s, isViewingPast),
           const SizedBox(height: 10),
+          if (overdueDebts.isNotEmpty) ...[
+            TactileScaleTap(
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: () {
+                  setState(() => _debtSubTab = 'nakladnoy');
+                  _switchToTab(2);
+                },
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: overBg,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: overBorder),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.schedule_rounded, color: overFg, size: 19),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Text(
+                          '3+ kunlik qarz: ${overdueDebts.length} ta • ${formatUzs(overdueSum, withCurrency: true)}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12.8,
+                            fontWeight: FontWeight.w800,
+                            color: overFg,
+                          ),
+                        ),
+                      ),
+                      Icon(Icons.chevron_right_rounded, color: overFg, size: 20),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
           HeroBalanceCard(
             summary: s,
             animSeed: _dataAnimSeed,
@@ -2214,7 +2541,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                   icon: const Icon(Icons.query_stats_rounded, size: 18),
                   label: const FittedBox(
                     fit: BoxFit.scaleDown,
-                    child: Text('Jonli Sverka', maxLines: 1),
+                    child: Text('Sverka', maxLines: 1),
                   ),
                 ),
               ),
@@ -2230,7 +2557,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                   icon: const Icon(Icons.history_rounded, size: 18),
                   label: const FittedBox(
                     fit: BoxFit.scaleDown,
-                    child: Text("O'tgan smenalar", maxLines: 1),
+                    child: Text('Arxiv', maxLines: 1),
                   ),
                 ),
               ),
@@ -2624,7 +2951,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
             ...filtered.map(
               (item) => Padding(
                 padding: const EdgeInsets.only(bottom: 10),
-                child: NakladnoyListCard(
+                child: SwipeableNakladnoyTile(
                   item: item,
                   onTap: () => _openNakladnoyDetail(
                     item,
@@ -2634,6 +2961,15 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                   ),
                   onQuickPay: item.isDebt && widget.api.canWrite
                       ? () => _openPayDebtDialog(item)
+                      : null,
+                  onDuplicate: widget.api.canWrite
+                      ? () => _openAddNakladnoySheet(
+                            initialSupplier: item.supplierName,
+                            initialAmount: item.amount,
+                            initialPaymentMode:
+                                item.isDebt ? 'debt' : item.paymentMethod,
+                            initialNote: item.note,
+                          )
                       : null,
                 ),
               ),
@@ -2875,7 +3211,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        "To'lanmagan nakladnoy qarzlari (${visibleDebts.length} ta)",
+                        'Qarzlar (${visibleDebts.length} ta)',
                         style: TextStyle(
                           fontWeight: FontWeight.w800,
                           fontSize: 13.5,
@@ -2966,11 +3302,19 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
             ...visibleDebts.map(
               (item) => Padding(
                 padding: const EdgeInsets.only(bottom: 10),
-                child: NakladnoyListCard(
+                child: SwipeableNakladnoyTile(
                   item: item,
                   onTap: () => _openNakladnoyDetail(item),
                   onQuickPay: widget.api.canWrite
                       ? () => _openPayDebtDialog(item)
+                      : null,
+                  onDuplicate: widget.api.canWrite
+                      ? () => _openAddNakladnoySheet(
+                            initialSupplier: item.supplierName,
+                            initialAmount: item.amount,
+                            initialPaymentMode: 'debt',
+                            initialNote: item.note,
+                          )
                       : null,
                 ),
               ),
@@ -3049,6 +3393,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     return _SmenaAndReportsView(
       summary: s,
       api: widget.api,
+      presetCountedCash: _voiceCountedCashPreset,
       onClosed: _refreshAll,
       onLoggedOut: widget.onLoggedOut,
       onLockChanged: widget.onLockChanged,
@@ -3066,6 +3411,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
 class _SmenaAndReportsView extends StatefulWidget {
   final StatusSummary summary;
   final HisobchiApiClient api;
+  final double? presetCountedCash;
   final Future<void> Function() onClosed;
   final VoidCallback onLoggedOut;
   final VoidCallback? onLockChanged;
@@ -3080,6 +3426,7 @@ class _SmenaAndReportsView extends StatefulWidget {
   const _SmenaAndReportsView({
     required this.summary,
     required this.api,
+    this.presetCountedCash,
     required this.onClosed,
     required this.onLoggedOut,
     this.onLockChanged,
@@ -3097,7 +3444,19 @@ class _SmenaAndReportsView extends StatefulWidget {
 }
 
 class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
+  static const List<int> _uzsDenominations = [
+    200000,
+    100000,
+    50000,
+    20000,
+    10000,
+    5000,
+    2000,
+    1000,
+  ];
   final TextEditingController _countedCtrl = TextEditingController();
+  final Map<int, int> _denomCounts = {};
+  bool _showDenomCalc = false;
   bool _closing = false;
   String _selectedReportType = 'today'; // today | week | month | custom | sverka
   bool _downloadingExcel = false;
@@ -3111,7 +3470,49 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
   @override
   void initState() {
     super.initState();
+    if (widget.presetCountedCash != null) {
+      _countedCtrl.text = UzsAmountInputFormatter.formatDigits(
+        widget.presetCountedCash!.round().toString(),
+      );
+    }
     _loadSecurityLock();
+  }
+
+  @override
+  void didUpdateWidget(covariant _SmenaAndReportsView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.presetCountedCash != null &&
+        widget.presetCountedCash != oldWidget.presetCountedCash) {
+      _countedCtrl.text = UzsAmountInputFormatter.formatDigits(
+        widget.presetCountedCash!.round().toString(),
+      );
+    }
+  }
+
+  void _updateDenomCount(int denom, int delta) {
+    final cur = _denomCounts[denom] ?? 0;
+    final next = (cur + delta).clamp(0, 9999);
+    setState(() {
+      if (next == 0) {
+        _denomCounts.remove(denom);
+      } else {
+        _denomCounts[denom] = next;
+      }
+      final sum = _denomCounts.entries.fold<int>(
+        0,
+        (acc, e) => acc + e.key * e.value,
+      );
+      _countedCtrl.text = sum > 0
+          ? UzsAmountInputFormatter.formatDigits(sum.toString())
+          : '';
+    });
+  }
+
+  void _clearDenoms() {
+    setState(() {
+      _denomCounts.clear();
+      _countedCtrl.clear();
+    });
   }
 
   Future<void> _loadSecurityLock() async {
@@ -3369,16 +3770,22 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Row(
+                Row(
                   children: [
-                    Icon(Icons.lock_clock_rounded, color: AppTokens.brand),
-                    SizedBox(width: 8),
-                    Expanded(
+                    const Icon(Icons.lock_clock_rounded, color: AppTokens.brand),
+                    const SizedBox(width: 8),
+                    const Expanded(
                       child: Text(
-                        'Kunni yakunlash (Smena yopish)',
+                        'Smena yopish',
                         style: TextStyle(
                             fontSize: 17, fontWeight: FontWeight.w900),
                       ),
+                    ),
+                    ActionChip(
+                      avatar: const Icon(Icons.calculate_rounded, size: 16),
+                      label: Text(_showDenomCalc ? 'Yopish' : 'Kupuralar'),
+                      onPressed: () =>
+                          setState(() => _showDenomCalc = !_showDenomCalc),
                     ),
                   ],
                 ),
@@ -3393,7 +3800,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       const Text(
-                        "Qo'lda bo'lishi kerak:",
+                        'Kutilgan kassa:',
                         style: TextStyle(fontWeight: FontWeight.w700),
                       ),
                       Text(
@@ -3419,9 +3826,9 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                     fontFeatures: AppTokens.tabularNums,
                   ),
                   decoration: InputDecoration(
-                    labelText: "Qo'lda sanalgan haqiqiy pul (so'm)",
+                    labelText: 'Sanalgan naqd pul',
                     hintText: formatUzs(expected),
-                    prefixIcon: const Icon(Icons.calculate_outlined),
+                    prefixIcon: const Icon(Icons.payments_outlined),
                     suffixIcon: TextButton(
                       onPressed: () {
                         _countedCtrl.text =
@@ -3433,6 +3840,113 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                     ),
                   ),
                 ),
+                if (_showDenomCalc) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: isDarkCtx(context)
+                          ? AppTokens.surfaceDark.withValues(alpha: 0.6)
+                          : AppTokens.surfaceLight,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: isDarkCtx(context)
+                            ? AppTokens.cardBorderDark
+                            : AppTokens.cardBorderLight,
+                      ),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Kupuralar soni',
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w800,
+                                color: textSecondaryOf(context),
+                              ),
+                            ),
+                            if (_denomCounts.isNotEmpty)
+                              TextButton(
+                                style: TextButton.styleFrom(
+                                  visualDensity: VisualDensity.compact,
+                                  padding:
+                                      const EdgeInsets.symmetric(horizontal: 8),
+                                ),
+                                onPressed: _clearDenoms,
+                                child: const Text('Tozalash'),
+                              ),
+                          ],
+                        ),
+                        ..._uzsDenominations.map((denom) {
+                          final cnt = _denomCounts[denom] ?? 0;
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 3),
+                            child: Row(
+                              children: [
+                                SizedBox(
+                                  width: 82,
+                                  child: Text(
+                                    formatUzs(denom),
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 13,
+                                      fontFeatures: AppTokens.tabularNums,
+                                    ),
+                                  ),
+                                ),
+                                IconButton(
+                                  visualDensity: VisualDensity.compact,
+                                  onPressed: cnt > 0
+                                      ? () => _updateDenomCount(denom, -1)
+                                      : null,
+                                  icon: const Icon(
+                                      Icons.remove_circle_outline_rounded,
+                                      size: 20),
+                                ),
+                                SizedBox(
+                                  width: 34,
+                                  child: Text(
+                                    '$cnt',
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 14,
+                                      fontFeatures: AppTokens.tabularNums,
+                                    ),
+                                  ),
+                                ),
+                                IconButton(
+                                  visualDensity: VisualDensity.compact,
+                                  onPressed: () => _updateDenomCount(denom, 1),
+                                  icon: const Icon(
+                                      Icons.add_circle_outline_rounded,
+                                      size: 20),
+                                ),
+                                Expanded(
+                                  child: Text(
+                                    cnt > 0 ? formatUzs(denom * cnt) : '—',
+                                    textAlign: TextAlign.right,
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w800,
+                                      color: cnt > 0
+                                          ? AppTokens.cashGreen
+                                          : textSecondaryOf(context),
+                                      fontFeatures: AppTokens.tabularNums,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }),
+                      ],
+                    ),
+                  ),
+                ],
                 if (diff != null) ...[
                   const SizedBox(height: 12),
                   Container(
@@ -3444,7 +3958,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                     ),
                     child: Text(
                       diff == 0
-                          ? "✅ Farq: 0 so'm (Kassa 100% to'g'ri!)"
+                          ? "✅ Farq: 0 so'm"
                           : (diff > 0
                               ? "➕ Ortiqcha: +${formatUzs(diff, withCurrency: true)}"
                               : "⚠️ Kamomad: ${formatUzs(diff, withCurrency: true)}"),
@@ -3460,9 +3974,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                   onPressed:
                       widget.api.canWrite && !_closing ? _submitCloseDay : null,
                   icon: const Icon(Icons.check_circle_rounded),
-                  label: Text(_closing
-                      ? 'Yopilmoqda...'
-                      : 'Kunni yakunlash va yangi kun ochish'),
+                  label: Text(_closing ? 'Yopilmoqda...' : 'Smenani yopish'),
                 ),
               ],
             ),
@@ -3483,57 +3995,47 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                     SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Excel Hisobot va Sverka yuklash',
+                        'Excel hisobot',
                         style: TextStyle(
                             fontSize: 17, fontWeight: FontWeight.w900),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  "Kerakli davrni tanlab, tayyor Excel (.xlsx) faylni yuklab oling yoki Telegramga ulashing.",
-                  style: TextStyle(
-                      fontSize: 12.5, color: textSecondaryOf(context)),
-                ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 12),
                 HisobchiCustomDropdown<String>(
                   value: _selectedReportType,
-                  labelText: 'Hisobot turini tanlang',
-                  sheetTitle: 'Excel hisobot turini tanlang',
+                  labelText: 'Hisobot turi',
+                  sheetTitle: 'Excel hisobot',
                   options: [
                     CustomDropdownOption<String>(
                       value: 'today',
-                      label: 'Bugungi kunlik hisobot',
-                      subtitle: 'Sana: ${widget.summary.reportDate}',
+                      label: 'Bugun',
+                      subtitle: widget.summary.reportDate,
                       icon: Icons.today_rounded,
                       accentColor: AppTokens.cashGreen,
                     ),
                     const CustomDropdownOption<String>(
                       value: 'week',
-                      label: 'Oxirgi 7 kunlik hisobot',
-                      subtitle: "Haftalik kirim-chiqim jadvali",
+                      label: '7 kunlik',
                       icon: Icons.date_range_rounded,
                       accentColor: AppTokens.brand,
                     ),
                     const CustomDropdownOption<String>(
                       value: 'month',
-                      label: 'Joriy oy hisoboti',
-                      subtitle: "Oy boshidan bugungacha barcha kunlar",
+                      label: 'Shu oy',
                       icon: Icons.calendar_month_rounded,
                       accentColor: AppTokens.cardBlue,
                     ),
                     const CustomDropdownOption<String>(
                       value: 'custom',
-                      label: "Ixtiyoriy sana oralig'i...",
-                      subtitle: "Kalendardan boshlanish va tugash sanasi",
+                      label: "Sana oralig'i...",
                       icon: Icons.edit_calendar_rounded,
                       accentColor: AppTokens.brandViolet,
                     ),
                     const CustomDropdownOption<String>(
                       value: 'sverka',
-                      label: 'Postavshiklar Sverkasi',
-                      subtitle: "Har bir postavshik bo'yicha oylik balans",
+                      label: 'Postavshiklar sverkasi',
                       icon: Icons.account_balance_wallet_rounded,
                       accentColor: AppTokens.debtAmber,
                     ),
@@ -3557,7 +4059,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                       : const Icon(Icons.ios_share_rounded),
                   label: Text(_downloadingExcel
                       ? 'Tayyorlanmoqda...'
-                      : 'Excel yuklab olish va ulashish'),
+                      : 'Yuklab olish'),
                 ),
                 const SizedBox(height: 10),
                 FilledButton.tonalIcon(
@@ -3573,13 +4075,13 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                       : const Icon(Icons.telegram),
                   label: Text(_sendingExcelTelegram
                       ? 'Yuborilmoqda...'
-                      : '📤 Excelni Telegram botga yuborish'),
+                      : 'Telegramga yuborish'),
                 ),
                 const SizedBox(height: 10),
                 OutlinedButton.icon(
                   onPressed: widget.onOpenLiveSverka,
                   icon: const Icon(Icons.query_stats_rounded),
-                  label: const Text("Ilova ichida Jonli Sverka va 7/30 kun ko'rish"),
+                  label: const Text('Jonli sverka'),
                 ),
               ],
             ),
@@ -3601,7 +4103,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                     SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        "Smenalar Arxivi va Prixod (ITOG 👑)",
+                        'Arxiv va Prixod',
                         style: TextStyle(
                             fontSize: 17, fontWeight: FontWeight.w900),
                       ),
@@ -3612,19 +4114,19 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                 FilledButton.tonalIcon(
                   onPressed: widget.onOpenHistorySessions,
                   icon: const Icon(Icons.history_rounded),
-                  label: const Text("📜 O'tgan smenalar tarixi (Arxiv)"),
+                  label: const Text('Smenalar arxivi'),
                 ),
                 const SizedBox(height: 10),
                 OutlinedButton.icon(
                   onPressed: widget.onOpenPrixod,
                   icon: const Icon(Icons.workspace_premium_rounded),
-                  label: const Text("👑 Prixod (ITOG) hisobotlari"),
+                  label: const Text('Prixod (ITOG)'),
                 ),
                 const SizedBox(height: 10),
                 OutlinedButton.icon(
                   onPressed: widget.onOpenSupplierSettings,
                   icon: const Icon(Icons.tune_rounded),
-                  label: const Text("🏢 Postavshiklar, Taxalluslar va Yaxlitlash"),
+                  label: const Text('Postavshik sozlamalari'),
                 ),
               ],
             ),
@@ -3646,7 +4148,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                       SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          '🔒 Xavfsizlik (PIN kod va Otpechatka)',
+                          'Xavfsizlik',
                           style: TextStyle(
                               fontSize: 16, fontWeight: FontWeight.w900),
                         ),
@@ -3655,21 +4157,19 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                   ),
                   const SizedBox(height: 12),
                   _infoRow(
-                    'PIN kod himoyasi:',
+                    'PIN kod:',
                     !_lockLoaded
-                        ? 'Tekshirilmoqda...'
-                        : (_pinEnabled
-                            ? '✅ Yoqilgan (4 xonali)'
-                            : "🔕 O'rnatilmagan"),
+                        ? '...'
+                        : (_pinEnabled ? '✅ Yoqilgan' : "🔕 O'chiq"),
                   ),
                   const SizedBox(height: 6),
                   _infoRow(
-                    'Otpechatka (Barmoq izi):',
+                    'Otpechatka:',
                     !_lockLoaded
-                        ? 'Tekshirilmoqda...'
+                        ? '...'
                         : (!_bioSupported
-                            ? '⚠️ Qurilmada mavjud emas'
-                            : (_bioEnabled ? '✅ Yoqilgan' : "🔕 O'chirilgan")),
+                            ? '⚠️ Mavjud emas'
+                            : (_bioEnabled ? '✅ Yoqilgan' : "🔕 O'chiq")),
                   ),
                   if (_bioSupported) ...[
                     const SizedBox(height: 6),
@@ -3680,13 +4180,11 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                         color: AppTokens.brand,
                       ),
                       title: const Text(
-                        'Otpechatka (Barmoq izi)',
+                        'Otpechatka',
                         style: TextStyle(fontWeight: FontWeight.w700),
                       ),
                       subtitle: Text(
-                        _pinEnabled
-                            ? 'Ilovaga kirishda barmoq izini avtomatik tekshirish'
-                            : "Avval 4 xonali PIN kod o'rnating",
+                        _pinEnabled ? 'Avtomatik tekshirish' : "Avval PIN o'rnating",
                         style: const TextStyle(fontSize: 12),
                       ),
                       value: _pinEnabled && _bioEnabled,
@@ -3705,9 +4203,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                               : Icons.pin_rounded,
                         ),
                         label: Text(
-                          _pinEnabled
-                              ? "PIN kodni o'zgartirish"
-                              : "4 xonali PIN kod o'rnatish",
+                          _pinEnabled ? "PIN o'zgartirish" : "PIN o'rnatish",
                         ),
                       ),
                     ),
@@ -3723,7 +4219,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                           ),
                           onPressed: _lockLoaded ? _disablePin : null,
                           icon: const Icon(Icons.lock_open_rounded),
-                          label: const Text("PIN kodni o'chirish"),
+                          label: const Text("PIN o'chirish"),
                         ),
                       ),
                     ),
@@ -3746,7 +4242,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                     Icon(Icons.telegram, color: AppTokens.cardBlue, size: 24),
                     SizedBox(width: 8),
                     Text(
-                      'Telegram guruh va Bot sozlamalari',
+                      'Telegram va Bot',
                       style:
                           TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
                     ),
@@ -3754,64 +4250,45 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                 ),
                 const SizedBox(height: 12),
                 _infoRow(
-                  'Nakladnoy guruhi:',
+                  'Guruh:',
                   widget.summary.groupInfo.bound
                       ? '✅ ${widget.summary.groupInfo.title}'
-                      : '⚠️ Bog\'lanmagan',
+                      : '⚠️ Ulanmagan',
                 ),
                 const SizedBox(height: 6),
                 _infoRow(
-                  'APK dan guruhga yuborish:',
+                  'Avto-yuborish:',
                   widget.summary.groupInfo.apkPostToGroup
                       ? '✅ Yoqilgan'
-                      : '🔕 O\'chirilgan (/apk)',
+                      : "🔕 O'chiq",
                 ),
                 const SizedBox(height: 6),
-                _infoRow('Aloqa holati:', '🟢 Himoyalangan sinxron ulanish'),
-                const SizedBox(height: 6),
                 _infoRow(
-                  'Ilova versiyasi:',
+                  'Versiya:',
                   kIsWeb
-                      ? 'v$kAppVersion (Mini App)'
-                      : 'v$kAppVersion (build #$kAppBuildNumber)',
+                      ? 'v$kAppVersion (Web)'
+                      : 'v$kAppVersion (#$kAppBuildNumber)',
                 ),
                 const SizedBox(height: 6),
                 _infoRow('Rol:', widget.api.role.toUpperCase()),
                 const Divider(height: 24),
-                if (widget.api.isAdmin) ...[
+                if (widget.api.isAdmin)
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.icon(
                       onPressed: widget.onOpenTelegramSettings,
                       icon: const Icon(Icons.hub_rounded),
-                      label: const Text("🔗 Guruhlar, Bot va Xodimlarni boshqarish"),
+                      label: const Text('Guruh va xodimlar'),
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  Text(
-                    "💡 Nakladnoy, Prixod (ITOG) va Kassa guruhlarini shu yerdan 1 bosishda ulang, test xabar yuboring, xodim rollari hamda backupni boshqaring.",
-                    style: TextStyle(
-                        fontSize: 12.5,
-                        height: 1.4,
-                        color: textSecondaryOf(context)),
-                  ),
-                ] else ...[
-                  Text(
-                    "💡 Guruhlar va xodim rollarini faqat Admin boshqarishi mumkin.",
-                    style: TextStyle(
-                        fontSize: 12.5,
-                        height: 1.4,
-                        color: textSecondaryOf(context)),
-                  ),
-                ],
                 if (!kIsWeb) ...[
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 10),
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.tonalIcon(
                       onPressed: widget.onCheckUpdate,
                       icon: const Icon(Icons.system_update_rounded),
-                      label: const Text("Ilova ichida yangilanishni tekshirish"),
+                      label: const Text('Yangilanishni tekshirish'),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -3931,6 +4408,10 @@ class AddNakladnoySheet extends StatefulWidget {
   final HisobchiApiClient api;
   final GroupInfo groupInfo;
   final PickedBytesFile? initialPhoto;
+  final String? initialSupplier;
+  final double? initialAmount;
+  final String? initialPaymentMode;
+  final String? initialNote;
   final List<NakladnoyItem> existingTodayNakladnoys;
 
   const AddNakladnoySheet({
@@ -3938,6 +4419,10 @@ class AddNakladnoySheet extends StatefulWidget {
     required this.api,
     required this.groupInfo,
     this.initialPhoto,
+    this.initialSupplier,
+    this.initialAmount,
+    this.initialPaymentMode,
+    this.initialNote,
     this.existingTodayNakladnoys = const [],
   });
 
@@ -3972,6 +4457,25 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
   void initState() {
     super.initState();
     _sendToGroup = true;
+    if (widget.initialSupplier != null &&
+        widget.initialSupplier!.trim().isNotEmpty) {
+      _supCtrl.text = widget.initialSupplier!.trim();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _selectSupplier(widget.initialSupplier!.trim());
+      });
+    }
+    if (widget.initialAmount != null && widget.initialAmount! > 0) {
+      _amtCtrl.text = UzsAmountInputFormatter.formatDigits(
+        widget.initialAmount!.round().toString(),
+      );
+    }
+    if (widget.initialPaymentMode != null &&
+        widget.initialPaymentMode!.isNotEmpty) {
+      _paymentMode = widget.initialPaymentMode!;
+    }
+    if (widget.initialNote != null && widget.initialNote!.trim().isNotEmpty) {
+      _noteCtrl.text = widget.initialNote!.trim();
+    }
     _loadSuppliers();
     if (widget.initialPhoto != null) {
       _photoFile = widget.initialPhoto;
@@ -4193,13 +4697,40 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
         final grpMsg = res['group_message']?.toString() ?? '';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('✅ Nakladnoy saqlandi! ($grpMsg)'),
+            content: Text(
+              grpMsg.isNotEmpty
+                  ? '✅ Saqlandi ($grpMsg)'
+                  : '✅ Nakladnoy saqlandi',
+            ),
           ),
         );
         Navigator.pop(context, true);
       }
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (isNetworkOfflineError(e)) {
+        await OfflineOutboxStore.enqueueNakladnoy(
+          supplierName: sup,
+          amount: amt,
+          paymentMode: _paymentMode,
+          note: _noteCtrl.text,
+          sendToGroup: _sendToGroup,
+          originalAmount: _originalAmount,
+          photoBytes: _photoFile?.bytes,
+          photoFilename: _photoFile?.filename ?? 'nakladnoy.jpg',
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                "📥 Oflayn saqlandi — internet kelganda avtomatik yuboriladi",
+              ),
+            ),
+          );
+          Navigator.pop(context, true);
+        }
+      } else if (mounted) {
+        setState(() => _error = e.toString());
+      }
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -4987,6 +5518,42 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
                           prefixIcon: Icon(Icons.payments_outlined),
                         ),
                       ),
+                      Builder(builder: (ctx) {
+                        final warn = computeSupplierAnomalyWarning(
+                          parseUzsInput(_amtCtrl.text),
+                          _recentAmounts,
+                        );
+                        if (warn == null) return const SizedBox.shrink();
+                        final (ambFg, ambBg, ambBorder) =
+                            AppTokens.semanticSurface(ctx, AppTokens.debtAmber);
+                        return Container(
+                          margin: const EdgeInsets.only(top: 8),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 11, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: ambBg,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: ambBorder),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.trending_up_rounded,
+                                  color: ambFg, size: 18),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  '⚠️ $warn',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w800,
+                                    color: ambFg,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
                       Builder(builder: (ctx) {
                         final dups = _findTodayDuplicates();
                         if (dups.isEmpty) return const SizedBox.shrink();
@@ -5983,7 +6550,7 @@ class _HistorySessionsSheetState extends State<HistorySessionsSheet> {
                     child: Text(
                       _selectedDetail != null
                           ? "Smena #${_selectedDetail!.sessionId} (${_selectedDetail!.reportDate})"
-                          : "📜 O'tgan smenalar tarixi",
+                          : 'Smenalar arxivi',
                       style: const TextStyle(
                           fontSize: 18, fontWeight: FontWeight.w900),
                     ),
@@ -8390,6 +8957,51 @@ class _SupplierProfileSheetState extends State<SupplierProfileSheet> {
                       ],
                     ),
                   ),
+                  FilledButton.tonalIcon(
+                    style: FilledButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      minimumSize: const Size(0, 36),
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                    ),
+                    onPressed: _loading
+                        ? null
+                        : () async {
+                            try {
+                              final safe = supTitle.replaceAll(
+                                  RegExp(r'[^A-Za-z0-9_-]'), '_');
+                              final fname = 'Sverka_$safe.pdf';
+                              final dlUrl = widget.api
+                                  .buildAuthenticatedDownloadUrl(
+                                '/suppliers/sverka-pdf',
+                                query: {
+                                  'supplier': supTitle,
+                                  if (_dateFrom != null)
+                                    'date_from': _dateFrom!,
+                                  if (_dateTo != null) 'date_to': _dateTo!,
+                                },
+                              );
+                              await saveAndShareBinaryFile(
+                                fetchBytes: () =>
+                                    widget.api.downloadSupplierSverkaPdf(
+                                  supTitle,
+                                  dateFrom: _dateFrom,
+                                  dateTo: _dateTo,
+                                ),
+                                filename: fname,
+                                authenticatedDownloadUrl: dlUrl,
+                                shareText: 'Akt-Sverka: $supTitle',
+                              );
+                            } catch (e) {
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text(e.toString())),
+                                );
+                              }
+                            }
+                          },
+                    icon: const Icon(Icons.picture_as_pdf_rounded, size: 16),
+                    label: const Text('PDF'),
+                  ),
                   IconButton(
                     onPressed: () => Navigator.pop(context, _changed),
                     icon: const Icon(Icons.close_rounded),
@@ -9350,6 +9962,360 @@ class _TelegramGroupsAndBotSettingsSheetState
                   ),
                 ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// AI VOICE & QUICK COMMAND SHEET
+// ============================================================================
+
+class VoiceCommandSheet extends StatefulWidget {
+  final HisobchiApiClient api;
+
+  const VoiceCommandSheet({super.key, required this.api});
+
+  @override
+  State<VoiceCommandSheet> createState() => _VoiceCommandSheetState();
+}
+
+class _VoiceCommandSheetState extends State<VoiceCommandSheet> {
+  final TextEditingController _textCtrl = TextEditingController();
+  bool _recording = false;
+  bool _parsing = false;
+  int _elapsedSec = 0;
+  Timer? _recTimer;
+  Map<String, dynamic>? _parsed;
+  String? _error;
+
+  @override
+  void dispose() {
+    _recTimer?.cancel();
+    if (_recording) {
+      cancelVoiceRecording();
+    }
+    _textCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _toggleRecord() async {
+    if (_parsing) return;
+    if (!_recording) {
+      setState(() {
+        _error = null;
+        _parsed = null;
+      });
+      try {
+        final status = await startVoiceRecording();
+        if (!mounted) return;
+        if (status == 'PERMISSION_REQUESTED') {
+          setState(() =>
+              _error = "Mikrofon ruxsatini tasdiqlab, yana bir marta bosing");
+          return;
+        }
+        if (status != 'STARTED') {
+          setState(() => _error = "Ushbu qurilmada matn bilan yozing");
+          return;
+        }
+        HapticFeedback.mediumImpact();
+        setState(() {
+          _recording = true;
+          _elapsedSec = 0;
+        });
+        _recTimer?.cancel();
+        _recTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+          if (!mounted) return;
+          setState(() => _elapsedSec++);
+          if (_elapsedSec >= 58) {
+            _toggleRecord();
+          }
+        });
+      } catch (e) {
+        if (mounted) setState(() => _error = e.toString());
+      }
+    } else {
+      _recTimer?.cancel();
+      HapticFeedback.lightImpact();
+      setState(() {
+        _recording = false;
+        _parsing = true;
+      });
+      try {
+        final audio = await stopVoiceRecording();
+        if (audio == null) {
+          if (mounted) {
+            setState(() {
+              _parsing = false;
+              _error = "Ovoz juda qisqa bo'ldi, qaytadan ayting";
+            });
+          }
+          return;
+        }
+        final res = await widget.api.parseVoiceCommand(
+          audioBytes: audio.bytes,
+          filename: audio.filename,
+        );
+        if (!mounted) return;
+        _applyParsedResponse(res);
+      } catch (e) {
+        if (mounted) setState(() => _error = e.toString());
+      } finally {
+        if (mounted) setState(() => _parsing = false);
+      }
+    }
+  }
+
+  Future<void> _parseText() async {
+    final txt = _textCtrl.text.trim();
+    if (txt.isEmpty || _parsing) return;
+    setState(() {
+      _parsing = true;
+      _error = null;
+      _parsed = null;
+    });
+    try {
+      final res = await widget.api.parseVoiceCommand(text: txt);
+      if (!mounted) return;
+      _applyParsedResponse(res);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _parsing = false);
+    }
+  }
+
+  void _applyParsedResponse(Map<String, dynamic> res) {
+    final intent = (res['intent'] ?? 'unknown').toString();
+    if (intent == 'unknown') {
+      final msg = (res['message'] ?? '').toString();
+      setState(() {
+        _error = msg.isNotEmpty
+            ? msg
+            : 'Buyruq tushunilmadi (masalan: "Cola 450 ming" yoki "Kassaga 2 mln oldim")';
+      });
+      return;
+    }
+    setState(() => _parsed = res);
+  }
+
+  String _intentSummary(Map<String, dynamic> p) {
+    final intent = (p['intent'] ?? '').toString();
+    final amt = (p['amount'] as num?)?.toDouble();
+    final sup = (p['supplier_name'] ?? '').toString();
+    final amtStr = amt != null ? formatUzs(amt, withCurrency: true) : '';
+    switch (intent) {
+      case 'cash_in':
+        return '➕ Kirim: $amtStr';
+      case 'kassa_debt':
+        return '🏦 Kassadan qarz: $amtStr';
+      case 'kassa_repay':
+        return '↩️ Qarz qaytdi: $amtStr';
+      case 'pay_supplier':
+        return '🧾 Nakladnoy: ${sup.isNotEmpty ? sup : "Postavshik"} • $amtStr';
+      case 'count_cash':
+        return '🧮 Sanalgan pul: $amtStr';
+      case 'status':
+        return '📊 Kassa holatini yangilash';
+      default:
+        return intent;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final (okFg, okBg, okBorder) =
+        AppTokens.semanticSurface(context, AppTokens.cashGreen);
+    final (errFg, errBg, errBorder) =
+        AppTokens.semanticSurface(context, AppTokens.dangerRed);
+
+    return SafeArea(
+      top: false,
+      maintainBottomViewPadding: true,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(20, 6, 20, sheetBottomPadding(context)),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: sheetMaxHeight(context, fraction: 0.85),
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.mic_rounded, color: AppTokens.brandViolet),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'AI Ovozli buyruq',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.w900),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Masalan: «Cola 450 ming» yoki «Kassaga 2 million oldim»',
+                  style: TextStyle(
+                      fontSize: 12.5, color: textSecondaryOf(context)),
+                ),
+                if (!kIsWeb) ...[
+                  const SizedBox(height: 16),
+                  Center(
+                    child: TactileScaleTap(
+                      child: GestureDetector(
+                        onTap: _toggleRecord,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 220),
+                          width: _recording ? 84 : 74,
+                          height: _recording ? 84 : 74,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: _recording
+                                ? AppTokens.dangerRed
+                                : AppTokens.brandViolet,
+                            boxShadow: [
+                              BoxShadow(
+                                color: (_recording
+                                        ? AppTokens.dangerRed
+                                        : AppTokens.brandViolet)
+                                    .withValues(alpha: 0.38),
+                                blurRadius: _recording ? 26 : 16,
+                                spreadRadius: _recording ? 4 : 1,
+                              ),
+                            ],
+                          ),
+                          child: Icon(
+                            _recording
+                                ? Icons.stop_rounded
+                                : Icons.mic_rounded,
+                            color: Colors.white,
+                            size: 34,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _recording
+                        ? '🔴 Yozilmoqda (${_elapsedSec}s) — to\'xtatish uchun bosing'
+                        : (_parsing
+                            ? '✨ AI tahlil qilmoqda...'
+                            : 'Gapirish uchun mikrofonni bosing'),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: _recording
+                          ? AppTokens.dangerRed
+                          : textSecondaryOf(context),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _textCtrl,
+                        onSubmitted: (_) => _parseText(),
+                        decoration: const InputDecoration(
+                          hintText: 'Yoki qisqa buyruq yozing...',
+                          prefixIcon: Icon(Icons.bolt_rounded),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.filled(
+                      onPressed: _parsing ? null : _parseText,
+                      icon: _parsing
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.send_rounded),
+                    ),
+                  ],
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(11),
+                    decoration: BoxDecoration(
+                      color: errBg,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: errBorder),
+                    ),
+                    child: Text(
+                      _error!,
+                      style: TextStyle(
+                        color: errFg,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+                if (_parsed != null) ...[
+                  const SizedBox(height: 14),
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: okBg,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: okBorder),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if ((_parsed!['transcript'] ?? '')
+                            .toString()
+                            .isNotEmpty)
+                          Text(
+                            '«${_parsed!['transcript']}»',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: textSecondaryOf(context),
+                            ),
+                          ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _intentSummary(_parsed!),
+                          style: TextStyle(
+                            fontSize: 15.5,
+                            fontWeight: FontWeight.w900,
+                            color: okFg,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: AppTokens.cashGreen,
+                          ),
+                          onPressed: () => Navigator.pop(context, _parsed),
+                          icon: const Icon(Icons.check_rounded),
+                          label: const Text('Bajarish'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
         ),
       ),

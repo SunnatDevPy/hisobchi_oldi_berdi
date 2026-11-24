@@ -1,13 +1,17 @@
 package uz.hisobchi.hisobchi_app
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
 import android.provider.Settings
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterFragmentActivity
@@ -22,6 +26,21 @@ class MainActivity : FlutterFragmentActivity() {
     private var pendingApkPath: String? = null
     private var pendingDocResult: MethodChannel.Result? = null
     private val pickDocRequestCode = 4201
+    private val micPermRequestCode = 4202
+    private var voiceRecorder: MediaRecorder? = null
+    private var voiceFile: File? = null
+
+    private fun releaseVoiceRecorder() {
+        try {
+            voiceRecorder?.stop()
+        } catch (_: Exception) {
+        }
+        try {
+            voiceRecorder?.release()
+        } catch (_: Exception) {
+        }
+        voiceRecorder = null
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -148,9 +167,80 @@ class MainActivity : FlutterFragmentActivity() {
                             finish(false)
                         }
                     }
+                    "startVoiceRecord" -> {
+                        if (ContextCompat.checkSelfPermission(
+                                this,
+                                Manifest.permission.RECORD_AUDIO
+                            ) != PackageManager.PERMISSION_GRANTED
+                        ) {
+                            ActivityCompat.requestPermissions(
+                                this,
+                                arrayOf(Manifest.permission.RECORD_AUDIO),
+                                micPermRequestCode
+                            )
+                            result.success("PERMISSION_REQUESTED")
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            releaseVoiceRecorder()
+                            val out = File(cacheDir, "hisobchi_voice.m4a")
+                            if (out.exists()) out.delete()
+                            val rec = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                MediaRecorder(this)
+                            } else {
+                                @Suppress("DEPRECATION")
+                                MediaRecorder()
+                            }
+                            rec.setAudioSource(MediaRecorder.AudioSource.MIC)
+                            rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                            rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                            rec.setAudioSamplingRate(16000)
+                            rec.setAudioEncodingBitRate(64000)
+                            rec.setMaxDuration(60000)
+                            rec.setOutputFile(out.absolutePath)
+                            rec.prepare()
+                            rec.start()
+                            voiceRecorder = rec
+                            voiceFile = out
+                            result.success("STARTED")
+                        } catch (e: Exception) {
+                            releaseVoiceRecorder()
+                            result.error("MIC_ERROR", e.localizedMessage ?: e.toString(), null)
+                        }
+                    }
+                    "stopVoiceRecord" -> {
+                        val out = voiceFile
+                        voiceFile = null
+                        releaseVoiceRecorder()
+                        if (out != null && out.exists() && out.length() > 256) {
+                            result.success(
+                                mapOf(
+                                    "path" to out.absolutePath,
+                                    "name" to "voice.m4a",
+                                )
+                            )
+                        } else {
+                            result.success(null)
+                        }
+                    }
+                    "cancelVoiceRecord" -> {
+                        val out = voiceFile
+                        voiceFile = null
+                        releaseVoiceRecorder()
+                        try {
+                            out?.delete()
+                        } catch (_: Exception) {
+                        }
+                        result.success(true)
+                    }
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    override fun onDestroy() {
+        releaseVoiceRecorder()
+        super.onDestroy()
     }
 
     @Suppress("DEPRECATION")

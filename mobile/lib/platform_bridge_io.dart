@@ -23,10 +23,11 @@ String? getTelegramColorScheme() => null;
 
 void syncTelegramChromeColors({required bool isDark}) {}
 
-Future<void> saveAndShareExcel({
+Future<void> saveAndShareBinaryFile({
   required Future<Uint8List> Function() fetchBytes,
   required String filename,
   required String authenticatedDownloadUrl,
+  String shareText = '',
 }) async {
   final bytes = await fetchBytes();
   final dir = await getTemporaryDirectory();
@@ -34,7 +35,20 @@ Future<void> saveAndShareExcel({
   await file.writeAsBytes(bytes, flush: true);
   await Share.shareXFiles(
     [XFile(file.path)],
-    text: 'Hisobchi Excel hisobot: $filename',
+    text: shareText.isNotEmpty ? shareText : filename,
+  );
+}
+
+Future<void> saveAndShareExcel({
+  required Future<Uint8List> Function() fetchBytes,
+  required String filename,
+  required String authenticatedDownloadUrl,
+}) {
+  return saveAndShareBinaryFile(
+    fetchBytes: fetchBytes,
+    filename: filename,
+    authenticatedDownloadUrl: authenticatedDownloadUrl,
+    shareText: 'Hisobchi Excel hisobot: $filename',
   );
 }
 
@@ -89,6 +103,35 @@ Future<bool> authenticateBiometric({
   } catch (_) {
     return false;
   }
+}
+
+Future<String> startVoiceRecording() async {
+  final res = await _installerChannel.invokeMethod<String>('startVoiceRecord');
+  return res ?? 'ERROR';
+}
+
+Future<PickedBytesFile?> stopVoiceRecording() async {
+  final res = await _installerChannel.invokeMethod<dynamic>('stopVoiceRecord');
+  if (res == null || res is! Map) return null;
+  final path = (res['path'] ?? '').toString();
+  if (path.isEmpty) return null;
+  final file = File(path);
+  if (!await file.exists()) return null;
+  final bytes = await file.readAsBytes();
+  try {
+    await file.delete();
+  } catch (_) {}
+  if (bytes.isEmpty) return null;
+  return PickedBytesFile(
+    bytes: bytes,
+    filename: (res['name'] ?? 'voice.m4a').toString(),
+  );
+}
+
+Future<void> cancelVoiceRecording() async {
+  try {
+    await _installerChannel.invokeMethod<void>('cancelVoiceRecord');
+  } catch (_) {}
 }
 
 Future<void> showInAppApkUpdateDialog({
