@@ -109,6 +109,13 @@ class OfflineOutboxStore {
 
   static Future<int> count() async => (await loadAll()).length;
 
+  static Future<int> removeById(String id) async {
+    final items = await loadAll();
+    items.removeWhere((e) => e.id == id);
+    await _saveAll(items);
+    return items.length;
+  }
+
   static Future<void> clearAll() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_storageKey);
@@ -179,6 +186,7 @@ class OfflineOutboxStore {
     required String paymentMethod,
     String supplierName = '',
     double amount = 0,
+    double? partialAmount,
   }) async {
     final items = await loadAll();
     items.add(
@@ -191,6 +199,7 @@ class OfflineOutboxStore {
           'payment_method': paymentMethod,
           'supplier_name': supplierName,
           'amount': amount,
+          if (partialAmount != null) 'partial_amount': partialAmount,
         },
       ),
     );
@@ -280,6 +289,7 @@ class OfflineOutboxStore {
         await api.payDebt(
           paymentId: (p['payment_id'] as num).toInt(),
           paymentMethod: (p['payment_method'] ?? 'cash').toString(),
+          amount: (p['partial_amount'] as num?)?.toDouble(),
         );
         break;
       default:

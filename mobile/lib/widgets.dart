@@ -11,6 +11,7 @@ class HeroBalanceCard extends StatelessWidget {
   final VoidCallback? onAddCash;
   final VoidCallback? onKassaDebt;
   final VoidCallback? onKassaRepay;
+  final VoidCallback? onTapKassaDebtHistory;
 
   const HeroBalanceCard({
     super.key,
@@ -19,6 +20,7 @@ class HeroBalanceCard extends StatelessWidget {
     this.onAddCash,
     this.onKassaDebt,
     this.onKassaRepay,
+    this.onTapKassaDebtHistory,
   });
 
   @override
@@ -53,15 +55,21 @@ class HeroBalanceCard extends StatelessWidget {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.calendar_today_rounded,
+                    const Icon(Icons.schedule_rounded,
                         size: 13, color: Colors.white),
                     const SizedBox(width: 6),
-                    Text(
-                      summary.reportDate,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w700,
+                    Flexible(
+                      child: Text(
+                        summary.timeSpanLabel.isNotEmpty
+                            ? '${summary.reportDate} • ${summary.timeSpanLabel}'
+                            : summary.reportDate,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                   ],
@@ -213,17 +221,23 @@ class HeroBalanceCard extends StatelessWidget {
                     ),
                     Expanded(
                       child: _HeroSubStat(
-                        label: 'Bugun kirim',
+                        label: 'Egadan',
                         numericValue: summary.mainCashIn,
                         prefix: '+',
                         animSeed: animSeed,
                       ),
                     ),
                     Expanded(
-                      child: _HeroSubStat(
-                        label: 'Kassa qarzi',
-                        numericValue: summary.totalKassaDebtOutstanding,
-                        animSeed: animSeed,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(8),
+                        onTap: onTapKassaDebtHistory,
+                        child: _HeroSubStat(
+                          label: onTapKassaDebtHistory != null
+                              ? 'Kassa qarzi ›'
+                              : 'Kassa qarzi',
+                          numericValue: summary.totalKassaDebtOutstanding,
+                          animSeed: animSeed,
+                        ),
                       ),
                     ),
                   ],
@@ -239,7 +253,7 @@ class HeroBalanceCard extends StatelessWidget {
                 Expanded(
                   child: _HeroActionBtn(
                     icon: Icons.add_card_rounded,
-                    label: 'Pul oldim',
+                    label: 'Egadan oldim',
                     onTap: onAddCash!,
                   ),
                 ),

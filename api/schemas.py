@@ -90,12 +90,15 @@ class NakladnoyUpdateRequest(BaseModel):
 
 class PaymentMethodRequest(BaseModel):
     payment_method: str = Field(..., pattern="^(cash|card|transfer)$")
+    amount: Optional[float] = Field(default=None, gt=0)
 
 
 class StatusSummaryResponse(BaseModel):
     session_id: int
     report_date: str
     session_status: str
+    opened_at: str = ""
+    closed_at: str = ""
     opening_balance: float
     main_cash_in: float
     kassa_debt_today: float

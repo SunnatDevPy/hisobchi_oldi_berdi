@@ -245,6 +245,25 @@ async def get_or_create_open_session(
     """Return active open session or create one carrying over last closed counted cash."""
     open_sess = await get_open_session(db)
     if open_sess is not None:
+        today_str = today_iso()
+        if report_date is None and open_sess.report_date != today_str:
+            has_tx = await db.scalar(
+                select(func.count(CashTransaction.id)).where(
+                    CashTransaction.session_id == open_sess.id,
+                    CashTransaction.is_deleted.is_(False),
+                )
+            )
+            has_nak = await db.scalar(
+                select(func.count(NakladnoyPayment.id)).where(
+                    NakladnoyPayment.session_id == open_sess.id,
+                    NakladnoyPayment.status != "deleted",
+                )
+            )
+            if not has_tx and not has_nak:
+                open_sess.report_date = today_str
+                open_sess.created_at = now_local()
+                await db.commit()
+                await db.refresh(open_sess)
         return open_sess
 
     last_closed = await get_last_closed_session(db)
@@ -255,11 +274,27 @@ async def get_or_create_open_session(
         status="open",
         opening_balance=opening_balance,
         expected_cash=opening_balance,
+        created_at=now_local(),
     )
     db.add(new_sess)
     await db.commit()
     await db.refresh(new_sess)
     return new_sess
+
+
+def effective_tx_local_date(
+    tx_dt: Optional[datetime], session: DailyCashSession
+) -> str:
+    """Return true local YYYY-MM-DD of a transaction, preserving synthetic report_date in tests."""
+    sess_created = (
+        format_local_dt(session.created_at, "%Y-%m-%d")
+        if getattr(session, "created_at", None)
+        else ""
+    )
+    if sess_created and sess_created != session.report_date:
+        return session.report_date
+    tx_date = format_local_dt(tx_dt, "%Y-%m-%d") if tx_dt else ""
+    return tx_date or session.report_date
 
 
 async def get_outstanding_kassa_debt(db: AsyncSession) -> float:
@@ -522,6 +557,22 @@ async def delete_cash_transaction(
     return tx
 
 
+async def restore_cash_transaction(
+    db: AsyncSession, tx_id: int, user_id: Optional[int] = None
+) -> Optional[CashTransaction]:
+    """Undo soft-delete on a CashTransaction and recalculate session balance."""
+    tx = await db.get(CashTransaction, tx_id)
+    if tx is None:
+        return None
+    if tx.is_deleted:
+        tx.is_deleted = False
+        await db.commit()
+        await db.refresh(tx)
+        await log_action(db, "restore", "cash", tx.id, f"summa={tx.amount:.0f}", user_id=user_id)
+        await _sync_session_expected_cash(db, tx.session_id)
+    return tx
+
+
 # ---------------------------------------------------------------------------
 # Nakladnoy payments (pending, confirmed, editing confirmed)
 # ---------------------------------------------------------------------------
@@ -713,11 +764,59 @@ async def mark_nakladnoy_as_paid(
     payment_id: int,
     user_id: Optional[int] = None,
     payment_method: str = "cash",
+    partial_amount: Optional[float] = None,
 ) -> Optional[Tuple[NakladnoyPayment, bool]]:
-    """Mark an unpaid debt nakladnoy as paid (cash/card/transfer); rolls closed-day debts into today."""
+    """Mark an unpaid debt nakladnoy as paid in full or partially (cash/card/transfer)."""
     payment = await db.get(NakladnoyPayment, payment_id)
     if payment is None or payment.status == "deleted":
         return None
+    pm = normalize_payment_method(payment_method)
+
+    if (
+        payment.is_debt
+        and partial_amount is not None
+        and 0 < float(partial_amount) < float(payment.amount) - 0.01
+    ):
+        pay_amt = round(float(partial_amount), 2)
+        rem_amt = round(float(payment.amount) - pay_amt, 2)
+        if payment.original_amount is None:
+            payment.original_amount = float(payment.amount)
+        payment.amount = rem_amt
+        stamp = format_local_dt(now_local(), "%d.%m %H:%M")
+        part_tag = f"Qisman to'landi: {pay_amt:,.0f} ({stamp})".replace(",", " ")
+        cur_note = (payment.note or "").strip()
+        payment.note = f"{cur_note} | {part_tag}".strip(" |")
+
+        active_sess = await get_or_create_open_session(db)
+        paid_entry = NakladnoyPayment(
+            session_id=active_sess.id,
+            supplier_name=payment.supplier_name,
+            amount=pay_amt,
+            original_amount=pay_amt,
+            note=f"Qisman to'lov (#{payment.id} qarzidan)",
+            status="confirmed",
+            is_debt=False,
+            payment_method=pm,
+            paid_at=now_local(),
+            created_at=now_local(),
+        )
+        db.add(paid_entry)
+        await db.commit()
+        await db.refresh(payment)
+        await db.refresh(paid_entry)
+        await log_action(
+            db,
+            "partial_pay",
+            "nakladnoy",
+            payment.id,
+            f"{payment.supplier_name}: -{pay_amt:.0f}, qoldiq={rem_amt:.0f} [{pm.upper()}]",
+            user_id=user_id,
+        )
+        await _sync_session_expected_cash(db, active_sess.id)
+        if payment.session_id != active_sess.id:
+            await _sync_session_expected_cash(db, payment.session_id)
+        return payment, True
+
     orig_sess = await db.get(DailyCashSession, payment.session_id)
     moved_to_today = False
     if orig_sess is not None and orig_sess.status == "closed":
@@ -730,7 +829,6 @@ async def mark_nakladnoy_as_paid(
                 payment.note = f"{cur_note} | {tag_note}".strip(" |")
             moved_to_today = True
 
-    pm = normalize_payment_method(payment_method)
     payment.status = "confirmed"
     payment.is_debt = False
     payment.payment_method = pm
@@ -852,6 +950,24 @@ async def delete_nakladnoy(
         db, "delete", "nakladnoy", payment.id, f"{payment.supplier_name} / {payment.amount:.0f}", user_id=user_id
     )
     if was_confirmed:
+        await _sync_session_expected_cash(db, payment.session_id)
+    return payment
+
+
+async def restore_nakladnoy(
+    db: AsyncSession, payment_id: int, user_id: Optional[int] = None
+) -> Optional[NakladnoyPayment]:
+    """Undo soft-delete on a NakladnoyPayment and recalculate session balance."""
+    payment = await db.get(NakladnoyPayment, payment_id)
+    if payment is None:
+        return None
+    if payment.status == "deleted":
+        payment.status = "confirmed"
+        await db.commit()
+        await db.refresh(payment)
+        await log_action(
+            db, "restore", "nakladnoy", payment.id, f"{payment.supplier_name} / {payment.amount:.0f}", user_id=user_id
+        )
         await _sync_session_expected_cash(db, payment.session_id)
     return payment
 
@@ -1539,47 +1655,76 @@ async def get_range_report_data(
     db: AsyncSession, date_from: str, date_to: str
 ) -> dict:
     """Collect sessions, confirmed nakladnoys, cash transactions, and kassa debt across [date_from, date_to]."""
-    sessions = list(
+    try:
+        lower_bound = (
+            datetime.strptime(date_from, "%Y-%m-%d").date() - timedelta(days=7)
+        ).strftime("%Y-%m-%d")
+    except Exception:
+        lower_bound = date_from
+
+    cand_sessions = list(
         (
             await db.scalars(
                 select(DailyCashSession)
                 .where(
-                    DailyCashSession.report_date >= date_from,
+                    DailyCashSession.report_date >= lower_bound,
                     DailyCashSession.report_date <= date_to,
                 )
                 .order_by(DailyCashSession.report_date, DailyCashSession.id)
             )
         ).all()
     )
-    nak_rows = list(
+
+    cand_naks = list(
         (
             await db.execute(
-                select(NakladnoyPayment, DailyCashSession.report_date)
+                select(NakladnoyPayment, DailyCashSession)
                 .join(DailyCashSession, DailyCashSession.id == NakladnoyPayment.session_id)
                 .where(
                     NakladnoyPayment.status == "confirmed",
                     NakladnoyPayment.is_debt.is_(False),
-                    DailyCashSession.report_date >= date_from,
+                    DailyCashSession.report_date >= lower_bound,
                     DailyCashSession.report_date <= date_to,
                 )
-                .order_by(DailyCashSession.report_date, NakladnoyPayment.id)
+                .order_by(NakladnoyPayment.id)
             )
         ).all()
     )
-    cash_rows = list(
+    nak_rows: List[Tuple[NakladnoyPayment, str]] = []
+    active_sess_ids: set[int] = set()
+    for pay, sess in cand_naks:
+        eff_date = effective_tx_local_date(pay.paid_at or pay.created_at, sess)
+        if date_from <= eff_date <= date_to:
+            nak_rows.append((pay, eff_date))
+            active_sess_ids.add(int(sess.id))
+
+    cand_cash = list(
         (
             await db.execute(
-                select(CashTransaction, DailyCashSession.report_date)
+                select(CashTransaction, DailyCashSession)
                 .join(DailyCashSession, DailyCashSession.id == CashTransaction.session_id)
                 .where(
                     CashTransaction.is_deleted.is_(False),
-                    DailyCashSession.report_date >= date_from,
+                    DailyCashSession.report_date >= lower_bound,
                     DailyCashSession.report_date <= date_to,
                 )
-                .order_by(DailyCashSession.report_date, CashTransaction.id)
+                .order_by(CashTransaction.id)
             )
         ).all()
     )
+    cash_rows: List[Tuple[CashTransaction, str]] = []
+    for tx, sess in cand_cash:
+        eff_date = effective_tx_local_date(tx.created_at, sess)
+        if date_from <= eff_date <= date_to:
+            cash_rows.append((tx, eff_date))
+            active_sess_ids.add(int(sess.id))
+
+    sessions = [
+        s
+        for s in cand_sessions
+        if (date_from <= s.report_date <= date_to) or (int(s.id) in active_sess_ids)
+    ]
+
     kassa_stats = await get_kassa_debt_stats(db, limit=10)
     return {
         "sessions": sessions,

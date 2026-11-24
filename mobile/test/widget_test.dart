@@ -434,4 +434,51 @@ void main() {
     expect(duplicated, equals(1));
     expect(find.text('Coca Cola'), findsOneWidget);
   });
+
+  test('Session time spans and multi-smena / 24h date matching format accurately',
+      () {
+    expect(
+      formatSessionTimeSpan(
+        reportDate: '2026-11-24',
+        status: 'closed',
+        openedAt: '2026-11-24 08:30',
+        closedAt: '2026-11-24 20:00',
+      ),
+      equals('08:30–20:00'),
+    );
+    expect(
+      formatSessionTimeSpan(
+        reportDate: '2026-11-24',
+        status: 'open',
+        openedAt: '2026-11-24 20:25',
+        closedAt: '',
+      ),
+      equals('20:25 dan ochiq'),
+    );
+    expect(
+      formatSessionTimeSpan(
+        reportDate: '2026-11-23',
+        status: 'closed',
+        openedAt: '2026-11-23 09:00',
+        closedAt: '2026-11-24 14:15',
+      ),
+      equals('11-23 09:00 → 11-24 14:15'),
+    );
+
+    const sutkaSession = HistorySessionItem(
+      id: 15,
+      reportDate: '2026-11-23',
+      status: 'closed',
+      openingBalance: 0,
+      expectedCash: 500000,
+      createdAt: '2026-11-23 09:00',
+      closedAt: '2026-11-24 14:15',
+      shiftSeq: 2,
+      shiftTotal: 2,
+    );
+    expect(sutkaSession.shiftBadge, equals('2-smena (#15)'));
+    expect(sutkaSession.matchesDate('2026-11-23'), isTrue);
+    expect(sutkaSession.matchesDate('2026-11-24'), isTrue);
+    expect(sutkaSession.matchesDate('2026-11-25'), isFalse);
+  });
 }

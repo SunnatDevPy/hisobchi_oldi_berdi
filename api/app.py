@@ -90,6 +90,7 @@ from database.crud import (
     delete_supplier,
     delete_supplier_debt,
     delete_user_role,
+    effective_tx_local_date,
     find_similar_suppliers,
     format_local_dt,
     get_ai_usage_stats,
@@ -97,6 +98,7 @@ from database.crud import (
     get_all_known_suppliers,
     get_app_setting,
     get_group_config,
+    get_kassa_debt_stats,
     get_nakladnoy,
     get_nakladnoy_session_seq,
     get_or_create_open_session,
@@ -108,6 +110,7 @@ from database.crud import (
     get_supplier_sverka,
     list_all_sessions,
     list_prixod_reports,
+    list_recent_cash_transactions,
     list_recent_nakladnoys,
     list_supplier_debt_entries,
     list_suppliers,
@@ -120,6 +123,8 @@ from database.crud import (
     now_local,
     reopen_cash_session,
     resolve_supplier_name,
+    restore_cash_transaction,
+    restore_nakladnoy,
     round_nakladnoy_amount,
     save_prixod_report,
     search_nakladnoys,
@@ -486,7 +491,7 @@ def create_api_app() -> FastAPI:
             _serialize_nakladnoy(
                 n,
                 session_seq=idx,
-                report_date=summary.session.report_date,
+                report_date=effective_tx_local_date(n.paid_at or n.created_at, summary.session),
                 session_status=summary.session.status,
             )
             for idx, n in enumerate(all_naks, start=1)
@@ -497,6 +502,16 @@ def create_api_app() -> FastAPI:
             session_id=int(summary.session.id),
             report_date=summary.session.report_date,
             session_status=summary.session.status,
+            opened_at=(
+                format_local_dt(summary.session.created_at, "%Y-%m-%d %H:%M")
+                if summary.session.created_at
+                else ""
+            ),
+            closed_at=(
+                format_local_dt(summary.session.closed_at, "%Y-%m-%d %H:%M")
+                if summary.session.closed_at
+                else ""
+            ),
             opening_balance=float(summary.opening_balance),
             main_cash_in=float(summary.main_cash_in),
             kassa_debt_today=float(summary.kassa_debt_today),
@@ -559,6 +574,17 @@ def create_api_app() -> FastAPI:
         if tx is None:
             raise HTTPException(status_code=404, detail="Kassa amali topilmadi")
         return {"ok": True, "deleted_id": tx_id}
+
+    @app.post("/cash/{tx_id}/restore", response_model=CashTxOut)
+    async def restore_cash_endpoint(
+        tx_id: int,
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> CashTxOut:
+        async with async_session_maker() as db:
+            tx = await restore_cash_transaction(db, tx_id=tx_id, user_id=user.user_id)
+        if tx is None:
+            raise HTTPException(status_code=404, detail="Kassa amali topilmadi")
+        return _serialize_cash_tx(tx)
 
     @app.get("/suppliers")
     async def get_suppliers(
@@ -705,14 +731,19 @@ def create_api_app() -> FastAPI:
                     func.lower(NakladnoyPayment.supplier_name) == canonical.lower(),
                     NakladnoyPayment.status == "confirmed",
                 )
+                .order_by(NakladnoyPayment.id.desc())
             )
-            if date_from:
-                stmt = stmt.where(DailyCashSession.report_date >= date_from)
-            if date_to:
-                stmt = stmt.where(DailyCashSession.report_date <= date_to)
-            stmt = stmt.order_by(NakladnoyPayment.id.desc())
-            rows = (await db.execute(stmt)).all()
+            all_rows = (await db.execute(stmt)).all()
             nasiya_rows = await get_supplier_debt_balances(db)
+
+        rows: list[tuple[NakladnoyPayment, DailyCashSession, str]] = []
+        for pay, sess in all_rows:
+            eff_date = effective_tx_local_date(pay.paid_at or pay.created_at, sess)
+            if date_from and eff_date < date_from:
+                continue
+            if date_to and eff_date > date_to:
+                continue
+            rows.append((pay, sess, eff_date))
 
         total_amount = 0.0
         cash_amount = 0.0
@@ -725,11 +756,11 @@ def create_api_app() -> FastAPI:
         unpaid_debt_count = 0
         dates: list[str] = []
 
-        for pay, sess in rows:
+        for pay, sess, eff_date in rows:
             amt = float(pay.amount or 0.0)
             total_amount += amt
-            if getattr(sess, "report_date", None):
-                dates.append(str(sess.report_date))
+            if eff_date:
+                dates.append(eff_date)
             if bool(getattr(pay, "is_debt", False)):
                 unpaid_debt_amount += amt
                 unpaid_debt_count += 1
@@ -754,10 +785,10 @@ def create_api_app() -> FastAPI:
         items = [
             _serialize_nakladnoy(
                 pay,
-                report_date=sess.report_date,
+                report_date=eff_date,
                 session_status=str(sess.status or "open"),
             ).model_dump()
-            for pay, sess in rows[:limit]
+            for pay, sess, eff_date in rows[:limit]
         ]
 
         return {
@@ -1209,13 +1240,15 @@ def create_api_app() -> FastAPI:
                 payment_id=payment_id,
                 user_id=user.user_id,
                 payment_method=payload.payment_method,
+                partial_amount=payload.amount,
             )
             if res is None:
                 raise HTTPException(status_code=404, detail="Nakladnoy topilmadi")
             updated, _ = res
             seq = await get_nakladnoy_session_seq(db, updated)
 
-        sync_existing_group_message(updated, tag="✅ [QARZ TO'LANDI]")
+        tag = "💸 [QISMAN TO'LANDI]" if updated.is_debt else "✅ [QARZ TO'LANDI]"
+        sync_existing_group_message(updated, tag=tag)
         return _serialize_nakladnoy(updated, session_seq=seq)
 
     @app.post("/nakladnoy/{payment_id}/group")
@@ -1247,6 +1280,21 @@ def create_api_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Nakladnoy topilmadi")
         sync_existing_group_message(deleted, tag="❌ [O'CHIRILDI]")
         return {"ok": True, "deleted_id": payment_id}
+
+    @app.post("/nakladnoy/{payment_id}/restore", response_model=NakladnoyOut)
+    async def restore_nakladnoy_endpoint(
+        payment_id: int,
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> NakladnoyOut:
+        async with async_session_maker() as db:
+            restored = await restore_nakladnoy(
+                db, payment_id=payment_id, user_id=user.user_id
+            )
+            if restored is None:
+                raise HTTPException(status_code=404, detail="Nakladnoy topilmadi")
+            seq = await get_nakladnoy_session_seq(db, restored)
+        sync_existing_group_message(restored, tag="")
+        return _serialize_nakladnoy(restored, session_seq=seq)
 
     @app.get("/debts")
     async def get_unpaid_debts(
@@ -1405,21 +1453,44 @@ def create_api_app() -> FastAPI:
     ) -> dict:
         async with async_session_maker() as db:
             sessions = await list_all_sessions(db, limit=limit)
-        items = [
-            {
-                "id": int(s.id),
-                "report_date": s.report_date,
-                "status": s.status,
-                "opening_balance": float(s.opening_balance or 0.0),
-                "expected_cash": float(s.expected_cash or 0.0),
-                "actual_counted_cash": (
-                    float(s.actual_counted_cash) if s.actual_counted_cash is not None else None
-                ),
-                "difference": float(s.difference) if s.difference is not None else None,
-                "closed_at": format_local_dt(s.closed_at, "%Y-%m-%d %H:%M") if s.closed_at else "",
-            }
-            for s in sessions
-        ]
+
+        by_date: dict[str, list[int]] = {}
+        for s in sorted(sessions, key=lambda x: x.id):
+            by_date.setdefault(s.report_date, []).append(int(s.id))
+
+        items = []
+        for s in sessions:
+            same_day_ids = by_date.get(s.report_date, [int(s.id)])
+            seq_in_day = same_day_ids.index(int(s.id)) + 1
+            items.append(
+                {
+                    "id": int(s.id),
+                    "report_date": s.report_date,
+                    "status": s.status,
+                    "opening_balance": float(s.opening_balance or 0.0),
+                    "expected_cash": float(s.expected_cash or 0.0),
+                    "actual_counted_cash": (
+                        float(s.actual_counted_cash)
+                        if s.actual_counted_cash is not None
+                        else None
+                    ),
+                    "difference": (
+                        float(s.difference) if s.difference is not None else None
+                    ),
+                    "created_at": (
+                        format_local_dt(s.created_at, "%Y-%m-%d %H:%M")
+                        if s.created_at
+                        else ""
+                    ),
+                    "closed_at": (
+                        format_local_dt(s.closed_at, "%Y-%m-%d %H:%M")
+                        if s.closed_at
+                        else ""
+                    ),
+                    "shift_seq": seq_in_day,
+                    "shift_total": len(same_day_ids),
+                }
+            )
         return {"sessions": items}
 
     @app.get("/history/sessions/{session_id}", response_model=StatusSummaryResponse)
@@ -1446,7 +1517,7 @@ def create_api_app() -> FastAPI:
             _serialize_nakladnoy(
                 n,
                 session_seq=idx,
-                report_date=summary.session.report_date,
+                report_date=effective_tx_local_date(n.paid_at or n.created_at, summary.session),
                 session_status=summary.session.status,
             )
             for idx, n in enumerate(all_naks, start=1)
@@ -1456,6 +1527,16 @@ def create_api_app() -> FastAPI:
             session_id=int(summary.session.id),
             report_date=summary.session.report_date,
             session_status=summary.session.status,
+            opened_at=(
+                format_local_dt(summary.session.created_at, "%Y-%m-%d %H:%M")
+                if summary.session.created_at
+                else ""
+            ),
+            closed_at=(
+                format_local_dt(summary.session.closed_at, "%Y-%m-%d %H:%M")
+                if summary.session.closed_at
+                else ""
+            ),
             opening_balance=float(summary.opening_balance),
             main_cash_in=float(summary.main_cash_in),
             kassa_debt_today=float(summary.kassa_debt_today),
@@ -1495,9 +1576,13 @@ def create_api_app() -> FastAPI:
         q: str = Query(..., min_length=1),
         user: AuthenticatedUser = Depends(get_current_user),
     ) -> dict:
+        clean_q = q.strip()
+        low_q = clean_q.lower()
+        digits_q = "".join(ch for ch in clean_q if ch.isdigit())
         async with async_session_maker() as db:
-            rows = await search_nakladnoys(db, q.strip(), limit=40)
+            rows = await search_nakladnoys(db, clean_q, limit=40)
             st_map = await _batch_session_statuses(db, [pay for pay, _ in rows])
+            recent_cash = await list_recent_cash_transactions(db, limit=120)
         items = [
             _serialize_nakladnoy(
                 pay,
@@ -1506,7 +1591,39 @@ def create_api_app() -> FastAPI:
             )
             for pay, r_date in rows
         ]
-        return {"query": q.strip(), "count": len(items), "items": items}
+        src_labels = {
+            "main": "egadan oldim kirim",
+            "kassa_debt": "kassadan qarz oldim",
+            "kassa_repay": "kassaga qaytardim qaytarish",
+        }
+        cash_matches = []
+        for tx in recent_cash:
+            amt_str = f"{int(round(float(tx.amount)))}"
+            haystack = f"{tx.note or ''} {src_labels.get(tx.source_type, tx.source_type)}".lower()
+            if low_q in haystack or (digits_q and digits_q in amt_str):
+                cash_matches.append(_serialize_cash_tx(tx))
+                if len(cash_matches) >= 25:
+                    break
+        return {
+            "query": clean_q,
+            "count": len(items) + len(cash_matches),
+            "items": items,
+            "cash_items": cash_matches,
+        }
+
+    @app.get("/kassa-debt/history")
+    async def get_kassa_debt_history_endpoint(
+        limit: int = Query(default=40, ge=1, le=100),
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        async with async_session_maker() as db:
+            stats = await get_kassa_debt_stats(db, limit=limit)
+        return {
+            "total_borrowed": float(stats["total_borrowed"]),
+            "total_repaid": float(stats["total_repaid"]),
+            "outstanding": float(stats["outstanding"]),
+            "items": [_serialize_cash_tx(tx) for tx in stats["recent_txs"]],
+        }
 
     # -----------------------------------------------------------------------
     # Stage 2: In-App Live Sverka & Period Statistics

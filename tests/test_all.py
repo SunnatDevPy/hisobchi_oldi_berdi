@@ -2711,6 +2711,201 @@ def test_voice_command_anomaly_check_and_supplier_sverka_pdf(tmp_path: Path, mon
         get_settings.cache_clear()
 
 
+def test_multi_smena_timestamps_24h_date_filter_partial_debt_and_undo(
+    tmp_path: Path, monkeypatch
+):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    import httpx
+    import api.app as api_app_mod
+    import api.auth as api_auth_mod
+    from bot.auth import clear_role_cache
+    from config import get_settings
+    from database.models import DailyCashSession, NakladnoyPayment
+
+    monkeypatch.setenv("BOT_TOKEN", "987654:TEST_BOT_SMENA_PARTIAL")
+    monkeypatch.setenv("ADMIN_IDS", "111")
+    monkeypatch.setenv("API_PUBLIC_URL", "https://hisobchi.okaposai.uz")
+    get_settings.cache_clear()
+    clear_role_cache()
+    tz = ZoneInfo("Asia/Tashkent")
+
+    async def scenario() -> None:
+        db_file = tmp_path / "multi_smena_partial.db"
+        eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+        monkeypatch.setattr(api_app_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_auth_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_app_mod, "get_bot", lambda: None)
+        api_auth_mod.clear_auth_memory_state()
+        try:
+            await init_db(engine_override=eng, session_maker_override=maker)
+            async with maker() as db:
+                raw_token, _ = await api_auth_mod.issue_api_token(
+                    db, user_id=111, device_name="Pytest Smena APK"
+                )
+            headers = {"Authorization": f"Bearer {raw_token}"}
+            app = api_app_mod.create_api_app()
+
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                # 1. Smena #1: owner cash + kassa borrow, then close at evening -> opens Smena #2 same day
+                r_c1 = await client.post(
+                    "/cash",
+                    json={"amount": 2_000_000, "source_type": "main", "note": "Egadan"},
+                    headers=headers,
+                )
+                assert r_c1.status_code == 200
+                r_kd = await client.post(
+                    "/cash",
+                    json={"amount": 500_000, "source_type": "kassa_debt", "note": "Vaqtincha"},
+                    headers=headers,
+                )
+                assert r_kd.status_code == 200
+
+                r_close = await client.post(
+                    "/day/close",
+                    json={"actual_counted_cash": 2_500_000},
+                    headers=headers,
+                )
+                assert r_close.status_code == 200
+
+                # Smena #2 same day: debt nakladnoy 1,000,000 -> partial pay 600,000 cash
+                r_debt = await client.post(
+                    "/nakladnoy",
+                    data={
+                        "supplier_name": "Pepsi Bottlers",
+                        "amount": "1000000",
+                        "payment_mode": "debt",
+                        "send_to_group": "false",
+                    },
+                    headers=headers,
+                )
+                assert r_debt.status_code == 200
+                debt_id = r_debt.json()["nakladnoy"]["id"]
+
+                r_hist = await client.get("/history/sessions", headers=headers)
+                assert r_hist.status_code == 200
+                sess_items = r_hist.json()["sessions"]
+                assert len(sess_items) >= 2
+                assert sess_items[0]["shift_total"] == 2
+                assert sess_items[0]["shift_seq"] == 2
+                assert sess_items[0]["created_at"] != ""
+                assert sess_items[1]["closed_at"] != ""
+
+                # Partial pay 600,000 -> 400,000 remains in debt, 600,000 deducted from cash
+                r_part = await client.post(
+                    f"/nakladnoy/{debt_id}/paid",
+                    json={"payment_method": "cash", "amount": 600_000},
+                    headers=headers,
+                )
+                assert r_part.status_code == 200
+                assert r_part.json()["is_debt"] is True
+                assert r_part.json()["amount"] == 400_000.0
+
+                r_st = await client.get("/status", headers=headers)
+                st_json = r_st.json()
+                assert st_json["opened_at"] != ""
+                assert st_json["total_nakladnoy_spent"] == 600_000.0
+                assert st_json["expected_cash"] == 1_900_000.0
+                assert st_json["all_unpaid_debt_total"] == 400_000.0
+
+                r_prof = await client.get(
+                    "/suppliers/profile",
+                    params={"supplier": "Pepsi Bottlers"},
+                    headers=headers,
+                )
+                prof = r_prof.json()
+                assert prof["total_amount"] == 1_000_000.0
+                assert prof["cash_amount"] == 600_000.0
+                assert prof["unpaid_debt_amount"] == 400_000.0
+
+                # Kassa debt history + Undo cash delete
+                r_kh = await client.get("/kassa-debt/history", headers=headers)
+                assert r_kh.status_code == 200
+                assert r_kh.json()["outstanding"] == 500_000.0
+                assert len(r_kh.json()["items"]) == 1
+
+                r_c2 = await client.post(
+                    "/cash",
+                    json={"amount": 100_000, "source_type": "main", "note": "Test undo"},
+                    headers=headers,
+                )
+                tx2_id = r_c2.json()["id"]
+                assert (await client.delete(f"/cash/{tx2_id}", headers=headers)).status_code == 200
+                assert (await client.get("/status", headers=headers)).json()["expected_cash"] == 1_900_000.0
+                assert (await client.post(f"/cash/{tx2_id}/restore", headers=headers)).status_code == 200
+                assert (await client.get("/status", headers=headers)).json()["expected_cash"] == 2_000_000.0
+
+                # 2. 24-hour (1-sutka) cross-midnight session: opened 2026-10-10 09:00, closed 2026-10-11 13:00
+                async with maker() as db:
+                    s24 = DailyCashSession(
+                        report_date="2026-10-10",
+                        status="closed",
+                        opening_balance=0.0,
+                        expected_cash=0.0,
+                        created_at=datetime(2026, 10, 10, 9, 0, tzinfo=tz),
+                        closed_at=datetime(2026, 10, 11, 13, 0, tzinfo=tz),
+                    )
+                    db.add(s24)
+                    await db.flush()
+                    db.add_all(
+                        [
+                            NakladnoyPayment(
+                                session_id=s24.id,
+                                supplier_name="Sutka Sup",
+                                amount=300_000.0,
+                                status="confirmed",
+                                is_debt=False,
+                                payment_method="cash",
+                                created_at=datetime(2026, 10, 10, 14, 0, tzinfo=tz),
+                                paid_at=datetime(2026, 10, 10, 14, 0, tzinfo=tz),
+                            ),
+                            NakladnoyPayment(
+                                session_id=s24.id,
+                                supplier_name="Sutka Sup",
+                                amount=700_000.0,
+                                status="confirmed",
+                                is_debt=False,
+                                payment_method="cash",
+                                created_at=datetime(2026, 10, 11, 11, 30, tzinfo=tz),
+                                paid_at=datetime(2026, 10, 11, 11, 30, tzinfo=tz),
+                            ),
+                        ]
+                    )
+                    await db.commit()
+
+                r_day2 = await client.get(
+                    "/stats/period",
+                    params={"date_from": "2026-10-11", "date_to": "2026-10-11"},
+                    headers=headers,
+                )
+                assert r_day2.status_code == 200
+                assert r_day2.json()["total_spent"] == 700_000.0
+
+                r_sup_day2 = await client.get(
+                    "/suppliers/profile",
+                    params={
+                        "supplier": "Sutka Sup",
+                        "date_from": "2026-10-11",
+                        "date_to": "2026-10-11",
+                    },
+                    headers=headers,
+                )
+                assert r_sup_day2.status_code == 200
+                assert r_sup_day2.json()["total_amount"] == 700_000.0
+        finally:
+            await eng.dispose()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        clear_role_cache()
+        get_settings.cache_clear()
+
+
+
 
 
 

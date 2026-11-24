@@ -131,10 +131,41 @@ class NakladnoyItem {
       );
 }
 
+String formatSessionTimeSpan({
+  required String reportDate,
+  required String status,
+  required String openedAt,
+  String? closedAt,
+}) {
+  final openClean = openedAt.trim();
+  final closeClean = (closedAt ?? '').trim();
+  if (openClean.length < 16) {
+    if (status == 'open') return 'ochiq';
+    if (closeClean.length >= 16) return '${closeClean.substring(11, 16)} da yopilgan';
+    return '';
+  }
+  final openDate = openClean.substring(0, 10);
+  final openHm = openClean.substring(11, 16);
+  if (status == 'open' || closeClean.length < 16) {
+    if (openDate != reportDate) {
+      return '${openDate.substring(5)} $openHm dan ochiq';
+    }
+    return '$openHm dan ochiq';
+  }
+  final closeDate = closeClean.substring(0, 10);
+  final closeHm = closeClean.substring(11, 16);
+  if (openDate != closeDate) {
+    return '${openDate.substring(5)} $openHm → ${closeDate.substring(5)} $closeHm';
+  }
+  return '$openHm–$closeHm';
+}
+
 class StatusSummary {
   final int sessionId;
   final String reportDate;
   final String sessionStatus;
+  final String openedAt;
+  final String closedAt;
   final double openingBalance;
   final double mainCashIn;
   final double kassaDebtToday;
@@ -152,10 +183,19 @@ class StatusSummary {
   final List<CashTxItem> cashTransactions;
   final List<NakladnoyItem> nakladnoys;
 
+  String get timeSpanLabel => formatSessionTimeSpan(
+        reportDate: reportDate,
+        status: sessionStatus,
+        openedAt: openedAt,
+        closedAt: closedAt,
+      );
+
   const StatusSummary({
     required this.sessionId,
     required this.reportDate,
     required this.sessionStatus,
+    this.openedAt = '',
+    this.closedAt = '',
     required this.openingBalance,
     required this.mainCashIn,
     required this.kassaDebtToday,
@@ -178,6 +218,8 @@ class StatusSummary {
         sessionId: (j['session_id'] as num).toInt(),
         reportDate: (j['report_date'] ?? '').toString(),
         sessionStatus: (j['session_status'] ?? 'open').toString(),
+        openedAt: (j['opened_at'] ?? '').toString(),
+        closedAt: (j['closed_at'] ?? '').toString(),
         openingBalance: (j['opening_balance'] as num).toDouble(),
         mainCashIn: (j['main_cash_in'] as num).toDouble(),
         kassaDebtToday: (j['kassa_debt_today'] as num).toDouble(),
@@ -468,6 +510,13 @@ class HisobchiApiClient {
     _decodeJson(res);
   }
 
+  Future<CashTxItem> restoreCash(int txId) async {
+    final res = await _http
+        .post(_uri('/cash/$txId/restore'), headers: _headers())
+        .timeout(const Duration(seconds: 12));
+    return CashTxItem.fromJson(_decodeJson(res));
+  }
+
   Future<List<String>> getSuppliers({String query = ''}) async {
     try {
       final res = await _http
@@ -593,12 +642,16 @@ class HisobchiApiClient {
   Future<NakladnoyItem> payDebt({
     required int paymentId,
     required String paymentMethod, // cash | card | transfer
+    double? amount,
   }) async {
     final res = await _http
         .post(
           _uri('/nakladnoy/$paymentId/paid'),
           headers: _headers(),
-          body: jsonEncode({'payment_method': paymentMethod}),
+          body: jsonEncode({
+            'payment_method': paymentMethod,
+            if (amount != null && amount > 0) 'amount': amount,
+          }),
         )
         .timeout(const Duration(seconds: 12));
     return NakladnoyItem.fromJson(_decodeJson(res));
@@ -617,6 +670,21 @@ class HisobchiApiClient {
         .delete(_uri('/nakladnoy/$paymentId'), headers: _headers())
         .timeout(const Duration(seconds: 12));
     _decodeJson(res);
+  }
+
+  Future<NakladnoyItem> restoreNakladnoy(int paymentId) async {
+    final res = await _http
+        .post(_uri('/nakladnoy/$paymentId/restore'), headers: _headers())
+        .timeout(const Duration(seconds: 12));
+    return NakladnoyItem.fromJson(_decodeJson(res));
+  }
+
+  Future<Map<String, dynamic>> getKassaDebtHistory({int limit = 40}) async {
+    final res = await _http
+        .get(_uri('/kassa-debt/history', {'limit': '$limit'}),
+            headers: _headers())
+        .timeout(const Duration(seconds: 15));
+    return _decodeJson(res);
   }
 
   Future<List<NakladnoyItem>> getUnpaidDebts() async {
@@ -811,13 +879,23 @@ class HisobchiApiClient {
   }
 
   Future<List<NakladnoyItem>> searchHistoryNakladnoys(String query) async {
+    final all = await searchHistoryAll(query);
+    return all.nakladnoys;
+  }
+
+  Future<({List<NakladnoyItem> nakladnoys, List<CashTxItem> cashItems})>
+      searchHistoryAll(String query) async {
     final res = await _http
         .get(_uri('/history/search', {'q': query.trim()}), headers: _headers())
         .timeout(const Duration(seconds: 15));
     final data = _decodeJson(res);
-    return ((data['items'] as List?) ?? const [])
+    final naks = ((data['items'] as List?) ?? const [])
         .map((e) => NakladnoyItem.fromJson(e as Map<String, dynamic>))
         .toList();
+    final cash = ((data['cash_items'] as List?) ?? const [])
+        .map((e) => CashTxItem.fromJson(e as Map<String, dynamic>))
+        .toList();
+    return (nakladnoys: naks, cashItems: cash);
   }
 
   // Stage 2: Period statistics & Live Sverka
@@ -1186,6 +1264,8 @@ class HistorySessionItem {
   final double? difference;
   final String createdAt;
   final String? closedAt;
+  final int shiftSeq;
+  final int shiftTotal;
 
   const HistorySessionItem({
     required this.id,
@@ -1197,7 +1277,35 @@ class HistorySessionItem {
     this.difference,
     required this.createdAt,
     this.closedAt,
+    this.shiftSeq = 1,
+    this.shiftTotal = 1,
   });
+
+  String get shiftBadge => shiftTotal > 1 ? '$shiftSeq-smena (#$id)' : '#$id';
+
+  String get timeRangeLabel => formatSessionTimeSpan(
+        reportDate: reportDate,
+        status: status,
+        openedAt: createdAt,
+        closedAt: closedAt,
+      );
+
+  bool matchesDate(String isoDate) {
+    if (isoDate.isEmpty) return true;
+    if (reportDate == isoDate) return true;
+    final openD = createdAt.length >= 10 ? createdAt.substring(0, 10) : '';
+    final closeD =
+        (closedAt != null && closedAt!.length >= 10) ? closedAt!.substring(0, 10) : '';
+    if (openD == isoDate || closeD == isoDate) return true;
+    if (openD.isNotEmpty && closeD.isNotEmpty && openD.compareTo(isoDate) <= 0 && isoDate.compareTo(closeD) <= 0) {
+      return true;
+    }
+    if (status == 'open' && openD.isNotEmpty && openD.compareTo(isoDate) <= 0) {
+      final today = DateTime.now().toIso8601String().substring(0, 10);
+      if (isoDate.compareTo(today) <= 0) return true;
+    }
+    return false;
+  }
 
   factory HistorySessionItem.fromJson(Map<String, dynamic> j) =>
       HistorySessionItem(
@@ -1210,6 +1318,8 @@ class HistorySessionItem {
         difference: (j['difference'] as num?)?.toDouble(),
         createdAt: (j['created_at'] ?? '').toString(),
         closedAt: j['closed_at']?.toString(),
+        shiftSeq: ((j['shift_seq'] as num?) ?? 1).toInt(),
+        shiftTotal: ((j['shift_total'] as num?) ?? 1).toInt(),
       );
 }
 

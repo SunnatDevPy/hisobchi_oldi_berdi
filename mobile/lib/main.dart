@@ -1639,16 +1639,15 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
   Future<void> _openCashDialog(
     String sourceType, {
     CashTxItem? existing,
+    double? presetAmount,
   }) async {
     final titles = {
-      'main': existing != null
-          ? 'Olingan pulni tahrirlash'
-          : 'Pul oldim (Asosiy kirim)',
+      'main': existing != null ? 'Kirimni tahrirlash' : 'Egadan oldim',
       'kassa_debt': existing != null
           ? 'Kassa qarzini tahrirlash'
           : 'Kassadan qarz oldim',
       'kassa_repay': existing != null
-          ? 'Qaytarilgan pulni tahrirlash'
+          ? 'Qaytarishni tahrirlash'
           : 'Kassaga qaytardim',
     };
     final icons = {
@@ -1656,10 +1655,11 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
       'kassa_debt': Icons.account_balance_rounded,
       'kassa_repay': Icons.assignment_return_rounded,
     };
+    final initialNum = existing?.amount ?? presetAmount;
     final amtCtrl = TextEditingController(
-      text: existing != null
+      text: (initialNum != null && initialNum > 0)
           ? UzsAmountInputFormatter.formatDigits(
-              existing.amount.round().toString())
+              initialNum.round().toString())
           : '',
     );
     final noteCtrl = TextEditingController(text: existing?.note ?? '');
@@ -1854,79 +1854,166 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
   }
 
   Future<void> _openPayDebtDialog(NakladnoyItem item) async {
-    final method = await showModalBottomSheet<String>(
+    final amtCtrl = TextEditingController(
+      text: UzsAmountInputFormatter.formatDigits(
+        item.amount.round().toString(),
+      ),
+    );
+    final chosen = await showModalBottomSheet<({String method, double amount})>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (ctx) => SafeArea(
-        top: false,
-        maintainBottomViewPadding: true,
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(20, 4, 20, sheetBottomPadding(ctx)),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: sheetMaxHeight(ctx, fraction: 0.90),
-            ),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    "Qarzni to'lash (${item.displayNum})",
-                    style:
-                        const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheetState) {
+          final entered = parseUzsInput(amtCtrl.text);
+          final valid =
+              entered != null && entered > 0 && entered <= item.amount + 0.01;
+          final isPartial = valid && entered < item.amount - 0.5;
+          final rem = isPartial ? (item.amount - entered) : 0.0;
+          final halfAmt = ((item.amount / 2) / 1000).round() * 1000.0;
+
+          void submitWith(String m) {
+            final v = parseUzsInput(amtCtrl.text);
+            if (v == null || v <= 0 || v > item.amount + 0.01) return;
+            Navigator.pop(ctx, (method: m, amount: v));
+          }
+
+          return SafeArea(
+            top: false,
+            maintainBottomViewPadding: true,
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(20, 4, 20, sheetBottomPadding(ctx)),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: sheetMaxHeight(ctx, fraction: 0.90),
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        "Qarzni to'lash (${item.displayNum})",
+                        style: const TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${item.supplierName} • Jami qarz: ${formatUzs(item.amount, withCurrency: true)}',
+                        style: const TextStyle(
+                            fontSize: 13.5, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: amtCtrl,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: const [UzsAmountInputFormatter()],
+                        onChanged: (_) => setSheetState(() {}),
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w900,
+                          fontFeatures: AppTokens.tabularNums,
+                        ),
+                        decoration: InputDecoration(
+                          labelText: "To'lanayotgan summa",
+                          prefixIcon: const Icon(Icons.payments_outlined),
+                          errorText: (!valid && amtCtrl.text.trim().isNotEmpty)
+                              ? "Qarz summasidan oshmasligi kerak"
+                              : null,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          ActionChip(
+                            label: const Text("To'liq"),
+                            onPressed: () {
+                              amtCtrl.text =
+                                  UzsAmountInputFormatter.formatDigits(
+                                item.amount.round().toString(),
+                              );
+                              setSheetState(() {});
+                            },
+                          ),
+                          if (halfAmt > 0 && halfAmt < item.amount)
+                            ActionChip(
+                              label: Text('Yarmi (${formatUzs(halfAmt)})'),
+                              onPressed: () {
+                                amtCtrl.text =
+                                    UzsAmountInputFormatter.formatDigits(
+                                  halfAmt.round().toString(),
+                                );
+                                setSheetState(() {});
+                              },
+                            ),
+                        ],
+                      ),
+                      if (isPartial) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          "📌 Qisman to'lov — qoladigan qarz: ${formatUzs(rem, withCurrency: true)}",
+                          style: const TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w800,
+                            color: AppTokens.debtAmber,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 14),
+                      FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                            backgroundColor: AppTokens.cashGreen),
+                        onPressed: valid ? () => submitWith('cash') : null,
+                        icon: const Icon(Icons.payments_rounded),
+                        label: const Text('Naqd'),
+                      ),
+                      const SizedBox(height: 10),
+                      FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                            backgroundColor: AppTokens.cardBlue),
+                        onPressed: valid ? () => submitWith('card') : null,
+                        icon: const Icon(Icons.credit_card_rounded),
+                        label: const Text('Karta'),
+                      ),
+                      const SizedBox(height: 10),
+                      FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                            backgroundColor: AppTokens.transferPurple),
+                        onPressed: valid ? () => submitWith('transfer') : null,
+                        icon: const Icon(Icons.account_balance_rounded),
+                        label: const Text("O'tkazma"),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 6),
-                  Text(
-                    '${item.supplierName} — ${formatUzs(item.amount, withCurrency: true)}',
-                    style: const TextStyle(
-                        fontSize: 14.5, fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 16),
-                  FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                        backgroundColor: AppTokens.cashGreen),
-                    onPressed: () => Navigator.pop(ctx, 'cash'),
-                    icon: const Icon(Icons.payments_rounded),
-                    label: const Text('Naqd'),
-                  ),
-                  const SizedBox(height: 10),
-                  FilledButton.icon(
-                    style:
-                        FilledButton.styleFrom(backgroundColor: AppTokens.cardBlue),
-                    onPressed: () => Navigator.pop(ctx, 'card'),
-                    icon: const Icon(Icons.credit_card_rounded),
-                    label: const Text('Karta'),
-                  ),
-                  const SizedBox(height: 10),
-                  FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                        backgroundColor: AppTokens.transferPurple),
-                    onPressed: () => Navigator.pop(ctx, 'transfer'),
-                    icon: const Icon(Icons.account_balance_rounded),
-                    label: const Text("O'tkazma"),
-                  ),
-                ],
+                ),
               ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
 
-    if (method != null) {
+    if (chosen != null) {
+      final isPart = chosen.amount < item.amount - 0.5;
       try {
-        await widget.api.payDebt(paymentId: item.id, paymentMethod: method);
-        _showSnack("✅ Qarz to'landi");
+        await widget.api.payDebt(
+          paymentId: item.id,
+          paymentMethod: chosen.method,
+          amount: isPart ? chosen.amount : null,
+        );
+        _showSnack(isPart
+            ? "✅ ${formatUzs(chosen.amount)} to'landi (qoldiq: ${formatUzs(item.amount - chosen.amount)})"
+            : "✅ Qarz to'liq yopildi");
         await _refreshAll();
       } catch (e) {
         if (isNetworkOfflineError(e)) {
           final cnt = await OfflineOutboxStore.enqueuePayDebt(
             paymentId: item.id,
-            paymentMethod: method,
+            paymentMethod: chosen.method,
             supplierName: item.supplierName,
             amount: item.amount,
+            partialAmount: isPart ? chosen.amount : null,
           );
           if (mounted) {
             setState(() {
@@ -2211,58 +2298,91 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     final (ambFg, ambBg, ambBorder) =
         AppTokens.semanticSurface(context, AppTokens.debtAmber);
     final label = _isOfflineMode && _outboxCount > 0
-        ? '📡 Oflayn • Navbatda: $_outboxCount ta'
+        ? '📡 Oflayn • Navbatda: $_outboxCount ta (ko\'rish)'
         : (_isOfflineMode
             ? '📡 Oflayn rejim (saqlangan ma\'lumotlar)'
-            : '⏳ Navbatda: $_outboxCount ta amal');
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-      decoration: BoxDecoration(
-        color: ambBg,
-        border: Border(bottom: BorderSide(color: ambBorder)),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            _isOfflineMode ? Icons.cloud_off_rounded : Icons.cloud_upload_rounded,
-            size: 18,
-            color: ambFg,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 12.5,
-                fontWeight: FontWeight.w800,
-                color: ambFg,
+            : '⏳ Navbatda: $_outboxCount ta amal (ko\'rish)');
+    return InkWell(
+      onTap: _outboxCount > 0 ? _openOfflineQueueSheet : null,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: ambBg,
+          border: Border(bottom: BorderSide(color: ambBorder)),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              _isOfflineMode
+                  ? Icons.cloud_off_rounded
+                  : Icons.cloud_upload_rounded,
+              size: 18,
+              color: ambFg,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w800,
+                  color: ambFg,
+                ),
               ),
             ),
-          ),
-          if (_outboxCount > 0)
-            TextButton.icon(
-              style: TextButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                foregroundColor: ambFg,
+            if (_outboxCount > 0)
+              TextButton.icon(
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  foregroundColor: ambFg,
+                ),
+                onPressed: _syncingOutbox ? null : () => _trySyncOutbox(),
+                icon: _syncingOutbox
+                    ? SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: ambFg,
+                        ),
+                      )
+                    : const Icon(Icons.sync_rounded, size: 16),
+                label: Text(_syncingOutbox ? 'Kuting...' : 'Yuborish'),
               ),
-              onPressed: _syncingOutbox ? null : () => _trySyncOutbox(),
-              icon: _syncingOutbox
-                  ? SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: ambFg,
-                      ),
-                    )
-                  : const Icon(Icons.sync_rounded, size: 16),
-              label: Text(_syncingOutbox ? 'Kuting...' : 'Yuborish'),
-            ),
-        ],
+          ],
+        ),
       ),
     );
+  }
+
+  Future<void> _openOfflineQueueSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (ctx) => OfflineQueueSheet(
+        api: widget.api,
+        onSyncNow: () => _trySyncOutbox(),
+      ),
+    );
+    await _refreshOutboxBadge();
+  }
+
+  Future<void> _openKassaDebtHistorySheet() async {
+    final repayAmount = await showModalBottomSheet<double>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (ctx) => KassaDebtHistorySheet(
+        api: widget.api,
+        canWrite: widget.api.canWrite,
+      ),
+    );
+    if (repayAmount != null && mounted) {
+      await _openCashDialog('kassa_repay', presetAmount: repayAmount);
+    }
   }
 
   Future<void> _openVoiceCommandSheet() async {
@@ -2516,6 +2636,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
           HeroBalanceCard(
             summary: s,
             animSeed: _dataAnimSeed,
+            onTapKassaDebtHistory: _openKassaDebtHistorySheet,
             onAddCash: (!isViewingPast && widget.api.canWrite)
                 ? () => _openCashDialog('main')
                 : null,
@@ -2590,8 +2711,25 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                 _openCashDialog(tx.sourceType, existing: tx),
             onDeleteCashTx: (tx) async {
               await widget.api.deleteCash(tx.id);
-              _showSnack("Kassa amali o'chirildi");
               await _refreshAll();
+              if (!mounted) return;
+              ScaffoldMessenger.of(context)
+                ..hideCurrentSnackBar()
+                ..showSnackBar(
+                  SnackBar(
+                    duration: const Duration(seconds: 5),
+                    content: const Text("Kassa amali o'chirildi"),
+                    action: SnackBarAction(
+                      label: 'Bekor qilish',
+                      onPressed: () async {
+                        try {
+                          await widget.api.restoreCash(tx.id);
+                          await _refreshAll();
+                        } catch (_) {}
+                      },
+                    ),
+                  ),
+                );
             },
           ),
         ],
@@ -2630,44 +2768,47 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                   child: sessions.isEmpty
                       ? FittedBox(
                           fit: BoxFit.scaleDown,
-                          child: Text(
-                            '📅 ${activeSummary.reportDate} • #${activeSummary.sessionId}',
-                            maxLines: 1,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w900,
-                              fontSize: 13.5,
-                            ),
+                        child: Text(
+                          '📅 ${activeSummary.reportDate} • #${activeSummary.sessionId}${activeSummary.timeSpanLabel.isNotEmpty ? " (${activeSummary.timeSpanLabel})" : ""}',
+                          maxLines: 1,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 13.5,
                           ),
-                        )
-                      : HisobchiCustomDropdown<int>(
-                          value: sessions.any((e) => e.id == currentId)
-                              ? currentId
-                              : sessions.first.id,
-                          compact: true,
-                          searchable: sessions.length >= 8,
-                          enabled: !_switchingSession,
-                          sheetTitle: 'Smena / sanani tanlang',
-                          options: sessions.map((s) {
-                            final isCurOpen = s.id == _summary?.sessionId;
-                            return CustomDropdownOption<int>(
-                              value: s.id,
-                              label: '${s.reportDate} • Smena #${s.id}',
-                              selectedLabel: s.reportDate,
-                              subtitle: isCurOpen
-                                  ? "Bugungi faol ochiq smena"
-                                  : "Kutilgan naqd: ${formatUzs(s.expectedCash, withCurrency: true)}",
-                              icon: isCurOpen
-                                  ? Icons.radio_button_checked_rounded
-                                  : Icons.calendar_today_rounded,
-                              accentColor: isCurOpen
-                                  ? AppTokens.cashGreen
-                                  : AppTokens.brand,
-                              badge: isCurOpen ? 'Faol' : '#${s.id}',
-                            );
-                          }).toList(),
-                          onChanged: (val) => _selectDashboardSession(val),
                         ),
+                      )
+                    : HisobchiCustomDropdown<int>(
+                        value: sessions.any((e) => e.id == currentId)
+                            ? currentId
+                            : sessions.first.id,
+                        compact: true,
+                        searchable: sessions.length >= 8,
+                        enabled: !_switchingSession,
+                        sheetTitle: 'Smena / sanani tanlang',
+                        options: sessions.map((s) {
+                          final isCurOpen = s.id == _summary?.sessionId;
+                          final span = s.timeRangeLabel;
+                          final selText = span.isNotEmpty
+                              ? '${s.reportDate} • ${s.shiftBadge} ($span)'
+                              : '${s.reportDate} • ${s.shiftBadge}';
+                          return CustomDropdownOption<int>(
+                            value: s.id,
+                            label: '${s.reportDate} • ${s.shiftBadge}',
+                            selectedLabel: selText,
+                            subtitle:
+                                '🕐 ${span.isNotEmpty ? span : s.reportDate}  •  Naqd: ${formatUzs(s.expectedCash)}',
+                            icon: isCurOpen
+                                ? Icons.radio_button_checked_rounded
+                                : Icons.schedule_rounded,
+                            accentColor: isCurOpen
+                                ? AppTokens.cashGreen
+                                : AppTokens.brand,
+                            badge: isCurOpen ? 'Faol' : s.shiftBadge,
+                          );
+                        }).toList(),
+                        onChanged: (val) => _selectDashboardSession(val),
+                      ),
                 ),
                 const SizedBox(width: 2),
                 IconButton(
@@ -6411,10 +6552,31 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                       onPressed: _busy
                           ? null
                           : () async {
-                              await widget.api.deleteNakladnoy(_cur.id);
+                              final delId = _cur.id;
+                              final api = widget.api;
+                              final messenger =
+                                  ScaffoldMessenger.maybeOf(context);
+                              await api.deleteNakladnoy(delId);
                               if (context.mounted) {
                                 Navigator.pop(context, true);
                               }
+                              messenger
+                                ?..hideCurrentSnackBar()
+                                ..showSnackBar(
+                                  SnackBar(
+                                    duration: const Duration(seconds: 5),
+                                    content:
+                                        const Text("Nakladnoy o'chirildi"),
+                                    action: SnackBarAction(
+                                      label: 'Bekor qilish',
+                                      onPressed: () async {
+                                        try {
+                                          await api.restoreNakladnoy(delId);
+                                        } catch (_) {}
+                                      },
+                                    ),
+                                  ),
+                                );
                             },
                       icon: const Icon(Icons.delete_outline_rounded, size: 18),
                       label: const Text("O'chirish"),
@@ -6452,6 +6614,7 @@ class HistorySessionsSheet extends StatefulWidget {
 class _HistorySessionsSheetState extends State<HistorySessionsSheet> {
   List<HistorySessionItem> _sessions = [];
   StatusSummary? _selectedDetail;
+  String _filterDate = '';
   bool _loading = true;
   bool _busy = false;
   bool _changed = false;
@@ -6469,7 +6632,7 @@ class _HistorySessionsSheetState extends State<HistorySessionsSheet> {
       _error = null;
     });
     try {
-      final list = await widget.api.getHistorySessions(limit: 30);
+      final list = await widget.api.getHistorySessions(limit: 50);
       if (mounted) {
         setState(() {
           _sessions = list;
@@ -6483,6 +6646,21 @@ class _HistorySessionsSheetState extends State<HistorySessionsSheet> {
           _loading = false;
         });
       }
+    }
+  }
+
+  Future<void> _pickFilterDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _filterDate.isNotEmpty
+          ? (DateTime.tryParse(_filterDate) ?? now)
+          : now,
+      firstDate: DateTime(2024, 1, 1),
+      lastDate: DateTime(now.year + 1, 12, 31),
+    );
+    if (picked != null && mounted) {
+      setState(() => _filterDate = DateFormat('yyyy-MM-dd').format(picked));
     }
   }
 
@@ -6562,6 +6740,46 @@ class _HistorySessionsSheetState extends State<HistorySessionsSheet> {
                 ],
               ),
               const SizedBox(height: 8),
+              if (_selectedDetail == null) ...[
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      ChoiceChip(
+                        label: const Text('Barchasi'),
+                        selected: _filterDate.isEmpty,
+                        onSelected: (_) => setState(() => _filterDate = ''),
+                      ),
+                      const SizedBox(width: 6),
+                      ChoiceChip(
+                        label: const Text('Bugun'),
+                        selected: _filterDate ==
+                            DateFormat('yyyy-MM-dd').format(DateTime.now()),
+                        onSelected: (_) => setState(() => _filterDate =
+                            DateFormat('yyyy-MM-dd').format(DateTime.now())),
+                      ),
+                      const SizedBox(width: 6),
+                      ChoiceChip(
+                        label: const Text('Kecha'),
+                        selected: _filterDate ==
+                            DateFormat('yyyy-MM-dd').format(
+                                DateTime.now().subtract(const Duration(days: 1))),
+                        onSelected: (_) => setState(() => _filterDate =
+                            DateFormat('yyyy-MM-dd').format(
+                                DateTime.now().subtract(const Duration(days: 1)))),
+                      ),
+                      const SizedBox(width: 6),
+                      ActionChip(
+                        avatar: const Icon(Icons.calendar_month_rounded, size: 16),
+                        label: Text(
+                            _filterDate.isNotEmpty ? _filterDate : 'Sana tanlash'),
+                        onPressed: _pickFilterDate,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
               if (_loading)
                 const Expanded(
                     child: Center(child: CircularProgressIndicator()))
@@ -6571,43 +6789,60 @@ class _HistorySessionsSheetState extends State<HistorySessionsSheet> {
                 Expanded(child: _buildDetailView(_selectedDetail!))
               else
                 Expanded(
-                  child: ListView.separated(
-                    itemCount: _sessions.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
-                    itemBuilder: (ctx, i) {
-                      final s = _sessions[i];
-                      final isOpen = s.status == 'open';
-                      return Card(
-                        child: ListTile(
-                          onTap: _busy ? null : () => _openSessionDetail(s.id),
-                          leading: CircleAvatar(
-                            backgroundColor: isOpen
-                                ? AppTokens.cashGreen.withValues(alpha: 0.16)
-                                : AppTokens.brand.withValues(alpha: 0.14),
-                            child: Icon(
-                              isOpen
-                                  ? Icons.lock_open_rounded
-                                  : Icons.check_circle_outline_rounded,
-                              color: isOpen
-                                  ? AppTokens.cashGreen
-                                  : AppTokens.brand,
-                            ),
-                          ),
-                          title: Text(
-                            '${s.reportDate}  •  Smena #${s.id}',
-                            style:
-                                const TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                          subtitle: Text(
-                            "Kutilgan naqd: ${formatUzs(s.expectedCash, withCurrency: true)}"
-                            "${s.actualCountedCash != null ? '\nSanalgan: ${formatUzs(s.actualCountedCash, withCurrency: true)} (Farq: ${formatUzs(s.difference)})' : ''}",
-                            style: const TextStyle(fontSize: 12.5),
-                          ),
-                          trailing: const Icon(Icons.chevron_right_rounded),
+                  child: Builder(builder: (context) {
+                    final visible = _filterDate.isEmpty
+                        ? _sessions
+                        : _sessions
+                            .where((s) => s.matchesDate(_filterDate))
+                            .toList();
+                    if (visible.isEmpty) {
+                      return Center(
+                        child: Text(
+                          'Tanlangan sanada smenalar topilmadi',
+                          style: TextStyle(color: textSecondaryOf(context)),
                         ),
                       );
-                    },
-                  ),
+                    }
+                    return ListView.separated(
+                      itemCount: visible.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      itemBuilder: (ctx, i) {
+                        final s = visible[i];
+                        final isOpen = s.status == 'open';
+                        final timeTxt = s.timeRangeLabel;
+                        return Card(
+                          child: ListTile(
+                            onTap: _busy ? null : () => _openSessionDetail(s.id),
+                            leading: CircleAvatar(
+                              backgroundColor: isOpen
+                                  ? AppTokens.cashGreen.withValues(alpha: 0.16)
+                                  : AppTokens.brand.withValues(alpha: 0.14),
+                              child: Icon(
+                                isOpen
+                                    ? Icons.lock_open_rounded
+                                    : Icons.check_circle_outline_rounded,
+                                color: isOpen
+                                    ? AppTokens.cashGreen
+                                    : AppTokens.brand,
+                              ),
+                            ),
+                            title: Text(
+                              '${s.reportDate}  •  ${s.shiftBadge}',
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w800),
+                            ),
+                            subtitle: Text(
+                              "${timeTxt.isNotEmpty ? '🕐 $timeTxt\n' : ''}"
+                              "Kutilgan: ${formatUzs(s.expectedCash, withCurrency: true)}"
+                              "${s.actualCountedCash != null ? '\nSanalgan: ${formatUzs(s.actualCountedCash, withCurrency: true)} (Farq: ${formatUzs(s.difference)})' : ''}",
+                              style: const TextStyle(fontSize: 12.5, height: 1.35),
+                            ),
+                            trailing: const Icon(Icons.chevron_right_rounded),
+                          ),
+                        );
+                      },
+                    );
+                  }),
                 ),
             ],
           ),
@@ -6631,7 +6866,20 @@ class _HistorySessionsSheetState extends State<HistorySessionsSheet> {
                     '🟢 Ochiq faol smena',
                     style: TextStyle(fontWeight: FontWeight.w800),
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 4),
+                ],
+                if (d.openedAt.isNotEmpty || d.closedAt.isNotEmpty) ...[
+                  Text(
+                    "🕐 Ochildi: ${d.openedAt.isNotEmpty ? d.openedAt : d.reportDate}"
+                    "${d.closedAt.isNotEmpty ? '\n🏁 Yopildi: ${d.closedAt}' : ''}",
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: textSecondaryOf(context),
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
                 ],
                 Text(
                   "Boshlang'ich qoldiq: ${formatUzs(d.openingBalance, withCurrency: true)}\n"
@@ -6751,6 +6999,7 @@ class GlobalHistorySearchSheet extends StatefulWidget {
 class _GlobalHistorySearchSheetState extends State<GlobalHistorySearchSheet> {
   final TextEditingController _qCtrl = TextEditingController();
   List<NakladnoyItem> _results = [];
+  List<CashTxItem> _cashResults = [];
   bool _loading = false;
   String? _error;
 
@@ -6768,10 +7017,11 @@ class _GlobalHistorySearchSheetState extends State<GlobalHistorySearchSheet> {
       _error = null;
     });
     try {
-      final items = await widget.api.searchHistoryNakladnoys(q);
+      final all = await widget.api.searchHistoryAll(q);
       if (mounted) {
         setState(() {
-          _results = items;
+          _results = all.nakladnoys;
+          _cashResults = all.cashItems;
           _loading = false;
         });
       }
@@ -6783,6 +7033,12 @@ class _GlobalHistorySearchSheetState extends State<GlobalHistorySearchSheet> {
         });
       }
     }
+  }
+
+  String _cashSourceTitle(String src) {
+    if (src == 'kassa_debt') return '🏦 Kassadan qarz';
+    if (src == 'kassa_repay') return '↩️ Kassaga qaytarish';
+    return '➕ Egadan oldim';
   }
 
   @override
@@ -6805,7 +7061,7 @@ class _GlobalHistorySearchSheetState extends State<GlobalHistorySearchSheet> {
                 children: [
                   const Expanded(
                     child: Text(
-                      "🌍 Barcha kunlardan qidirish",
+                      'Umumiy qidiruv',
                       style:
                           TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
                     ),
@@ -6825,7 +7081,7 @@ class _GlobalHistorySearchSheetState extends State<GlobalHistorySearchSheet> {
                       autofocus: true,
                       onSubmitted: _runSearch,
                       decoration: const InputDecoration(
-                        hintText: 'Postavshik, izoh yoki sana (2026-11)...',
+                        hintText: 'Postavshik, summa, izoh yoki sana...',
                         prefixIcon: Icon(Icons.search_rounded),
                         isDense: true,
                       ),
@@ -6845,11 +7101,11 @@ class _GlobalHistorySearchSheetState extends State<GlobalHistorySearchSheet> {
                     child: Center(child: CircularProgressIndicator()))
               else if (_error != null)
                 Expanded(child: Center(child: Text(_error!)))
-              else if (_results.isEmpty)
+              else if (_results.isEmpty && _cashResults.isEmpty)
                 Expanded(
                   child: Center(
                     child: Text(
-                      "Postavshik nomi yoki sanani yozib «Qidirish» tugmasini bosing.",
+                      "Postavshik, summa yoki izoh yozib «Qidirish» ni bosing.",
                       textAlign: TextAlign.center,
                       style: TextStyle(color: textSecondaryOf(context)),
                     ),
@@ -6857,19 +7113,54 @@ class _GlobalHistorySearchSheetState extends State<GlobalHistorySearchSheet> {
                 )
               else
                 Expanded(
-                  child: ListView.separated(
-                    itemCount: _results.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
-                    itemBuilder: (ctx, i) {
-                      final item = _results[i];
-                      return NakladnoyListCard(
-                        item: item,
-                        onTap: () async {
-                          await widget.onOpenNakladnoyDetail(item);
-                          await _runSearch(_qCtrl.text);
-                        },
-                      );
-                    },
+                  child: ListView(
+                    children: [
+                      if (_cashResults.isNotEmpty) ...[
+                        Text(
+                          'Kassa amallari (${_cashResults.length})',
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w900, fontSize: 14),
+                        ),
+                        const SizedBox(height: 6),
+                        ..._cashResults.map(
+                          (tx) => Card(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            child: ListTile(
+                              dense: true,
+                              title: Text(
+                                '${_cashSourceTitle(tx.sourceType)} — ${formatUzs(tx.amount, withCurrency: true)}',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w800),
+                              ),
+                              subtitle: Text(
+                                '${tx.createdAt}${tx.note.isNotEmpty ? " • ${tx.note}" : ""}',
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                      if (_results.isNotEmpty) ...[
+                        Text(
+                          'Nakladnoylar (${_results.length})',
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w900, fontSize: 14),
+                        ),
+                        const SizedBox(height: 6),
+                        ..._results.map(
+                          (item) => Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: NakladnoyListCard(
+                              item: item,
+                              onTap: () async {
+                                await widget.onOpenNakladnoyDetail(item);
+                                await _runSearch(_qCtrl.text);
+                              },
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
             ],
@@ -10316,6 +10607,342 @@ class _VoiceCommandSheetState extends State<VoiceCommandSheet> {
                 ],
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// KASSA DEBT LEDGER HISTORY SHEET
+// ============================================================================
+
+class KassaDebtHistorySheet extends StatefulWidget {
+  final HisobchiApiClient api;
+  final bool canWrite;
+
+  const KassaDebtHistorySheet({
+    super.key,
+    required this.api,
+    required this.canWrite,
+  });
+
+  @override
+  State<KassaDebtHistorySheet> createState() => _KassaDebtHistorySheetState();
+}
+
+class _KassaDebtHistorySheetState extends State<KassaDebtHistorySheet> {
+  Map<String, dynamic>? _data;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final res = await widget.api.getKassaDebtHistory();
+      if (mounted) {
+        setState(() {
+          _data = res;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final borrowed = ((_data?['total_borrowed'] as num?) ?? 0).toDouble();
+    final repaid = ((_data?['total_repaid'] as num?) ?? 0).toDouble();
+    final outstanding = ((_data?['outstanding'] as num?) ?? 0).toDouble();
+    final items = ((_data?['items'] as List?) ?? const [])
+        .map((e) => CashTxItem.fromJson(Map<String, dynamic>.from(e as Map)))
+        .toList();
+
+    return SafeArea(
+      top: false,
+      maintainBottomViewPadding: true,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(18, 6, 18, sheetBottomPadding(context)),
+        child: SizedBox(
+          height: sheetMaxHeight(context, fraction: 0.80),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.account_balance_rounded,
+                      color: AppTokens.debtAmber),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Kassa qarz tarixi',
+                      style:
+                          TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (_loading)
+                const Expanded(
+                    child: Center(child: CircularProgressIndicator()))
+              else if (_error != null)
+                Expanded(child: Center(child: Text(_error!)))
+              else ...[
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Hozirgi qarz:',
+                                style: TextStyle(fontWeight: FontWeight.w700)),
+                            Text(
+                              formatUzs(outstanding, withCurrency: true),
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                                color: outstanding > 0
+                                    ? AppTokens.debtAmber
+                                    : AppTokens.cashGreen,
+                                fontFeatures: AppTokens.tabularNums,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Jami olingan: ${formatUzs(borrowed)}  •  Qaytarilgan: ${formatUzs(repaid)}',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            color: textSecondaryOf(context),
+                          ),
+                        ),
+                        if (widget.canWrite && outstanding > 0) ...[
+                          const SizedBox(height: 12),
+                          FilledButton.icon(
+                            style: FilledButton.styleFrom(
+                                backgroundColor: AppTokens.cashGreen),
+                            onPressed: () =>
+                                Navigator.pop(context, outstanding),
+                            icon: const Icon(Icons.assignment_return_rounded),
+                            label: const Text('Kassaga qaytarish'),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Expanded(
+                  child: items.isEmpty
+                      ? Center(
+                          child: Text(
+                            'Kassa qarzi tarixi bo\'sh',
+                            style: TextStyle(color: textSecondaryOf(context)),
+                          ),
+                        )
+                      : ListView.separated(
+                          itemCount: items.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: 6),
+                          itemBuilder: (ctx, i) {
+                            final tx = items[i];
+                            final isBorrow = tx.sourceType == 'kassa_debt';
+                            return Card(
+                              child: ListTile(
+                                dense: true,
+                                leading: Icon(
+                                  isBorrow
+                                      ? Icons.arrow_downward_rounded
+                                      : Icons.arrow_upward_rounded,
+                                  color: isBorrow
+                                      ? AppTokens.debtAmber
+                                      : AppTokens.cashGreen,
+                                ),
+                                title: Text(
+                                  '${isBorrow ? "Olingan" : "Qaytarilgan"} • ${formatUzs(tx.amount, withCurrency: true)}',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w800),
+                                ),
+                                subtitle: Text(
+                                  '${tx.createdAt} (Smena #${tx.sessionId})${tx.note.isNotEmpty ? "\n${tx.note}" : ""}',
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// OFFLINE QUEUE MANAGEMENT SHEET
+// ============================================================================
+
+class OfflineQueueSheet extends StatefulWidget {
+  final HisobchiApiClient api;
+  final Future<void> Function() onSyncNow;
+
+  const OfflineQueueSheet({
+    super.key,
+    required this.api,
+    required this.onSyncNow,
+  });
+
+  @override
+  State<OfflineQueueSheet> createState() => _OfflineQueueSheetState();
+}
+
+class _OfflineQueueSheetState extends State<OfflineQueueSheet> {
+  List<OfflineOutboxItem> _items = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _reload();
+  }
+
+  Future<void> _reload() async {
+    final list = await OfflineOutboxStore.loadAll();
+    if (mounted) {
+      setState(() {
+        _items = list;
+        _loading = false;
+      });
+    }
+  }
+
+  String _titleFor(OfflineOutboxItem it) {
+    final p = it.payload;
+    if (it.type == 'cash') {
+      return 'Kassa: ${formatUzs(p['amount'] as num?, withCurrency: true)}';
+    }
+    if (it.type == 'pay_debt') {
+      final sup = (p['supplier_name'] ?? '').toString();
+      final amt = (p['partial_amount'] ?? p['amount']) as num?;
+      return "Qarz to'lovi: $sup (${formatUzs(amt, withCurrency: true)})";
+    }
+    final sup = (p['supplier_name'] ?? '').toString();
+    return 'Nakladnoy: $sup (${formatUzs(p['amount'] as num?, withCurrency: true)})';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      maintainBottomViewPadding: true,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(18, 6, 18, sheetBottomPadding(context)),
+        child: SizedBox(
+          height: sheetMaxHeight(context, fraction: 0.72),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.cloud_upload_rounded,
+                      color: AppTokens.debtAmber),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Oflayn navbat (${_items.length})',
+                      style: const TextStyle(
+                          fontSize: 18, fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (_loading)
+                const Expanded(
+                    child: Center(child: CircularProgressIndicator()))
+              else if (_items.isEmpty)
+                const Expanded(
+                  child: Center(child: Text("Navbat bo'sh — barchasi yuborilgan")),
+                )
+              else ...[
+                Expanded(
+                  child: ListView.separated(
+                    itemCount: _items.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 6),
+                    itemBuilder: (ctx, i) {
+                      final it = _items[i];
+                      return Card(
+                        child: ListTile(
+                          dense: true,
+                          title: Text(
+                            _titleFor(it),
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                          subtitle: Text(
+                            it.createdAtIso.length >= 16
+                                ? it.createdAtIso
+                                    .substring(0, 16)
+                                    .replaceFirst('T', ' ')
+                                : it.createdAtIso,
+                          ),
+                          trailing: IconButton(
+                            tooltip: "Navbatdan o'chirish",
+                            icon: const Icon(Icons.delete_outline_rounded,
+                                color: AppTokens.dangerRed),
+                            onPressed: () async {
+                              await OfflineOutboxStore.removeById(it.id);
+                              await _reload();
+                            },
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 10),
+                FilledButton.icon(
+                  onPressed: () async {
+                    await widget.onSyncNow();
+                    await _reload();
+                  },
+                  icon: const Icon(Icons.sync_rounded),
+                  label: const Text('Hozir yuborish'),
+                ),
+              ],
+            ],
           ),
         ),
       ),
