@@ -5,8 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
-import 'theme.dart';
-
 /// Lightweight 3D vector with Euler rotations and vector products.
 class Vec3 {
   final double x;
@@ -69,7 +67,7 @@ Offset project3D(
   );
 }
 
-/// Depth-sorted projected quad representing one face of the 3D cube.
+/// Depth-sorted projected quad representing one face of a 3D solid.
 class ProjectedCubeFace {
   final int faceIndex;
   final List<Offset> points;
@@ -87,47 +85,23 @@ class ProjectedCubeFace {
 }
 
 const List<Vec3> _kCubeVertices = [
-  Vec3(-1, -1, -1), // 0
-  Vec3(1, -1, -1), // 1
-  Vec3(1, 1, -1), // 2
-  Vec3(-1, 1, -1), // 3
-  Vec3(-1, -1, 1), // 4
-  Vec3(1, -1, 1), // 5
-  Vec3(1, 1, 1), // 6
-  Vec3(-1, 1, 1), // 7
+  Vec3(-1, -1, -1),
+  Vec3(1, -1, -1),
+  Vec3(1, 1, -1),
+  Vec3(-1, 1, -1),
+  Vec3(-1, -1, 1),
+  Vec3(1, -1, 1),
+  Vec3(1, 1, 1),
+  Vec3(-1, 1, 1),
 ];
 
 const List<List<int>> _kCubeFaces = [
-  [4, 5, 6, 7], // front (+Z)
-  [1, 0, 3, 2], // back (-Z)
-  [5, 1, 2, 6], // right (+X)
-  [0, 4, 7, 3], // left (-X)
-  [3, 2, 6, 7], // bottom (+Y)
-  [0, 1, 5, 4], // top (-Y)
-];
-
-const List<List<int>> _kCubeEdges = [
-  [0, 1],
-  [1, 2],
-  [2, 3],
-  [3, 0],
-  [4, 5],
-  [5, 6],
-  [6, 7],
-  [7, 4],
-  [0, 4],
-  [1, 5],
-  [2, 6],
-  [3, 7],
-];
-
-const List<Color> _kFaceColors = [
-  AppTokens.brand, // Indigo
-  AppTokens.brandViolet, // Violet
-  Color(0xFFEC4899), // Neon Pink
-  AppTokens.brandSky, // Sky
-  AppTokens.cashGreen, // Emerald
-  AppTokens.debtAmber, // Amber-Gold
+  [4, 5, 6, 7],
+  [1, 0, 3, 2],
+  [5, 1, 2, 6],
+  [0, 4, 7, 3],
+  [3, 2, 6, 7],
+  [0, 1, 5, 4],
 ];
 
 /// Rotates unit cube vertices, computes directional lighting, and returns all 6
@@ -160,7 +134,6 @@ List<ProjectedCubeFace> computeCubeFaces(
     final avgZ = (v0.z + v1.z + v2.z + v3.z) * 0.25;
     final normal = (v1 - v0).cross(v2 - v0).normalized();
     final diffuse = ((normal.dot(lightDir) + 1.0) * 0.5).clamp(0.0, 1.0);
-    // Boost visibility slightly so rear glass faces still glow subtly
     final light = (0.28 + 0.72 * diffuse).clamp(0.0, 1.0);
 
     out.add(
@@ -183,8 +156,19 @@ List<ProjectedCubeFace> computeCubeFaces(
   return out;
 }
 
-/// Interactive 3D glassmorphic fintech cube with drag-to-orbit inertia,
-/// tap shockwave pulse, nested counter-rotating crystal, and orbital particles.
+/// Precomputed G2-smooth superellipse (squircle) unit contour points `(x, y)` in `[-1, 1]`.
+final List<Offset> _kSquircleContour = List<Offset>.generate(56, (i) {
+  final theta = (i / 56.0) * 2.0 * math.pi;
+  final ct = math.cos(theta);
+  final st = math.sin(theta);
+  const exp = 2.0 / 4.35; // Smooth iOS/fintech squircle curvature
+  final sx = ct == 0 ? 0.0 : ct.sign * math.pow(ct.abs(), exp).toDouble();
+  final sy = st == 0 ? 0.0 : st.sign * math.pow(st.abs(), exp).toDouble();
+  return Offset(sx, sy);
+}, growable: false);
+
+/// Interactive 3D glossy beveled violet-magenta squircle block housing a
+/// 12-spoke neon pink-white starburst spinner and gossamer orbital trails.
 class Interactive3DFintechCube extends StatefulWidget {
   final double size;
   final VoidCallback? onInteractStart;
@@ -208,11 +192,18 @@ class Interactive3DFintechCube extends StatefulWidget {
 
 class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
     with SingleTickerProviderStateMixin {
+  // Base showcase pose matching the tilted 3D glossy squircle in the reference design.
+  static const double _baseRotX = -0.24;
+  static const double _baseRotY = 0.38;
+  static const double _baseRotZ = -0.11;
+
   Ticker? _ticker;
   Duration _lastTick = Duration.zero;
-  double _rotX = 0.52;
-  double _rotY = 0.74;
-  double _rotZ = 0.14;
+  double _rotX = _baseRotX;
+  double _rotY = _baseRotY;
+  double _rotZ = _baseRotZ;
+  double _userOffsetX = 0.0;
+  double _userOffsetY = 0.0;
   double _velX = 0.0;
   double _velY = 0.0;
   double _phase = 0.0;
@@ -224,10 +215,12 @@ class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
   void initState() {
     super.initState();
     if (!widget.continuousSpin) {
-      // Smooth 1.1s intro flourish that settles cleanly for battery & widget tests.
+      // Smooth 1.1s 3D entrance settle so LoginScreen stays lively yet test-friendly.
       _introRemaining = 1.1;
-      _velY = 1.6;
-      _velX = 0.45;
+      _userOffsetY = -0.55;
+      _userOffsetX = 0.28;
+      _velY = 1.35;
+      _velX = -0.55;
     }
     _ticker = createTicker(_onTick);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -261,8 +254,8 @@ class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
         _dragging ||
         _introRemaining > 0 ||
         _pulse > 0.005 ||
-        _velX.abs() > 0.015 ||
-        _velY.abs() > 0.015;
+        _velX.abs() > 0.012 ||
+        _velY.abs() > 0.012;
     if (needsRun && !ticker.isActive) {
       _lastTick = Duration.zero;
       ticker.start();
@@ -287,27 +280,40 @@ class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
     setState(() {
       _phase += dt;
       if (_pulse > 0) {
-        _pulse = math.max(0.0, _pulse - dt * 1.45);
+        _pulse = math.max(0.0, _pulse - dt * 1.5);
       }
-
       if (_introRemaining > 0) {
         _introRemaining = math.max(0.0, _introRemaining - dt);
       }
 
       if (!_dragging) {
-        if (widget.continuousSpin) {
-          _rotY += dt * 0.85 + _velY * dt;
-          _rotX += math.sin(_phase * 1.1) * dt * 0.22 + _velX * dt;
-          _rotZ += math.cos(_phase * 0.7) * dt * 0.14;
-        } else {
-          _rotY += _velY * dt;
-          _rotX += _velX * dt;
-        }
-        final damping = math.pow(0.08, dt).toDouble();
+        _userOffsetY += _velY * dt;
+        _userOffsetX += _velX * dt;
+
+        final damping = math.pow(0.06, dt).toDouble();
         _velX *= damping;
         _velY *= damping;
-        if (_velX.abs() < 0.012) _velX = 0.0;
-        if (_velY.abs() < 0.012) _velY = 0.0;
+
+        // Gently spring back toward the hero showcase tilt while floating smoothly
+        final spring = (dt * 2.6).clamp(0.0, 0.25);
+        _userOffsetX *= (1.0 - spring * 0.45);
+        _userOffsetY *= (1.0 - spring * 0.35);
+
+        if (_velX.abs() < 0.010) _velX = 0.0;
+        if (_velY.abs() < 0.010) _velY = 0.0;
+      }
+
+      if (widget.continuousSpin) {
+        final floatX = math.sin(_phase * 1.55) * 0.11;
+        final floatY = math.cos(_phase * 1.15) * 0.16;
+        final floatZ = math.sin(_phase * 0.95) * 0.05;
+        _rotX = (_baseRotX + floatX + _userOffsetX).clamp(-1.15, 1.15);
+        _rotY = _baseRotY + floatY + _userOffsetY;
+        _rotZ = _baseRotZ + floatZ;
+      } else {
+        _rotX = (_baseRotX + _userOffsetX).clamp(-1.15, 1.15);
+        _rotY = _baseRotY + _userOffsetY;
+        _rotZ = _baseRotZ;
       }
     });
 
@@ -337,10 +343,12 @@ class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
     setState(() {
       final dx = details.delta.dx;
       final dy = details.delta.dy;
-      _rotY += dx * 0.013;
-      _rotX -= dy * 0.013;
-      _velY = (dx * 0.45).clamp(-9.0, 9.0);
-      _velX = (-dy * 0.45).clamp(-9.0, 9.0);
+      _userOffsetY += dx * 0.012;
+      _userOffsetX = (_userOffsetX - dy * 0.012).clamp(-0.95, 0.95);
+      _velY = (dx * 0.38).clamp(-7.5, 7.5);
+      _velX = (-dy * 0.38).clamp(-7.5, 7.5);
+      _rotX = (_baseRotX + _userOffsetX).clamp(-1.15, 1.15);
+      _rotY = _baseRotY + _userOffsetY;
     });
   }
 
@@ -349,8 +357,8 @@ class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
     final pps = details.velocity.pixelsPerSecond;
     setState(() {
       _dragging = false;
-      _velY = (pps.dx * 0.0045).clamp(-8.5, 8.5);
-      _velX = (-pps.dy * 0.0045).clamp(-8.5, 8.5);
+      _velY = (pps.dx * 0.0038).clamp(-7.5, 7.5);
+      _velX = (-pps.dy * 0.0038).clamp(-7.5, 7.5);
     });
     widget.onInteractEnd?.call();
     _syncTickerState();
@@ -362,8 +370,8 @@ class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
     widget.onInteractStart?.call();
     setState(() {
       _pulse = 1.0;
-      _velY += 4.6;
-      _velX += 2.1;
+      _velY += 3.2;
+      _velX -= 1.2;
     });
     _syncTickerState();
     widget.onInteractEnd?.call();
@@ -377,7 +385,6 @@ class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
 
   @override
   Widget build(BuildContext context) {
-    final isDark = isDarkCtx(context);
     return RepaintBoundary(
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -389,13 +396,12 @@ class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
           width: widget.size,
           height: widget.size,
           child: CustomPaint(
-            painter: _Cube3DPainter(
+            painter: _GlossySquircle3DPainter(
               rotX: _rotX,
               rotY: _rotY,
               rotZ: _rotZ,
               phase: _phase,
               pulse: _pulse,
-              isDark: isDark,
             ),
           ),
         ),
@@ -404,210 +410,649 @@ class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
   }
 }
 
-class _Cube3DPainter extends CustomPainter {
+class _BevelQuad {
+  final List<Offset> pts;
+  final double avgZ;
+  final Color color;
+
+  const _BevelQuad({
+    required this.pts,
+    required this.avgZ,
+    required this.color,
+  });
+}
+
+class _GlossySquircle3DPainter extends CustomPainter {
   final double rotX;
   final double rotY;
   final double rotZ;
   final double phase;
   final double pulse;
-  final bool isDark;
 
-  const _Cube3DPainter({
+  const _GlossySquircle3DPainter({
     required this.rotX,
     required this.rotY,
     required this.rotZ,
     required this.phase,
     required this.pulse,
-    required this.isDark,
   });
+
+  Vec3 _xform(double x, double y, double z) =>
+      Vec3(x, y, z).rotateX(rotX).rotateY(rotY).rotateZ(rotZ);
 
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width * 0.5, size.height * 0.5);
     final minDim = math.min(size.width, size.height);
+    final breathe = 1.0 + 0.028 * math.sin(phase * 2.4) + 0.05 * math.sin(pulse * math.pi);
+    final fov = minDim * 1.48 * breathe;
 
-    // 1. Ambient backdrop radial glow
-    final glowPaint = Paint()
+    // 1. Soft multi-stop magenta-violet aura directly behind the 3D block
+    final auraPaint = Paint()
       ..shader = RadialGradient(
         colors: [
-          AppTokens.brandViolet.withValues(alpha: isDark ? 0.34 : 0.22),
-          const Color(0xFFEC4899).withValues(alpha: isDark ? 0.16 : 0.10),
+          const Color(0xFFF472B6).withValues(alpha: 0.42),
+          const Color(0xFFA855F7).withValues(alpha: 0.28),
+          const Color(0xFF581C87).withValues(alpha: 0.12),
           Colors.transparent,
         ],
-        stops: const [0.0, 0.55, 1.0],
-      ).createShader(
-        Rect.fromCircle(center: center, radius: minDim * 0.56),
-      );
-    canvas.drawCircle(center, minDim * 0.56, glowPaint);
+        stops: const [0.0, 0.36, 0.68, 1.0],
+      ).createShader(Rect.fromCircle(center: center, radius: minDim * 0.56));
+    canvas.drawCircle(center, minDim * 0.56, auraPaint);
 
-    // 2. Tap shockwave ripple
+    // Optional tap shockwave halo
     if (pulse > 0.01) {
       final t = 1.0 - pulse;
-      final radius = minDim * (0.28 + 0.24 * t);
       final ringPaint = Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.6 * pulse
-        ..color = const Color(0xFFEC4899).withValues(alpha: 0.72 * pulse);
-      canvas.drawCircle(center, radius, ringPaint);
+        ..strokeWidth = 2.2 * pulse
+        ..color = const Color(0xFFF9A8D4).withValues(alpha: 0.75 * pulse);
+      canvas.drawCircle(center, minDim * (0.34 + 0.22 * t), ringPaint);
     }
 
-    // 3. Orbital 3D particles split by depth (behind vs in front of inner core)
-    final fovOuter = minDim * 1.38;
-    final particles = <({Offset pos, double z, Color color, double r})>[];
-    for (var i = 0; i < 8; i++) {
-      final a = phase * 0.9 + (i * math.pi * 0.25);
-      final elev = math.sin(phase * 1.3 + i * 0.9) * 0.95;
-      final raw = Vec3(
-        math.cos(a) * 1.55,
-        elev,
-        math.sin(a) * 1.55,
-      ).rotateX(rotX * 0.4).rotateY(rotY * 0.4);
-      final p = project3D(raw, size, fov: fovOuter);
-      particles.add((
-        pos: p,
-        z: raw.z,
-        color: _kFaceColors[i % _kFaceColors.length],
-        r: (2.0 + (raw.z + 1.6) * 0.75).clamp(1.6, 4.2),
-      ));
-    }
+    // 2. Compute 3D orbital gossamer light trails (split into back z < 0 & front z >= 0)
+    final orbitSegments = <({Offset p1, Offset p2, double z, double alpha})>[];
+    for (var ringIdx = 0; ringIdx < 2; ringIdx++) {
+      final tiltX = ringIdx == 0 ? 0.52 : -0.38;
+      final tiltY = ringIdx == 0 ? -0.34 : 0.48;
+      final tiltZ = ringIdx == 0 ? -0.38 : 0.32;
+      final radiusX = ringIdx == 0 ? 1.30 : 1.24;
+      final radiusY = ringIdx == 0 ? 1.12 : 1.20;
+      final spinSpeed = ringIdx == 0 ? 0.85 : -0.68;
+      const steps = 44;
 
-    void drawParticles({required bool front}) {
-      for (final pt in particles) {
-        if (front ? pt.z <= 0 : pt.z > 0) continue;
-        final alpha = front ? 0.85 : 0.35;
-        canvas.drawCircle(
-          pt.pos,
-          pt.r * 2.1,
-          Paint()..color = pt.color.withValues(alpha: alpha * 0.26),
-        );
-        canvas.drawCircle(
-          pt.pos,
-          pt.r,
-          Paint()..color = pt.color.withValues(alpha: alpha),
-        );
+      Vec3? prev3;
+      Offset? prev2;
+      for (var s = 0; s <= steps; s++) {
+        final u = s / steps;
+        final a = u * 2.0 * math.pi + phase * spinSpeed;
+        final v = Vec3(math.cos(a) * radiusX, math.sin(a) * radiusY, 0.0)
+            .rotateX(tiltX + rotX * 0.35)
+            .rotateY(tiltY + rotY * 0.35)
+            .rotateZ(tiltZ);
+        final p = project3D(v, size, fov: fov);
+        if (prev3 != null && prev2 != null) {
+          // Tapered comet intensity along each ring
+          final comet = 0.5 + 0.5 * math.sin(u * 2.0 * math.pi * 2.0 - phase * 2.2 + ringIdx * 1.7);
+          final alpha = (0.08 + 0.44 * math.pow(comet, 2.2)).clamp(0.05, 0.58);
+          orbitSegments.add((
+            p1: prev2,
+            p2: p,
+            z: (prev3.z + v.z) * 0.5,
+            alpha: alpha,
+          ));
+        }
+        prev3 = v;
+        prev2 = p;
       }
     }
 
-    drawParticles(front: false);
-
-    // 4. Outer glassmorphic cube faces (Painter's algorithm: back -> front)
-    final scalePulse = 1.0 + 0.06 * math.sin(pulse * math.pi);
-    final outerFaces = computeCubeFaces(
-      rotX,
-      rotY,
-      rotZ,
-      size,
-      scale: scalePulse,
-    );
-
-    // Inner counter-rotating wireframe crystal (drawn between back faces & front faces)
-    void drawInnerCore() {
-      final fovInner = minDim * 0.72 * scalePulse;
-      final innerTransformed = _kCubeVertices
-          .map((v) => v.rotateX(-rotX * 1.35 + phase * 0.4)
-              .rotateY(-rotY * 1.35 + phase * 0.7)
-              .rotateZ(rotZ))
-          .toList(growable: false);
-      final innerProj = innerTransformed
-          .map((v) => project3D(v, size, fov: fovInner))
-          .toList(growable: false);
-
-      final coreGlow = Paint()
-        ..shader = RadialGradient(
-          colors: [
-            const Color(0xFFFFFFFF).withValues(alpha: 0.50),
-            AppTokens.brandSky.withValues(alpha: 0.32),
-            Colors.transparent,
-          ],
-        ).createShader(Rect.fromCircle(center: center, radius: minDim * 0.16));
-      canvas.drawCircle(center, minDim * 0.16, coreGlow);
-
-      final edgePaint = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.45
-        ..strokeCap = StrokeCap.round
-        ..color = Colors.white.withValues(alpha: 0.78);
-      for (final e in _kCubeEdges) {
-        canvas.drawLine(innerProj[e[0]], innerProj[e[1]], edgePaint);
+    void drawOrbitHalf({required bool front}) {
+      for (final seg in orbitSegments) {
+        if (front ? seg.z < 0.02 : seg.z >= 0.02) continue;
+        final mul = front ? 1.0 : 0.45;
+        final p = Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeWidth = front ? 1.35 : 0.95
+          ..color = Color.lerp(
+            const Color(0xFFF472B6),
+            Colors.white,
+            seg.alpha,
+          )!
+              .withValues(alpha: seg.alpha * mul);
+        canvas.drawLine(seg.p1, seg.p2, p);
       }
     }
 
-    var coreDrawn = false;
-    for (final face in outerFaces) {
-      if (!coreDrawn && face.normalZ > 0) {
-        drawInnerCore();
-        coreDrawn = true;
-      }
+    drawOrbitHalf(front: false);
 
-      final baseColor = _kFaceColors[face.faceIndex % _kFaceColors.length];
-      final path = Path()..addPolygon(face.points, true);
-      final isFront = face.normalZ >= 0;
+    // 3. Build 3-ring cushioned 3D squircle extrusion:
+    //    back ring (z = -0.25, scale = 0.96)
+    //    mid bulge (z =  0.00, scale = 1.04)
+    //    front ring (z = +0.25, scale = 0.99)
+    const zBack = -0.25;
+    const zMid = 0.0;
+    const zFront = 0.25;
+    final nPts = _kSquircleContour.length;
 
-      // Dynamic shaded glass surface
-      final alpha = isFront
-          ? (0.34 + 0.30 * face.light).clamp(0.28, 0.70)
-          : (0.14 + 0.14 * face.light).clamp(0.10, 0.32);
+    final ringBack3 = <Vec3>[];
+    final ringMid3 = <Vec3>[];
+    final ringFront3 = <Vec3>[];
+    final ringBack2 = <Offset>[];
+    final ringMid2 = <Offset>[];
+    final ringFront2 = <Offset>[];
 
-      final bounds = path.getBounds();
-      final fillPaint = Paint()
+    for (var i = 0; i < nPts; i++) {
+      final c = _kSquircleContour[i];
+      final vb = _xform(c.dx * 0.96, c.dy * 0.96, zBack);
+      final vm = _xform(c.dx * 1.045, c.dy * 1.045, zMid);
+      final vf = _xform(c.dx * 0.99, c.dy * 0.99, zFront);
+      ringBack3.add(vb);
+      ringMid3.add(vm);
+      ringFront3.add(vf);
+      ringBack2.add(project3D(vb, size, fov: fov));
+      ringMid2.add(project3D(vm, size, fov: fov));
+      ringFront2.add(project3D(vf, size, fov: fov));
+    }
+
+    final keyLight = const Vec3(-0.58, -0.68, 0.45).normalized();
+    final rimLight = const Vec3(0.62, 0.52, 0.58).normalized();
+
+    Color shadeBevelNormal(Vec3 normal) {
+      final keyDot = normal.dot(keyLight).clamp(0.0, 1.0);
+      final rimDot = normal.dot(rimLight).clamp(0.0, 1.0);
+      final spec = math.pow(keyDot, 9.0).toDouble();
+
+      // Deep glossy amethyst base -> electric magenta-purple -> hot pink -> white chrome specular
+      var col = Color.lerp(
+        const Color(0xFF1E093E),
+        const Color(0xFF9333EA),
+        (keyDot * 0.85 + 0.15).clamp(0.0, 1.0),
+      )!;
+      col = Color.lerp(col, const Color(0xFFEC4899), (rimDot * 0.65).clamp(0.0, 1.0))!;
+      col = Color.lerp(col, const Color(0xFFFDF2F8), (spec * 0.92).clamp(0.0, 1.0))!;
+      return col;
+    }
+
+    final sideQuads = <_BevelQuad>[];
+    for (var i = 0; i < nPts; i++) {
+      final j = (i + 1) % nPts;
+
+      // Back -> Mid bevel band
+      final bm0 = ringBack3[i];
+      final bm1 = ringBack3[j];
+      final bm2 = ringMid3[j];
+      final bm3 = ringMid3[i];
+      final n1 = (bm1 - bm0).cross(bm3 - bm0).normalized();
+      sideQuads.add(
+        _BevelQuad(
+          pts: [ringBack2[i], ringBack2[j], ringMid2[j], ringMid2[i]],
+          avgZ: (bm0.z + bm1.z + bm2.z + bm3.z) * 0.25,
+          color: shadeBevelNormal(n1),
+        ),
+      );
+
+      // Mid -> Front bevel band
+      final mf0 = ringMid3[i];
+      final mf1 = ringMid3[j];
+      final mf2 = ringFront3[j];
+      final mf3 = ringFront3[i];
+      final n2 = (mf1 - mf0).cross(mf3 - mf0).normalized();
+      sideQuads.add(
+        _BevelQuad(
+          pts: [ringMid2[i], ringMid2[j], ringFront2[j], ringFront2[i]],
+          avgZ: (mf0.z + mf1.z + mf2.z + mf3.z) * 0.25,
+          color: shadeBevelNormal(n2),
+        ),
+      );
+    }
+
+    sideQuads.sort((a, b) => a.avgZ.compareTo(b.avgZ));
+
+    final frontNormal = _xform(0, 0, 1);
+    final showFrontOnTop = frontNormal.z >= 0;
+
+    void drawCapFace({required bool isFront}) {
+      final zPlane = isFront ? zFront : zBack;
+      final outer2 = isFront ? ringFront2 : ringBack2;
+      final outerPath = Path()..addPolygon(outer2, true);
+      final outerBounds = outerPath.getBounds();
+
+      // Glossy metallic-glass outer bezel frame
+      final bezelPaint = Paint()
         ..shader = LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            Color.lerp(baseColor, Colors.white, 0.25 * face.light)!
-                .withValues(alpha: alpha),
-            baseColor.withValues(alpha: alpha * 0.85),
+          colors: const [
+            Color(0xFFFCE7F3),
+            Color(0xFFC084FC),
+            Color(0xFF581C87),
+            Color(0xFF2E1065),
+            Color(0xFFDB2777),
           ],
-        ).createShader(bounds);
-      canvas.drawPath(path, fillPaint);
+          stops: const [0.0, 0.22, 0.54, 0.78, 1.0],
+        ).createShader(outerBounds);
+      canvas.drawPath(outerPath, bezelPaint);
 
-      // Glowing crisp edges
-      final borderPaint = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeJoin = StrokeJoin.round
-        ..strokeWidth = isFront ? 1.85 : 0.95
-        ..color = isFront
-            ? Colors.white.withValues(alpha: 0.55 + 0.30 * face.light)
-            : baseColor.withValues(alpha: 0.35);
-      canvas.drawPath(path, borderPaint);
-
-      // Subtle inner specular diagonal sheen on front faces
-      if (isFront) {
-        final sheen = Paint()
-          ..strokeWidth = 1.0
-          ..color = Colors.white.withValues(alpha: 0.16 * face.light);
-        canvas.drawLine(face.points[0], face.points[2], sheen);
+      // Inner recessed dark obsidian cavity (scale = 0.82)
+      final inner2 = <Offset>[];
+      for (var i = 0; i < nPts; i++) {
+        final c = _kSquircleContour[i];
+        final v = _xform(c.dx * 0.82, c.dy * 0.82, zPlane + (isFront ? 0.004 : -0.004));
+        inner2.add(project3D(v, size, fov: fov));
       }
-    }
-    if (!coreDrawn) {
-      drawInnerCore();
-    }
+      final innerPath = Path()..addPolygon(inner2, true);
+      final innerBounds = innerPath.getBounds();
 
-    // Specular corner nodes on frontmost faces
-    final nodePaint = Paint()..color = Colors.white.withValues(alpha: 0.85);
-    for (final face in outerFaces) {
-      if (face.normalZ <= 0.15) continue;
-      for (final pt in face.points) {
-        canvas.drawCircle(pt, 2.2, nodePaint);
+      final cavityPaint = Paint()
+        ..shader = RadialGradient(
+          center: const Alignment(-0.15, -0.15),
+          radius: 0.95,
+          colors: const [
+            Color(0xFF1A0E33),
+            Color(0xFF0B0618),
+            Color(0xFF05030C),
+          ],
+          stops: const [0.0, 0.58, 1.0],
+        ).createShader(innerBounds);
+      canvas.drawPath(innerPath, cavityPaint);
+
+      // Subtle purple inner ambient glow under the 12-spoke starburst
+      final centerFace = project3D(_xform(0, 0, zPlane), size, fov: fov);
+      final centerGlow = Paint()
+        ..shader = RadialGradient(
+          colors: [
+            const Color(0xFFEC4899).withValues(alpha: 0.30),
+            const Color(0xFF9333EA).withValues(alpha: 0.14),
+            Colors.transparent,
+          ],
+        ).createShader(Rect.fromCircle(center: centerFace, radius: minDim * 0.26));
+      canvas.drawCircle(centerFace, minDim * 0.26, centerGlow);
+
+      // 12-Spoke Glowing Pink-White Radial Starburst Loader projected in 3D!
+      const bladeCount = 12;
+      const rInner = 0.215;
+      const rOuter = 0.545;
+      const halfAngInner = 0.115; // radians (~6.6 deg half-width)
+      const halfAngOuter = 0.128; // slightly wider outer flare like reference
+      final zStar = zPlane + (isFront ? 0.014 : -0.014);
+      final slowTurn = phase * 0.38;
+      final waveHead = (phase * 1.55) % 1.0; // 0..1 sweeping around the 12 spokes
+
+      for (var b = 0; b < bladeCount; b++) {
+        final frac = b / bladeCount;
+        // Clockwise distance behind the sweeping bright wave head
+        final dist = (waveHead - frac + 1.0) % 1.0;
+        final intensity = math.pow(1.0 - dist, 2.35).toDouble().clamp(0.0, 1.0);
+
+        final midA = frac * 2.0 * math.pi - math.pi * 0.5 + slowTurn;
+        final dirSign = isFront ? 1.0 : -1.0;
+        final a = midA * dirSign;
+
+        // 6-point rounded-tip wedge in 3D face space
+        final p0 = _xform(
+          math.cos(a - halfAngInner) * rInner,
+          math.sin(a - halfAngInner) * rInner,
+          zStar,
+        );
+        final p1 = _xform(
+          math.cos(a) * (rInner * 0.95),
+          math.sin(a) * (rInner * 0.95),
+          zStar,
+        );
+        final p2 = _xform(
+          math.cos(a + halfAngInner) * rInner,
+          math.sin(a + halfAngInner) * rInner,
+          zStar,
+        );
+        final p3 = _xform(
+          math.cos(a + halfAngOuter) * (rOuter * 0.95),
+          math.sin(a + halfAngOuter) * (rOuter * 0.95),
+          zStar,
+        );
+        final p4 = _xform(
+          math.cos(a) * rOuter,
+          math.sin(a) * rOuter,
+          zStar,
+        );
+        final p5 = _xform(
+          math.cos(a - halfAngOuter) * (rOuter * 0.95),
+          math.sin(a - halfAngOuter) * (rOuter * 0.95),
+          zStar,
+        );
+
+        final poly = [
+          project3D(p0, size, fov: fov),
+          project3D(p1, size, fov: fov),
+          project3D(p2, size, fov: fov),
+          project3D(p3, size, fov: fov),
+          project3D(p4, size, fov: fov),
+          project3D(p5, size, fov: fov),
+        ];
+        final bladePath = Path()..addPolygon(poly, true);
+
+        final innerCol = Color.lerp(
+          const Color(0xFF9333EA),
+          const Color(0xFFF9A8D4),
+          intensity,
+        )!;
+        final outerCol = Color.lerp(
+          const Color(0xFFEC4899),
+          const Color(0xFFFFFFFF),
+          (intensity * 1.15).clamp(0.0, 1.0),
+        )!;
+
+        // Soft neon bloom behind the brightest leading blades
+        if (intensity > 0.35) {
+          final tip2D = poly[4];
+          canvas.drawCircle(
+            tip2D,
+            minDim * (0.045 + 0.035 * intensity),
+            Paint()
+              ..color = const Color(0xFFF472B6)
+                  .withValues(alpha: 0.34 * intensity),
+          );
+        }
+
+        final bladeAlpha = (0.48 + 0.52 * intensity).clamp(0.45, 1.0);
+        final bladePaint = Paint()
+          ..shader = LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              innerCol.withValues(alpha: bladeAlpha),
+              outerCol.withValues(alpha: bladeAlpha),
+            ],
+          ).createShader(bladePath.getBounds());
+        canvas.drawPath(bladePath, bladePaint);
       }
+
+      // Glossy diagonal crystal reflection across upper-left half of inner face
+      canvas.save();
+      canvas.clipPath(innerPath);
+      final sheenPath = Path()
+        ..moveTo(innerBounds.left - 10, innerBounds.top - 10)
+        ..lineTo(innerBounds.right + 10, innerBounds.top - 10)
+        ..lineTo(
+          innerBounds.left + innerBounds.width * 0.18,
+          innerBounds.bottom * 0.92,
+        )
+        ..lineTo(innerBounds.left - 10, innerBounds.bottom * 0.65)
+        ..close();
+      canvas.drawPath(
+        sheenPath,
+        Paint()
+          ..shader = LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.white.withValues(alpha: 0.13),
+              const Color(0xFFF9A8D4).withValues(alpha: 0.05),
+              Colors.transparent,
+            ],
+          ).createShader(innerBounds),
+      );
+      canvas.restore();
+
+      // Inner cavity rim highlight & outer specular edge highlight
+      canvas.drawPath(
+        innerPath,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2
+          ..shader = LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              const Color(0xFFF9A8D4).withValues(alpha: 0.70),
+              const Color(0xFF7E22CE).withValues(alpha: 0.35),
+              const Color(0xFFF472B6).withValues(alpha: 0.60),
+            ],
+          ).createShader(innerBounds),
+      );
+
+      canvas.drawPath(
+        outerPath,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.6
+          ..shader = LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.white.withValues(alpha: 0.92),
+              const Color(0xFFF472B6).withValues(alpha: 0.65),
+              const Color(0xFF6B21A8).withValues(alpha: 0.30),
+              const Color(0xFFF9A8D4).withValues(alpha: 0.78),
+            ],
+            stops: const [0.0, 0.28, 0.68, 1.0],
+          ).createShader(outerBounds),
+      );
     }
 
-    drawParticles(front: true);
+    // Painter's order: far cap -> sorted 3D curved bevel quads -> near cap
+    drawCapFace(isFront: !showFrontOnTop);
+
+    final quadPaint = Paint()..style = PaintingStyle.fill;
+    final seamPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.65
+      ..strokeJoin = StrokeJoin.round;
+    for (final q in sideQuads) {
+      final path = Path()..addPolygon(q.pts, true);
+      quadPaint.color = q.color;
+      seamPaint.color = q.color;
+      canvas.drawPath(path, quadPaint);
+      canvas.drawPath(path, seamPaint);
+    }
+
+    drawCapFace(isFront: showFrontOnTop);
+
+    // Front-half gossamer orbital streaks & tiny glowing sparkle nodes
+    drawOrbitHalf(front: true);
+    for (var k = 0; k < 4; k++) {
+      final a = phase * 1.1 + k * (math.pi * 0.5);
+      final sv = Vec3(math.cos(a) * 1.28, math.sin(a * 1.3) * 0.95, math.sin(a) * 0.6)
+          .rotateX(rotX * 0.4)
+          .rotateY(rotY * 0.4);
+      if (sv.z < 0) continue;
+      final sp = project3D(sv, size, fov: fov);
+      canvas.drawCircle(
+        sp,
+        3.8,
+        Paint()..color = const Color(0xFFF472B6).withValues(alpha: 0.32),
+      );
+      canvas.drawCircle(
+        sp,
+        1.5,
+        Paint()..color = Colors.white.withValues(alpha: 0.92),
+      );
+    }
   }
 
   @override
-  bool shouldRepaint(covariant _Cube3DPainter oldDelegate) =>
+  bool shouldRepaint(covariant _GlossySquircle3DPainter oldDelegate) =>
       oldDelegate.rotX != rotX ||
       oldDelegate.rotY != rotY ||
       oldDelegate.rotZ != rotZ ||
       oldDelegate.phase != phase ||
-      oldDelegate.pulse != pulse ||
-      oldDelegate.isDark != isDark;
+      oldDelegate.pulse != pulse;
 }
 
-/// Interactive post-login / post-PIN-unlock 3D welcome screen.
-/// Shows the draggable 3D fintech cube and auto-enters after a short delay
-/// (pausing while the user drags/interacts with the cube).
+/// Shared obsidian + vertical violet light pillar + bottom curved neon horizon
+/// backdrop matching the dark purple fintech splash aesthetic.
+class HisobchiCosmicSplashScene extends StatelessWidget {
+  final Widget child;
+  final double pulse;
+
+  const HisobchiCosmicSplashScene({
+    super.key,
+    required this.child,
+    this.pulse = 0.5,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: const Color(0xFF070510),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // 1. Subtle starry ambient purple aura + vertical light beam
+          IgnorePointer(
+            child: CustomPaint(
+              painter: _CosmicBeamAndHorizonPainter(pulse: pulse),
+            ),
+          ),
+          // 2. Foreground content
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _CosmicBeamAndHorizonPainter extends CustomPainter {
+  final double pulse;
+
+  const _CosmicBeamAndHorizonPainter({required this.pulse});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width * 0.5;
+    final emblemCenterY = size.height * 0.43;
+
+    // Wide ambient violet radial nebula
+    final nebulaRect = Rect.fromCircle(
+      center: Offset(cx, emblemCenterY),
+      radius: math.min(size.width, size.height) * (0.62 + 0.04 * pulse),
+    );
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..shader = RadialGradient(
+          center: const Alignment(0, -0.14),
+          radius: 0.72 + 0.05 * pulse,
+          colors: [
+            const Color(0xFFA855F7).withValues(alpha: 0.30 + 0.08 * pulse),
+            const Color(0xFFEC4899).withValues(alpha: 0.14 + 0.04 * pulse),
+            const Color(0xFF3B0764).withValues(alpha: 0.10),
+            Colors.transparent,
+          ],
+          stops: const [0.0, 0.34, 0.64, 1.0],
+        ).createShader(nebulaRect),
+    );
+
+    // Vertical luminous light pillar passing behind the 3D squircle
+    final beamHeight = size.height * 0.74;
+    final beamTop = emblemCenterY - beamHeight * 0.5;
+    final outerBeamRect = Rect.fromLTWH(cx - 72, beamTop, 144, beamHeight);
+    canvas.drawRect(
+      outerBeamRect,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: [
+            Colors.transparent,
+            const Color(0xFF9333EA).withValues(alpha: 0.16 + 0.06 * pulse),
+            const Color(0xFFE879F9).withValues(alpha: 0.30 + 0.10 * pulse),
+            const Color(0xFF9333EA).withValues(alpha: 0.16 + 0.06 * pulse),
+            Colors.transparent,
+          ],
+          stops: const [0.0, 0.28, 0.50, 0.72, 1.0],
+        ).createShader(outerBeamRect),
+    );
+
+    // Vertical fade mask effect via bright core flare above & below emblem
+    final coreBeamRect =
+        Rect.fromLTWH(cx - 18, emblemCenterY - 210, 36, 420);
+    canvas.drawRect(
+      coreBeamRect,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.transparent,
+            const Color(0xFFF5D0FE).withValues(alpha: 0.42 + 0.14 * pulse),
+            const Color(0xFFFFFFFF).withValues(alpha: 0.58 + 0.14 * pulse),
+            const Color(0xFFF5D0FE).withValues(alpha: 0.42 + 0.14 * pulse),
+            Colors.transparent,
+          ],
+          stops: const [0.0, 0.27, 0.50, 0.73, 1.0],
+        ).createShader(coreBeamRect),
+    );
+
+    // Subtle static cosmic starlight specks
+    final starPaint = Paint();
+    const starSeeds = [
+      Offset(0.16, 0.22),
+      Offset(0.84, 0.20),
+      Offset(0.22, 0.34),
+      Offset(0.79, 0.36),
+      Offset(0.14, 0.54),
+      Offset(0.87, 0.52),
+      Offset(0.28, 0.64),
+      Offset(0.73, 0.62),
+    ];
+    for (var i = 0; i < starSeeds.length; i++) {
+      final s = starSeeds[i];
+      final twinkle = 0.25 + 0.45 * (0.5 + 0.5 * math.sin(pulse * math.pi * 2 + i));
+      starPaint.color = Colors.white.withValues(alpha: twinkle * 0.45);
+      canvas.drawCircle(
+        Offset(size.width * s.dx, size.height * s.dy),
+        i.isEven ? 1.2 : 0.9,
+        starPaint,
+      );
+    }
+
+    // Bottom curved glowing purple-magenta horizon arc (planet limb glow)
+    final arcRadius = size.width * 1.45;
+    final arcCenter = Offset(cx, size.height + arcRadius - 42);
+
+    // Soft atmospheric bloom rising from the curved horizon
+    final horizonGlowRect =
+        Rect.fromLTWH(0, size.height - 130, size.width, 140);
+    canvas.drawRect(
+      horizonGlowRect,
+      Paint()
+        ..shader = RadialGradient(
+          center: const Alignment(0, 1.25),
+          radius: 1.05,
+          colors: [
+            const Color(0xFFD946EF).withValues(alpha: 0.42 + 0.08 * pulse),
+            const Color(0xFF7C3AED).withValues(alpha: 0.22),
+            Colors.transparent,
+          ],
+          stops: const [0.0, 0.48, 1.0],
+        ).createShader(horizonGlowRect),
+    );
+
+    // Crisp glowing curved horizon rim
+    for (final layer in const [
+      (width: 18.0, alpha: 0.16, color: Color(0xFFA855F7)),
+      (width: 7.0, alpha: 0.34, color: Color(0xFFEC4899)),
+      (width: 2.2, alpha: 0.72, color: Color(0xFFF5D0FE)),
+    ]) {
+      canvas.drawCircle(
+        arcCenter,
+        arcRadius,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = layer.width
+          ..color = layer.color.withValues(alpha: layer.alpha),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _CosmicBeamAndHorizonPainter oldDelegate) =>
+      (oldDelegate.pulse - pulse).abs() > 0.004;
+}
+
+/// Cinematic 3–4s post-login / post-PIN-unlock 3D welcome transition screen.
 class Hisobchi3DWelcomeScreen extends StatefulWidget {
   final VoidCallback onContinue;
   final String title;
@@ -617,9 +1062,9 @@ class Hisobchi3DWelcomeScreen extends StatefulWidget {
   const Hisobchi3DWelcomeScreen({
     super.key,
     required this.onContinue,
-    this.title = 'Xush kelibsiz!',
+    this.title = 'Hisobchi',
     this.subtitle = "Ma'lumotlar sinxronizatsiya qilinmoqda...",
-    this.autoContinueDelay = const Duration(milliseconds: 1850),
+    this.autoContinueDelay = const Duration(milliseconds: 3200),
   });
 
   @override
@@ -627,14 +1072,20 @@ class Hisobchi3DWelcomeScreen extends StatefulWidget {
       _Hisobchi3DWelcomeScreenState();
 }
 
-class _Hisobchi3DWelcomeScreenState extends State<Hisobchi3DWelcomeScreen> {
+class _Hisobchi3DWelcomeScreenState extends State<Hisobchi3DWelcomeScreen>
+    with SingleTickerProviderStateMixin {
   Timer? _autoTimer;
+  late final AnimationController _pulseCtrl;
   bool _completed = false;
   bool _interacted = false;
 
   @override
   void initState() {
     super.initState();
+    _pulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2200),
+    )..repeat(reverse: true);
     _scheduleContinue(widget.autoContinueDelay);
   }
 
@@ -654,148 +1105,101 @@ class _Hisobchi3DWelcomeScreenState extends State<Hisobchi3DWelcomeScreen> {
   @override
   void dispose() {
     _autoTimer?.cancel();
+    _pulseCtrl.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final isDark = isDarkCtx(context);
-    final bg = isDark ? AppTokens.surfaceDark : AppTokens.surfaceLight;
-
     return Scaffold(
-      backgroundColor: bg,
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: RadialGradient(
-                    center: const Alignment(0, -0.15),
-                    radius: 0.95,
-                    colors: [
-                      AppTokens.brandViolet
-                          .withValues(alpha: isDark ? 0.30 : 0.16),
-                      AppTokens.brand.withValues(alpha: isDark ? 0.15 : 0.08),
-                      Colors.transparent,
+      backgroundColor: const Color(0xFF070510),
+      body: AnimatedBuilder(
+        animation: _pulseCtrl,
+        builder: (context, child) => HisobchiCosmicSplashScene(
+          pulse: _pulseCtrl.value,
+          child: child!,
+        ),
+        child: SafeArea(
+          child: Stack(
+            children: [
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Interactive3DFintechCube(
+                        size: 214,
+                        onInteractStart: () {
+                          _autoTimer?.cancel();
+                          if (!_interacted && mounted) {
+                            setState(() => _interacted = true);
+                          }
+                        },
+                        onInteractEnd: () {
+                          _scheduleContinue(
+                              const Duration(milliseconds: 1600));
+                        },
+                      ),
+                      const SizedBox(height: 20),
+                      Text(
+                        widget.title,
+                        style: const TextStyle(
+                          fontSize: 26,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -0.4,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _interacted
+                            ? 'Davom etish uchun pastdagi tugmani bosing'
+                            : widget.subtitle,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white.withValues(alpha: 0.72),
+                        ),
+                      ),
                     ],
                   ),
                 ),
               ),
-            ),
-          ),
-          SafeArea(
-            child: Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 28,
+                child: Center(
+                  child: TextButton.icon(
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.white.withValues(alpha: 0.85),
+                      backgroundColor: Colors.white.withValues(alpha: 0.08),
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: AppTokens.brandViolet.withValues(alpha: 0.16),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: AppTokens.brandViolet.withValues(alpha: 0.38),
+                          horizontal: 18, vertical: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(999),
+                        side: BorderSide(
+                          color: const Color(0xFFE879F9).withValues(alpha: 0.35),
                         ),
                       ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.view_in_ar_rounded,
-                              size: 14, color: AppTokens.brandViolet),
-                          SizedBox(width: 6),
-                          Text(
-                            'HISOBCHI • 3D',
-                            style: TextStyle(
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 1.0,
-                              color: AppTokens.brandViolet,
-                            ),
-                          ),
-                        ],
-                      ),
                     ),
-                    const SizedBox(height: 16),
-                    Interactive3DFintechCube(
-                      size: 196,
-                      onInteractStart: () {
-                        _autoTimer?.cancel();
-                        if (!_interacted && mounted) {
-                          setState(() => _interacted = true);
-                        }
-                      },
-                      onInteractEnd: () {
-                        _scheduleContinue(const Duration(milliseconds: 1400));
-                      },
-                    ),
-                    const SizedBox(height: 14),
-                    Text(
-                      widget.title,
+                    onPressed: _finish,
+                    icon: const Icon(Icons.arrow_forward_rounded, size: 17),
+                    label: const Text(
+                      'Kirish',
                       style: TextStyle(
-                        fontSize: 26,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: -0.4,
-                        color: textPrimaryOf(context),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      _interacted
-                          ? "Ajoyib! Istalgan payt kirishingiz mumkin"
-                          : widget.subtitle,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
                         fontSize: 13.5,
-                        fontWeight: FontWeight.w600,
-                        color: textSecondaryOf(context),
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.touch_app_rounded,
-                            size: 15, color: textSecondaryOf(context)),
-                        const SizedBox(width: 5),
-                        Text(
-                          'Kubni barmoq bilan aylantirib ko\'ring',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: textSecondaryOf(context),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 24),
-                    FilledButton.icon(
-                      style: FilledButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 26, vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                      onPressed: _finish,
-                      icon: const Icon(Icons.arrow_forward_rounded, size: 19),
-                      label: const Text(
-                        'Kirish',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w900,
-                          fontSize: 15,
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
-            ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

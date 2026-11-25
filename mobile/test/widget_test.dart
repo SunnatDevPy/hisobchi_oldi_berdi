@@ -741,4 +741,31 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text("Nakladnoy o'zgartirildi"), findsNothing);
   });
+
+  testWidgets(
+      'Hisobchi3DWelcomeScreen plays 3.2s cosmic 3D squircle splash then enters',
+      (WidgetTester tester) async {
+    var continued = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: Hisobchi3DWelcomeScreen(
+          onContinue: () => continued++,
+        ),
+      ),
+    );
+
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.byType(HisobchiCosmicSplashScene), findsOneWidget);
+    expect(find.byType(Interactive3DFintechCube), findsOneWidget);
+    expect(continued, equals(0));
+
+    // Still animating at 2.5s
+    await tester.pump(const Duration(milliseconds: 2000));
+    expect(continued, equals(0));
+
+    // Completes cleanly at ~3.2s
+    await tester.pump(const Duration(milliseconds: 900));
+    expect(continued, equals(1));
+  });
 }

@@ -480,37 +480,44 @@ class _HisobchiAppState extends State<HisobchiApp> with WidgetsBindingObserver {
 
   Future<void> _bootstrap() async {
     if (widget.apiOverride == null) {
-      if (kIsWeb) {
-        initTelegramWebApp();
-        final scheme = getTelegramColorScheme();
-        if (scheme == 'dark') {
-          _themeMode = ThemeMode.dark;
-        } else if (scheme == 'light') {
-          _themeMode = ThemeMode.light;
-        }
-        syncTelegramChromeColors(isDark: _themeMode == ThemeMode.dark);
+      // Play the full 3.4s Yandex/SuperApp-style 3D splash animation in parallel
+      // with session & lock initialization so cold start feels smooth and intentional.
+      final minSplash = Future<void>.delayed(const Duration(milliseconds: 3400));
+      Future<void> loadState() async {
+        if (kIsWeb) {
+          initTelegramWebApp();
+          final scheme = getTelegramColorScheme();
+          if (scheme == 'dark') {
+            _themeMode = ThemeMode.dark;
+          } else if (scheme == 'light') {
+            _themeMode = ThemeMode.light;
+          }
+          syncTelegramChromeColors(isDark: _themeMode == ThemeMode.dark);
 
-        final initData = getTelegramWebAppInitData();
-        if (initData == null || initData.isEmpty) {
-          _webAuthError =
-              "Mini App faqat Telegram bot ichidan (@hisobchi_my_bot) ochiladi.";
+          final initData = getTelegramWebAppInitData();
+          if (initData == null || initData.isEmpty) {
+            _webAuthError =
+                "Mini App faqat Telegram bot ichidan (@hisobchi_my_bot) ochiladi.";
+          } else {
+            try {
+              await _api.loginWithTelegramWebApp(initData: initData);
+              _webAuthError = null;
+            } catch (e) {
+              _webAuthError = e.toString();
+            }
+          }
         } else {
-          try {
-            await _api.loginWithTelegramWebApp(initData: initData);
-            _webAuthError = null;
-          } catch (e) {
-            _webAuthError = e.toString();
+          await _api.loadSavedSession();
+          final lock = await AppLockStorage.load();
+          _savedPin = lock.pin;
+          _bioEnabled = lock.bioEnabled;
+          if (_api.isAuthenticated && lock.enabled && lock.pin != null) {
+            _pinLocked = true;
           }
         }
-      } else {
-        await _api.loadSavedSession();
-        final lock = await AppLockStorage.load();
-        _savedPin = lock.pin;
-        _bioEnabled = lock.bioEnabled;
-        if (_api.isAuthenticated && lock.enabled && lock.pin != null) {
-          _pinLocked = true;
-        }
       }
+
+      await Future.wait([loadState(), minSplash]);
     }
     if (mounted) {
       setState(() => _initializing = false);
@@ -676,9 +683,16 @@ class _HisobchiAppState extends State<HisobchiApp> with WidgetsBindingObserver {
         darkTheme: buildAppTheme(Brightness.dark),
         themeMode: _themeMode,
         home: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 360),
+          duration: const Duration(milliseconds: 480),
           switchInCurve: Curves.easeOutCubic,
           switchOutCurve: Curves.easeInCubic,
+          transitionBuilder: (child, anim) => FadeTransition(
+            opacity: anim,
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 0.96, end: 1.0).animate(anim),
+              child: child,
+            ),
+          ),
           child: home,
         ),
       ),
@@ -972,10 +986,10 @@ class _LoginScreenState extends State<LoginScreen> with WidgetsBindingObserver {
                       Column(
                         children: [
                           const Interactive3DFintechCube(
-                            size: 116,
+                            size: 158,
                             continuousSpin: false,
                           ),
-                          const SizedBox(height: 10),
+                          const SizedBox(height: 8),
                           Text(
                             'Hisobchi Mobil',
                             textAlign: TextAlign.center,

@@ -165,7 +165,7 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: #090D18;
+      background: #070510;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
     #hisobchi-splash {
@@ -177,75 +177,94 @@
       align-items: center;
       justify-content: center;
       background:
-        radial-gradient(circle at 50% 44%, rgba(124, 58, 237, 0.34) 0%, rgba(236, 72, 153, 0.14) 28%, transparent 62%),
-        radial-gradient(ellipse at 50% 108%, rgba(124, 58, 237, 0.32) 0%, transparent 56%),
-        #090D18;
+        linear-gradient(90deg, transparent 0%, rgba(168, 85, 247, 0.22) 46%, rgba(245, 208, 254, 0.42) 50%, rgba(168, 85, 247, 0.22) 54%, transparent 100%) 50% 42% / 130px 440px no-repeat,
+        radial-gradient(circle at 50% 42%, rgba(236, 72, 153, 0.30) 0%, rgba(168, 85, 247, 0.22) 26%, transparent 62%),
+        radial-gradient(ellipse at 50% 106%, rgba(236, 72, 153, 0.45) 0%, rgba(124, 58, 237, 0.28) 34%, transparent 62%),
+        #070510;
       color: #F8FAFC;
-      transition: opacity 0.25s ease;
+      transition: opacity 0.32s ease;
+    }
+    #hisobchi-splash::after {
+      content: '';
+      position: absolute;
+      left: -18%;
+      right: -18%;
+      bottom: -90px;
+      height: 130px;
+      border-radius: 50% 50% 0 0;
+      border-top: 2px solid rgba(245, 208, 254, 0.72);
+      box-shadow: 0 -10px 32px rgba(236, 72, 153, 0.55);
+      pointer-events: none;
     }
     #hisobchi-splash .logo-wrap {
       position: relative;
-      width: 116px;
-      height: 116px;
+      width: 132px;
+      height: 132px;
       display: flex;
       align-items: center;
       justify-content: center;
-      animation: hbreathe 2.4s ease-in-out infinite;
+      perspective: 520px;
+      animation: hbreathe 2.6s ease-in-out infinite;
     }
-    #hisobchi-splash .logo-ring {
-      position: absolute;
-      inset: 0;
-      border-radius: 31px;
-      background: conic-gradient(from 0deg, #4F46E5, #7C3AED, #EC4899, rgba(124, 58, 237, 0.12), #4F46E5);
-      box-shadow: 0 0 32px rgba(124, 58, 237, 0.55);
-      animation: hspin 2.4s linear infinite;
-    }
-    #hisobchi-splash .logo-inner {
-      position: relative;
-      width: 106px;
-      height: 106px;
-      border-radius: 27px;
-      background: #13192B;
-      border: 1.2px solid rgba(255, 255, 255, 0.14);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 13px;
+    #hisobchi-splash .squircle-3d {
+      width: 112px;
+      height: 112px;
+      border-radius: 30px;
+      transform: rotateX(14deg) rotateY(-20deg) rotateZ(-6deg);
+      background: linear-gradient(135deg, #FCE7F3 0%, #C084FC 24%, #581C87 58%, #DB2777 100%);
+      padding: 8px;
       box-sizing: border-box;
+      box-shadow:
+        -9px 11px 0 #2E1065,
+        -12px 14px 26px rgba(168, 85, 247, 0.50),
+        0 0 38px rgba(236, 72, 153, 0.42);
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
-    #hisobchi-splash .logo-inner img {
+    #hisobchi-splash .squircle-cavity {
       width: 100%;
       height: 100%;
-      border-radius: 18px;
-      object-fit: cover;
+      border-radius: 23px;
+      background: radial-gradient(circle at 40% 38%, #1A0E33 0%, #090514 75%);
+      border: 1px solid rgba(249, 168, 212, 0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #hisobchi-splash .starburst {
+      width: 62px;
+      height: 62px;
+      animation: hspin 2.2s linear infinite;
+      filter: drop-shadow(0 0 8px rgba(244, 114, 182, 0.75));
     }
     #hisobchi-splash .title {
       margin-top: 22px;
-      font-size: 22px;
+      font-size: 24px;
       font-weight: 900;
-      letter-spacing: -0.3px;
-      color: #F8FAFC;
+      letter-spacing: -0.4px;
+      color: #FFFFFF;
     }
     #hisobchi-splash .sub {
       margin-top: 6px;
       font-size: 13px;
       font-weight: 600;
-      color: #CBD5E1;
+      color: rgba(255, 255, 255, 0.72);
     }
     #hisobchi-splash .bar {
       margin-top: 20px;
-      width: 152px;
-      height: 5px;
+      width: 156px;
+      height: 4.5px;
       border-radius: 999px;
-      background: rgba(124, 58, 237, 0.22);
+      background: rgba(168, 85, 247, 0.22);
       overflow: hidden;
       position: relative;
     }
     #hisobchi-splash .bar-fill {
-      width: 64px;
+      width: 68px;
       height: 100%;
       border-radius: 999px;
-      background: linear-gradient(90deg, #7C3AED, #EC4899);
+      background: linear-gradient(90deg, #A855F7, #F472B6, #FFFFFF);
       box-shadow: 0 0 10px rgba(236, 72, 153, 0.65);
       animation: hslide 1.3s ease-in-out infinite alternate;
     }
@@ -253,8 +272,8 @@
       to { transform: rotate(360deg); }
     }
     @keyframes hbreathe {
-      0%, 100% { transform: scale(0.97); }
-      50% { transform: scale(1.03); }
+      0%, 100% { transform: translateY(0px) scale(0.98); }
+      50% { transform: translateY(-4px) scale(1.03); }
     }
     @keyframes hslide {
       from { transform: translateX(0); }
@@ -265,13 +284,29 @@
 <body>
   <div id="hisobchi-splash">
     <div class="logo-wrap">
-      <div class="logo-ring"></div>
-      <div class="logo-inner">
-        <img src="icons/Icon-192.png" alt="Hisobchi">
+      <div class="squircle-3d">
+        <div class="squircle-cavity">
+          <svg class="starburst" viewBox="-50 -50 100 100" xmlns="http://www.w3.org/2000/svg">
+            <g fill="#F472B6">
+              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" opacity="1.0" fill="#FFFFFF"/>
+              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(30)" opacity="0.92" fill="#FCE7F3"/>
+              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(60)" opacity="0.84" fill="#F9A8D4"/>
+              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(90)" opacity="0.76"/>
+              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(120)" opacity="0.68"/>
+              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(150)" opacity="0.60"/>
+              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(180)" opacity="0.52" fill="#EC4899"/>
+              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(210)" opacity="0.46" fill="#D946EF"/>
+              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(240)" opacity="0.40" fill="#C084FC"/>
+              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(270)" opacity="0.36" fill="#A855F7"/>
+              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(300)" opacity="0.55" fill="#EC4899"/>
+              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(330)" opacity="0.78" fill="#F9A8D4"/>
+            </g>
+          </svg>
+        </div>
       </div>
     </div>
     <div class="title">Hisobchi</div>
-    <div class="sub">Ilova yuklanmoqda...</div>
+    <div class="sub">Ilova tayyorlanmoqda...</div>
     <div class="bar"><div class="bar-fill"></div></div>
   </div>
   <script>

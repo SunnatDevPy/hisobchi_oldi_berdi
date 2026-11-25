@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'api_client.dart';
 import 'theme.dart';
+import 'widgets_3d.dart';
 
 class HeroBalanceCard extends StatelessWidget {
   final StatusSummary summary;
@@ -3129,233 +3130,90 @@ class _HisobchiAnimatedLoadingScreenState
 
   @override
   Widget build(BuildContext context) {
-    final isDark = isDarkCtx(context);
-    final bgBase = isDark ? AppTokens.surfaceDark : AppTokens.surfaceLight;
-    final cardSurface = isDark ? AppTokens.cardDark : Colors.white;
-    final titleColor = textPrimaryOf(context);
-    final subColor = textSecondaryOf(context);
-    final glowViolet = AppTokens.brandViolet;
-    final glowIndigo = AppTokens.brand;
+    const glowViolet = Color(0xFFA855F7);
     const glowPink = Color(0xFFEC4899);
 
     return AnimatedBuilder(
       animation: _ctrl,
-      builder: (context, _) {
+      builder: (context, child) {
         final t = _ctrl.value;
-        final pulse = 0.5 - 0.5 * math.cos(t * 2 * math.pi); // 0..1 smooth
-        final logoScale = 0.97 + 0.06 * pulse;
-        final haloOpacity = (isDark ? 0.36 : 0.20) + 0.16 * pulse;
-
-        return Container(
-          color: bgBase,
-          child: Stack(
-            children: [
-              // Vertical ambient fintech beam behind logo
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: RadialGradient(
-                        center: const Alignment(0, -0.06),
-                        radius: 0.78 + 0.08 * pulse,
-                        colors: [
-                          glowViolet.withValues(alpha: haloOpacity),
-                          glowPink.withValues(alpha: haloOpacity * 0.45),
-                          glowIndigo.withValues(alpha: haloOpacity * 0.25),
-                          Colors.transparent,
-                        ],
-                        stops: const [0.0, 0.35, 0.62, 1.0],
-                      ),
+        final pulse = 0.5 - 0.5 * math.cos(t * 2 * math.pi);
+        return HisobchiCosmicSplashScene(
+          pulse: pulse,
+          child: SafeArea(
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  child!,
+                  const SizedBox(height: 18),
+                  Text(
+                    widget.title,
+                    style: const TextStyle(
+                      fontSize: 25,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: -0.4,
+                      color: Colors.white,
                     ),
                   ),
-                ),
-              ),
-              // Subtle vertical light pillar
-              Align(
-                alignment: Alignment.center,
-                child: IgnorePointer(
-                  child: Container(
-                    width: 150,
-                    height: 360,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.transparent,
-                          glowViolet.withValues(alpha: isDark ? 0.16 : 0.09),
-                          glowPink.withValues(alpha: isDark ? 0.14 : 0.08),
-                          Colors.transparent,
-                        ],
-                      ),
+                  const SizedBox(height: 6),
+                  Text(
+                    widget.subtitle,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white.withValues(alpha: 0.72),
                     ),
                   ),
-                ),
-              ),
-              // Bottom horizon purple glow arc
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                height: 110,
-                child: IgnorePointer(
-                  child: DecoratedBox(
+                  const SizedBox(height: 22),
+                  Container(
+                    width: 158,
+                    height: 4.5,
                     decoration: BoxDecoration(
-                      gradient: RadialGradient(
-                        center: const Alignment(0, 1.25),
-                        radius: 1.15,
-                        colors: [
-                          glowViolet.withValues(
-                              alpha: (isDark ? 0.34 : 0.18) + 0.08 * pulse),
-                          glowPink.withValues(alpha: isDark ? 0.14 : 0.06),
-                          Colors.transparent,
-                        ],
-                      ),
+                      color: glowViolet.withValues(alpha: 0.22),
+                      borderRadius: BorderRadius.circular(999),
                     ),
-                  ),
-                ),
-              ),
-              // Center animated squircle logo + text + glowing progress pill
-              SafeArea(
-                child: Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Transform.scale(
-                        scale: logoScale,
-                        child: SizedBox(
-                          width: 118,
-                          height: 118,
-                          child: Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              // Rotating orbital neon ring
-                              Transform.rotate(
-                                angle: t * 2 * math.pi,
-                                child: Container(
-                                  width: 114,
-                                  height: 114,
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(31),
-                                    gradient: SweepGradient(
-                                      colors: [
-                                        glowIndigo,
-                                        glowViolet,
-                                        glowPink,
-                                        glowViolet.withValues(alpha: 0.15),
-                                        glowIndigo,
-                                      ],
-                                    ),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: glowViolet.withValues(
-                                            alpha: isDark ? 0.55 : 0.28),
-                                        blurRadius: 28,
-                                        spreadRadius: 1,
-                                      ),
-                                    ],
-                                  ),
+                    child: LayoutBuilder(
+                      builder: (ctx, box) {
+                        final barW = box.maxWidth * 0.44;
+                        final travel = box.maxWidth - barW;
+                        return Align(
+                          alignment: Alignment.centerLeft,
+                          child: Transform.translate(
+                            offset: Offset(travel * pulse, 0),
+                            child: Container(
+                              width: barW,
+                              height: 4.5,
+                              decoration: BoxDecoration(
+                                gradient: const LinearGradient(
+                                  colors: [
+                                    Color(0xFFA855F7),
+                                    Color(0xFFF472B6),
+                                    Colors.white,
+                                  ],
                                 ),
+                                borderRadius: BorderRadius.circular(999),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: glowPink.withValues(alpha: 0.65),
+                                    blurRadius: 10,
+                                  ),
+                                ],
                               ),
-                              // Inner frosted glass squircle holding logo
-                              Container(
-                                width: 106,
-                                height: 106,
-                                padding: const EdgeInsets.all(14),
-                                decoration: BoxDecoration(
-                                  color: cardSurface,
-                                  borderRadius: BorderRadius.circular(28),
-                                  border: Border.all(
-                                    color: Colors.white.withValues(
-                                        alpha: isDark ? 0.14 : 0.8),
-                                    width: 1.2,
-                                  ),
-                                ),
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(18),
-                                  child: Image.asset(
-                                    'assets/app_icon.png',
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) => Container(
-                                      decoration: const BoxDecoration(
-                                        gradient: AppTokens.aiGradient,
-                                      ),
-                                      child: const Icon(
-                                        Icons.account_balance_wallet_rounded,
-                                        color: Colors.white,
-                                        size: 42,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
+                            ),
                           ),
-                        ),
-                      ),
-                      const SizedBox(height: 22),
-                      Text(
-                        widget.title,
-                        style: TextStyle(
-                          fontSize: 23,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: -0.3,
-                          color: titleColor,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        widget.subtitle,
-                        style: TextStyle(
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w600,
-                          color: subColor,
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      // Glowing sliding progress pill
-                      Container(
-                        width: 152,
-                        height: 5,
-                        decoration: BoxDecoration(
-                          color: glowViolet.withValues(alpha: 0.18),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: LayoutBuilder(
-                          builder: (ctx, box) {
-                            final barW = box.maxWidth * 0.42;
-                            final travel = box.maxWidth - barW;
-                            return Align(
-                              alignment: Alignment.centerLeft,
-                              child: Transform.translate(
-                                offset: Offset(travel * pulse, 0),
-                                child: Container(
-                                  width: barW,
-                                  height: 5,
-                                  decoration: BoxDecoration(
-                                    gradient: AppTokens.aiGradient,
-                                    borderRadius: BorderRadius.circular(999),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: glowPink.withValues(alpha: 0.55),
-                                        blurRadius: 10,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ],
+                        );
+                      },
+                    ),
                   ),
-                ),
+                ],
               ),
-            ],
+            ),
           ),
         );
       },
+      child: const Interactive3DFintechCube(size: 214),
     );
   }
 }
