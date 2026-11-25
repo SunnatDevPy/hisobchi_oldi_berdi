@@ -525,6 +525,11 @@ class _HisobchiAppState extends State<HisobchiApp> with WidgetsBindingObserver {
       }
     }
     if (mounted) {
+      if (widget.apiOverride == null) {
+        try {
+          HapticFeedback.lightImpact();
+        } catch (_) {}
+      }
       setState(() => _initializing = false);
     }
   }
@@ -673,16 +678,26 @@ class _HisobchiAppState extends State<HisobchiApp> with WidgetsBindingObserver {
         darkTheme: buildAppTheme(Brightness.dark),
         themeMode: _themeMode,
         home: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 480),
+          duration: const Duration(milliseconds: 520),
           switchInCurve: Curves.easeOutCubic,
           switchOutCurve: Curves.easeInCubic,
-          transitionBuilder: (child, anim) => FadeTransition(
-            opacity: anim,
-            child: ScaleTransition(
-              scale: Tween<double>(begin: 0.96, end: 1.0).animate(anim),
-              child: child,
-            ),
-          ),
+          transitionBuilder: (child, anim) {
+            final isSplash = child.key == const ValueKey('app_init');
+            final scaleAnim = isSplash
+                ? Tween<double>(begin: 1.28, end: 1.0).animate(
+                    CurvedAnimation(parent: anim, curve: Curves.easeInCubic),
+                  )
+                : Tween<double>(begin: 0.95, end: 1.0).animate(
+                    CurvedAnimation(parent: anim, curve: Curves.easeOutCubic),
+                  );
+            return FadeTransition(
+              opacity: anim,
+              child: ScaleTransition(
+                scale: scaleAnim,
+                child: child,
+              ),
+            );
+          },
           child: home,
         ),
       ),

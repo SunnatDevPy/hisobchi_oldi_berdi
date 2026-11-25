@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
+import 'package:sensors_plus/sensors_plus.dart';
 
 /// Lightweight 3D vector with Euler rotations and vector products.
 class Vec3 {
@@ -156,8 +158,9 @@ List<ProjectedCubeFace> computeCubeFaces(
   return out;
 }
 
-/// Hisobchi — yuklanish (splash) ekrani.
-/// Silliq radial yorug'lik, 3D egilgan binafsha kub-ikonka, 12 yaproqli burst va pastki yoy.
+/// Hisobchi — flagman 3D yuklanish (splash) ekrani.
+/// Haqiqiy 3D qalinlik, diagonal shisha yaltirashi, akselerometr/barmoq parallaksi,
+/// suzuvchi bokeh yulduzchalari, shimmer sarlavha va portal zoom o'tish effekti bilan.
 class HisobchiSplash extends StatefulWidget {
   const HisobchiSplash({
     super.key,
@@ -194,13 +197,55 @@ class _HisobchiSplashState extends State<HisobchiSplash>
     vsync: this,
     duration: const Duration(milliseconds: 1600),
   )..repeat(reverse: true);
+  late final AnimationController _introCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 680),
+  );
+  late final AnimationController _exitCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 300),
+  );
 
+  Timer? _exitTriggerTimer;
   Timer? _finishTimer;
+  StreamSubscription<AccelerometerEvent>? _accelSub;
+
+  double _targetGyroX = 0.0;
+  double _targetGyroY = 0.0;
+  double _gyroX = 0.0;
+  double _gyroY = 0.0;
+  double _touchTiltX = 0.0;
+  double _touchTiltY = 0.0;
+  double _tapPulseBoost = 0.0;
 
   @override
   void initState() {
     super.initState();
+    _introCtrl.forward();
+    try {
+      HapticFeedback.selectionClick();
+    } catch (_) {}
+
+    if (!kIsWeb) {
+      try {
+        _accelSub = accelerometerEventStream().listen(
+          (ev) {
+            if (!mounted) return;
+            // Subtle tilt parallax from gravity vector (±0.18 rad)
+            _targetGyroY = (-ev.x / 9.8 * 0.18).clamp(-0.18, 0.18);
+            _targetGyroX = (((ev.y - 4.5) / 9.8) * 0.18).clamp(-0.18, 0.18);
+          },
+          onError: (_) {},
+        );
+      } catch (_) {}
+    }
+
     if (widget.onFinished != null) {
+      final totalMs = widget.duration.inMilliseconds;
+      final exitStartMs = math.max(0, totalMs - 300);
+      _exitTriggerTimer = Timer(Duration(milliseconds: exitStartMs), () {
+        if (mounted) _exitCtrl.forward();
+      });
       _finishTimer = Timer(widget.duration, () {
         if (mounted) widget.onFinished!();
       });
@@ -209,16 +254,44 @@ class _HisobchiSplashState extends State<HisobchiSplash>
 
   @override
   void dispose() {
+    _exitTriggerTimer?.cancel();
     _finishTimer?.cancel();
+    _accelSub?.cancel();
     _spin.dispose();
     _orbit.dispose();
     _pulse.dispose();
     _bar.dispose();
+    _introCtrl.dispose();
+    _exitCtrl.dispose();
     super.dispose();
+  }
+
+  void _stepSmoothing() {
+    _gyroX += (_targetGyroX - _gyroX) * 0.12;
+    _gyroY += (_targetGyroY - _gyroY) * 0.12;
+    if (_tapPulseBoost > 0.005) {
+      _tapPulseBoost *= 0.90;
+    } else {
+      _tapPulseBoost = 0.0;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final introScale = Tween<double>(begin: 0.72, end: 1.0).animate(
+      CurvedAnimation(parent: _introCtrl, curve: Curves.easeOutBack),
+    );
+    final introFade = CurvedAnimation(
+      parent: _introCtrl,
+      curve: Curves.easeOutCubic,
+    );
+    final exitScale = Tween<double>(begin: 1.0, end: 1.22).animate(
+      CurvedAnimation(parent: _exitCtrl, curve: Curves.easeInCubic),
+    );
+    final exitFade = Tween<double>(begin: 1.0, end: 0.0).animate(
+      CurvedAnimation(parent: _exitCtrl, curve: Curves.easeInCubic),
+    );
+
     return Scaffold(
       backgroundColor: const Color(0xFF05030F),
       body: Stack(
@@ -226,37 +299,46 @@ class _HisobchiSplashState extends State<HisobchiSplash>
           Positioned.fill(
             child: CustomPaint(painter: _BottomArcPainter(_pulse)),
           ),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: CustomPaint(painter: _BokehParticlesPainter(_orbit)),
+            ),
+          ),
           SafeArea(
-            child: Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _buildIcon(),
-                    const SizedBox(height: 36),
-                    Text(
-                      widget.title,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 34,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.5,
+            child: AnimatedBuilder(
+              animation: Listenable.merge([_introCtrl, _exitCtrl]),
+              builder: (context, child) {
+                final scale = introScale.value * exitScale.value;
+                final opacity =
+                    (introFade.value * exitFade.value).clamp(0.0, 1.0);
+                return Opacity(
+                  opacity: opacity,
+                  child: Transform.scale(scale: scale, child: child),
+                );
+              },
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildIcon(),
+                      const SizedBox(height: 36),
+                      _buildShimmerTitle(),
+                      const SizedBox(height: 10),
+                      Text(
+                        widget.subtitle,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.58),
+                          fontSize: 15,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      widget.subtitle,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.55),
-                        fontSize: 15,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 28),
-                    _buildBar(),
-                  ],
+                      const SizedBox(height: 28),
+                      _buildBar(),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -266,50 +348,128 @@ class _HisobchiSplashState extends State<HisobchiSplash>
     );
   }
 
+  Widget _buildShimmerTitle() {
+    return AnimatedBuilder(
+      animation: _bar,
+      builder: (context, child) {
+        final sweep = -0.35 + 1.70 * _bar.value;
+        return ShaderMask(
+          blendMode: BlendMode.srcIn,
+          shaderCallback: (bounds) => LinearGradient(
+            begin: Alignment(sweep - 0.55, -0.2),
+            end: Alignment(sweep + 0.55, 0.2),
+            colors: const [
+              Color(0xFFD8B4FE),
+              Color(0xFFFFFFFF),
+              Color(0xFFF9A8D4),
+              Color(0xFFFFFFFF),
+              Color(0xFFD8B4FE),
+            ],
+            stops: const [0.0, 0.35, 0.50, 0.65, 1.0],
+          ).createShader(bounds),
+          child: child!,
+        );
+      },
+      child: Text(
+        widget.title,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 34,
+          fontWeight: FontWeight.w800,
+          letterSpacing: -0.5,
+        ),
+      ),
+    );
+  }
+
   Widget _buildIcon() {
-    return SizedBox(
-      width: 300,
-      height: 300,
-      child: AnimatedBuilder(
-        animation: Listenable.merge([_spin, _orbit, _pulse]),
-        builder: (context, _) {
-          final p = Curves.easeInOut.transform(_pulse.value);
-          final tiltX = -0.30 + 0.06 * math.sin(_orbit.value * 2 * math.pi);
-          final tiltY = 0.35 + 0.08 * math.cos(_orbit.value * 2 * math.pi);
-          return Stack(
-            alignment: Alignment.center,
-            children: [
-              Container(
-                width: 280,
-                height: 280,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: RadialGradient(
-                    colors: [
-                      const Color(0xFFB44CFF).withValues(alpha: 0.30 + 0.20 * p),
-                      const Color(0xFF7C3AED).withValues(alpha: 0.10),
-                      Colors.transparent,
-                    ],
-                    stops: const [0.0, 0.55, 1.0],
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onPanUpdate: (d) {
+        setState(() {
+          _touchTiltY = (_touchTiltY + d.delta.dx * 0.008).clamp(-0.55, 0.55);
+          _touchTiltX = (_touchTiltX - d.delta.dy * 0.008).clamp(-0.45, 0.45);
+        });
+      },
+      onPanEnd: (_) {
+        setState(() {
+          _touchTiltX = 0.0;
+          _touchTiltY = 0.0;
+        });
+      },
+      onTap: () {
+        try {
+          HapticFeedback.lightImpact();
+        } catch (_) {}
+        setState(() => _tapPulseBoost = 1.0);
+      },
+      child: SizedBox(
+        width: 300,
+        height: 300,
+        child: AnimatedBuilder(
+          animation: Listenable.merge([_spin, _orbit, _pulse]),
+          builder: (context, _) {
+            _stepSmoothing();
+            final p = (Curves.easeInOut.transform(_pulse.value) +
+                    _tapPulseBoost * 0.45)
+                .clamp(0.0, 1.2);
+            final totalTiltX = (-0.30 +
+                    0.06 * math.sin(_orbit.value * 2 * math.pi) +
+                    _gyroX +
+                    _touchTiltX)
+                .clamp(-0.90, 0.90);
+            final totalTiltY = (0.35 +
+                    0.08 * math.cos(_orbit.value * 2 * math.pi) +
+                    _gyroY +
+                    _touchTiltY)
+                .clamp(-0.95, 0.95);
+
+            return Stack(
+              alignment: Alignment.center,
+              children: [
+                Transform.translate(
+                  offset: Offset(-totalTiltY * 18, totalTiltX * 18),
+                  child: Container(
+                    width: 280,
+                    height: 280,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [
+                          const Color(0xFFB44CFF)
+                              .withValues(alpha: (0.30 + 0.22 * p).clamp(0.0, 0.85)),
+                          const Color(0xFF7C3AED).withValues(alpha: 0.11),
+                          Colors.transparent,
+                        ],
+                        stops: const [0.0, 0.55, 1.0],
+                      ),
+                    ),
                   ),
                 ),
-              ),
-              CustomPaint(
-                size: const Size(300, 300),
-                painter: _OrbitPainter(_orbit.value),
-              ),
-              Transform(
-                alignment: Alignment.center,
-                transform: Matrix4.identity()
-                  ..setEntry(3, 2, 0.0012)
-                  ..rotateX(tiltX)
-                  ..rotateY(tiltY)
-                  ..rotateZ(-0.12),
-                child: _buildGlossyTile(size: 164, pulse: p, spin: _spin.value),
-              ),
-            ],
-          );
-        },
+                CustomPaint(
+                  size: const Size(300, 300),
+                  painter: _OrbitPainter(_orbit.value),
+                ),
+                Transform(
+                  alignment: Alignment.center,
+                  transform: Matrix4.identity()
+                    ..setEntry(3, 2, 0.0012)
+                    ..rotateX(totalTiltX)
+                    ..rotateY(totalTiltY)
+                    ..rotateZ(-0.12),
+                  child: _buildGlossyTile(
+                    size: 164,
+                    pulse: p,
+                    spin: _spin.value,
+                    tiltX: totalTiltX,
+                    tiltY: totalTiltY,
+                    shimmerPhase: _bar.value,
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -343,7 +503,8 @@ class _HisobchiSplashState extends State<HisobchiSplash>
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: const Color(0xFFA855F7).withValues(alpha: 0.7),
+                            color: const Color(0xFFA855F7)
+                                .withValues(alpha: 0.7),
                             blurRadius: 10,
                           ),
                         ],
@@ -360,52 +521,143 @@ class _HisobchiSplashState extends State<HisobchiSplash>
   }
 }
 
+/// Builds the 3D beveled squircle tile with multi-layer extruded depth,
+/// diagonal diagonal glass sheen sweep, and 12-spoke glowing starburst inside.
 Widget _buildGlossyTile({
   required double size,
   required double pulse,
   required double spin,
+  double tiltX = -0.30,
+  double tiltY = 0.35,
+  double shimmerPhase = 0.3,
 }) {
   final scale = size / 164.0;
-  return Container(
+  final outerRadius = BorderRadius.circular(44 * scale);
+  final innerRadius = BorderRadius.circular(34 * scale);
+
+  return SizedBox(
     width: size,
     height: size,
-    decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(44 * scale),
-      gradient: const LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [
-          Color(0xFFE0A8FF),
-          Color(0xFFA855F7),
-          Color(0xFF5B21B6),
-          Color(0xFFC026D3),
-        ],
-        stops: [0.0, 0.35, 0.75, 1.0],
-      ),
-      boxShadow: [
-        BoxShadow(
-          color: const Color(0xFFB44CFF).withValues(alpha: 0.45 + 0.25 * pulse),
-          blurRadius: (50 + 20 * pulse) * scale,
-          spreadRadius: 2 * scale,
-        ),
-        BoxShadow(
-          color: const Color(0xFFFF4FD8).withValues(alpha: 0.18),
-          blurRadius: 90 * scale,
-          spreadRadius: 6 * scale,
+    child: Stack(
+      clipBehavior: Clip.none,
+      children: [
+        // 4 extruded 3D side/back layers creating solid crystal thickness
+        for (int depthIdx = 4; depthIdx >= 1; depthIdx--)
+          Transform.translate(
+            offset: Offset(
+              -tiltY * 5.2 * depthIdx * scale,
+              tiltX * 5.2 * depthIdx * scale,
+            ),
+            child: Container(
+              width: size,
+              height: size,
+              decoration: BoxDecoration(
+                borderRadius: outerRadius,
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color.lerp(const Color(0xFF4C1D95), const Color(0xFF1A0836),
+                        depthIdx / 4.5)!,
+                    Color.lerp(const Color(0xFF7E22CE), const Color(0xFF2E1065),
+                        depthIdx / 4.5)!,
+                    Color.lerp(const Color(0xFF5B21B6), const Color(0xFF0E0520),
+                        depthIdx / 4.5)!,
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+        // Front glossy glass-bezel face
+        Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            borderRadius: outerRadius,
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color(0xFFE0A8FF),
+                Color(0xFFA855F7),
+                Color(0xFF5B21B6),
+                Color(0xFFC026D3),
+              ],
+              stops: [0.0, 0.35, 0.75, 1.0],
+            ),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.35),
+              width: 1.0 * scale,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFFB44CFF)
+                    .withValues(alpha: (0.45 + 0.25 * pulse).clamp(0.0, 0.95)),
+                blurRadius: (50 + 20 * pulse) * scale,
+                spreadRadius: 2 * scale,
+              ),
+              BoxShadow(
+                color: const Color(0xFFFF4FD8).withValues(alpha: 0.18),
+                blurRadius: 90 * scale,
+                spreadRadius: 6 * scale,
+              ),
+            ],
+          ),
+          padding: EdgeInsets.all(11 * scale),
+          child: ClipRRect(
+            borderRadius: innerRadius,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: innerRadius,
+                    gradient: const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [Color(0xFF1B1030), Color(0xFF07040F)],
+                    ),
+                    border: Border.all(
+                      color: const Color(0xFFF472B6).withValues(alpha: 0.28),
+                      width: 1.0 * scale,
+                    ),
+                  ),
+                ),
+                CustomPaint(painter: _BurstPainter(spin)),
+                // Diagonal sweeping glass reflection across the dark crystal face
+                IgnorePointer(
+                  child: Transform.translate(
+                    offset: Offset(
+                      (-1.1 + 2.2 * shimmerPhase) * size * 0.75,
+                      0,
+                    ),
+                    child: Transform.rotate(
+                      angle: -0.55,
+                      child: Container(
+                        width: size * 0.42,
+                        height: size * 1.6,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.centerLeft,
+                            end: Alignment.centerRight,
+                            colors: [
+                              Colors.transparent,
+                              Colors.white.withValues(alpha: 0.13),
+                              const Color(0xFFF472B6).withValues(alpha: 0.08),
+                              Colors.transparent,
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ],
-    ),
-    padding: EdgeInsets.all(11 * scale),
-    child: Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(34 * scale),
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF1B1030), Color(0xFF07040F)],
-        ),
-      ),
-      child: CustomPaint(painter: _BurstPainter(spin)),
     ),
   );
 }
@@ -639,6 +891,9 @@ class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
                   size: tileSize,
                   pulse: _pulse,
                   spin: _spin,
+                  tiltX: _tiltX,
+                  tiltY: _tiltY,
+                  shimmerPhase: 0.5 + 0.5 * math.sin(_phase * 1.4),
                 ),
               ),
             ],
@@ -661,7 +916,7 @@ class Hisobchi3DWelcomeScreen extends StatelessWidget {
     required this.onContinue,
     this.title = 'Hisobchi',
     this.subtitle = 'Ilova tayyorlanmoqda...',
-    this.autoContinueDelay = const Duration(seconds: 3),
+    this.autoContinueDelay = const Duration(milliseconds: 3200),
   });
 
   @override
@@ -675,7 +930,7 @@ class Hisobchi3DWelcomeScreen extends StatelessWidget {
   }
 }
 
-/// 12 ta yaproqli aylanuvchi "burst" (rasmdagi markaziy belgi).
+/// 12 ta yaproqli aylanuvchi "burst" + yumshoq markaziy neon yadro.
 class _BurstPainter extends CustomPainter {
   _BurstPainter(this.t);
   final double t;
@@ -683,6 +938,15 @@ class _BurstPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final c = size.center(Offset.zero);
+    // Soft luminous core bloom inside cavity
+    canvas.drawCircle(
+      c,
+      size.width * 0.24,
+      Paint()
+        ..color = const Color(0xFFEC4899).withValues(alpha: 0.22)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
+    );
+
     final r1 = size.width * 0.36;
     final r0 = size.width * 0.15;
     const n = 12;
@@ -723,6 +987,55 @@ class _BurstPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _BurstPainter old) => old.t != t;
+}
+
+/// Suzuvchi mayin kosmik bokeh yulduzchalar qatlami.
+class _BokehParticlesPainter extends CustomPainter {
+  _BokehParticlesPainter(this.anim) : super(repaint: anim);
+  final Animation<double> anim;
+
+  static const _seeds = [
+    (x: 0.14, y: 0.16, r: 2.2, b: 3.0, s: 1.0, c: Color(0xFFA855F7)),
+    (x: 0.84, y: 0.18, r: 1.8, b: 2.5, s: 1.4, c: Color(0xFFF472B6)),
+    (x: 0.24, y: 0.28, r: 2.8, b: 4.5, s: 0.8, c: Color(0xFFF5D0FE)),
+    (x: 0.77, y: 0.30, r: 2.4, b: 4.0, s: 1.2, c: Color(0xFFA855F7)),
+    (x: 0.11, y: 0.42, r: 1.9, b: 3.0, s: 1.5, c: Color(0xFFEC4899)),
+    (x: 0.89, y: 0.44, r: 2.6, b: 4.5, s: 0.9, c: Color(0xFFF5D0FE)),
+    (x: 0.18, y: 0.56, r: 2.2, b: 3.5, s: 1.1, c: Color(0xFFA855F7)),
+    (x: 0.82, y: 0.58, r: 1.7, b: 2.5, s: 1.3, c: Color(0xFFEC4899)),
+    (x: 0.28, y: 0.70, r: 2.5, b: 4.0, s: 1.0, c: Color(0xFFF472B6)),
+    (x: 0.72, y: 0.72, r: 2.0, b: 3.5, s: 1.4, c: Color(0xFFF5D0FE)),
+    (x: 0.12, y: 0.80, r: 2.8, b: 5.0, s: 0.7, c: Color(0xFFA855F7)),
+    (x: 0.88, y: 0.82, r: 2.2, b: 4.0, s: 1.2, c: Color(0xFFEC4899)),
+    (x: 0.42, y: 0.12, r: 1.6, b: 2.5, s: 1.3, c: Color(0xFFF5D0FE)),
+    (x: 0.62, y: 0.14, r: 2.0, b: 3.0, s: 0.9, c: Color(0xFFA855F7)),
+    (x: 0.38, y: 0.84, r: 2.1, b: 4.0, s: 1.1, c: Color(0xFFF472B6)),
+    (x: 0.64, y: 0.86, r: 1.8, b: 3.0, s: 1.5, c: Color(0xFFA855F7)),
+    (x: 0.50, y: 0.10, r: 2.2, b: 4.0, s: 1.0, c: Color(0xFFEC4899)),
+    (x: 0.49, y: 0.89, r: 2.4, b: 4.5, s: 0.8, c: Color(0xFFF5D0FE)),
+  ];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final t = anim.value * 2 * math.pi;
+    for (int i = 0; i < _seeds.length; i++) {
+      final pt = _seeds[i];
+      final dx = math.sin(t * pt.s + i) * 8.0;
+      final dy = math.cos(t * pt.s + i * 0.7) * 10.0;
+      final alpha = (0.18 + 0.32 * (0.5 + 0.5 * math.sin(t * 2 + i * 1.1)))
+          .clamp(0.10, 0.55);
+      canvas.drawCircle(
+        Offset(size.width * pt.x + dx, size.height * pt.y + dy),
+        pt.r,
+        Paint()
+          ..color = pt.c.withValues(alpha: alpha)
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, pt.b),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _BokehParticlesPainter old) => false;
 }
 
 /// Ikonka atrofidagi qiya orbita halqalari va nuqtalar.

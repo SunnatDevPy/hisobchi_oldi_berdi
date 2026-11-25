@@ -833,4 +833,27 @@ void main() {
     await tester.pump();
     expect(pulOldimTapped, equals(1));
   });
+
+  testWidgets(
+      'Flagship HisobchiSplash renders 3D depth, shimmer title, and drag/tap',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: const HisobchiSplash(
+          title: 'Hisobchi',
+          subtitle: 'Tayyorlanmoqda...',
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('Hisobchi'), findsOneWidget);
+    expect(find.text('Tayyorlanmoqda...'), findsOneWidget);
+
+    // Interactive drag & tap on 3D splash emblem should not throw
+    await tester.drag(find.byType(HisobchiSplash), const Offset(30, -20));
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.byType(HisobchiSplash));
+    await tester.pump(const Duration(milliseconds: 50));
+  });
 }
