@@ -91,6 +91,7 @@ AUDIO_SCHEMA: Dict[str, Any] = {
                 "cash_in",
                 "kassa_debt",
                 "kassa_repay",
+                "expense",
                 "pay_supplier",
                 "count_cash",
                 "status",
@@ -124,7 +125,7 @@ OCR_PROMPT = (
 AUDIO_PROMPT = (
     "O'zbek/rus tilidagi do'kon kassa ovozli xabarini tahlil qiling. "
     "transcript: xabar matni; intent: cash_in (pul oldim), kassa_debt (kassadan oldim), "
-    "kassa_repay (kassaga qaytardim), pay_supplier (postavshikka pul berdim), "
+    "kassa_repay (kassaga qaytardim), expense (shaxsiy/boshqa xarajat qildim), pay_supplier (postavshikka pul berdim), "
     "count_cash (qo'limda sanadim), status (hisob/qoldiq), unknown; "
     "amount: summa so'mda (raqamda); supplier_name: postavshik nomi."
 )
@@ -779,6 +780,9 @@ def parse_text_deterministic(text: str) -> Dict[str, Any]:
 
     if any(k in low for k in ("pul oldim", "oldim", "kirim", "приход", "олдим")) and amount:
         return {"intent": "cash_in", "amount": amount, "supplier_name": None, "transcript": raw}
+
+    if any(k in low for k in ("xarajat", "chiqim", "rasxod", "расход", "харажат")) and amount:
+        return {"intent": "expense", "amount": amount, "supplier_name": None, "transcript": raw}
 
     name_candidate = re.sub(
         r"(?i)\b(?:berdim|to'ladim|toladim|berildi|o'tkazdim|otkazdim|tashladim|"

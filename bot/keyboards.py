@@ -569,7 +569,12 @@ def edit_items_list_kb(
             ]
         )
 
-    type_icons = {"main": "➕ Pul", "kassa_debt": "🏦 Kassa qarz", "kassa_repay": "↩️ Qaytarish"}
+    type_icons = {
+        "main": "➕ Pul oldim",
+        "kassa_debt": "🏦 Kassa qarz",
+        "kassa_repay": "↩️ Qaytarish",
+        "expense": "💸 Xarajat",
+    }
     for tx in cash_txs:
         lbl = type_icons.get(tx.source_type, "💵")
         buttons.append(

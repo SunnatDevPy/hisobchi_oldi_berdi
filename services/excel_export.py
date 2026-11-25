@@ -248,11 +248,12 @@ def build_session_excel(summary: SessionSummary) -> bytes:
         [
             ("Holati", "Yopilgan" if summary.session.status == "closed" else "Ochiq"),
             ("Kechadan qoldiq", round(summary.opening_balance)),
-            ("Asosiy olingan pul", round(summary.main_cash_in)),
+            ("Pul oldim (kirim)", round(summary.main_cash_in)),
             ("Kassadan olingan (bugun)", round(summary.kassa_debt_today)),
             ("Kassaga qaytarilgan (bugun)", round(summary.kassa_repay_today)),
             ("Jami kirim (qo'ldagi)", round(summary.total_available_inflow)),
             ("Jami nakladnoy rasxod", round(summary.total_nakladnoy_spent)),
+            ("Boshqa xarajatlar (bugun)", round(getattr(summary, "expense_today", 0.0) or 0.0)),
             ("Qo'lda qolishi kerak", round(summary.expected_cash)),
             ("Qo'lda sanalgan pul", round(summary.session.actual_counted_cash or 0)),
             ("Farq", round(diff)),
@@ -353,9 +354,10 @@ def build_session_excel(summary: SessionSummary) -> bytes:
     _title(ws2, f"KIRIM VA QARZLAR — {summary.session.report_date}", 5)
     _header(ws2, 3, ["#", "Turi", "Summa", "Izoh", "Vaqt"])
     type_labels = {
-        "main": "Asosiy pul olish",
+        "main": "Pul oldim",
         "kassa_debt": "Kassadan qarz",
         "kassa_repay": "Kassaga qaytarish",
+        "expense": "Xarajat",
     }
     txs = list(summary.cash_transactions)
     for i, tx in enumerate(txs, start=1):
@@ -448,6 +450,7 @@ def build_range_excel(date_from: str, date_to: str, data: dict) -> bytes:
     total_main_in = sum(float(t.amount) for t, _ in cash_rows if t.source_type == "main")
     total_kassa_debt = sum(float(t.amount) for t, _ in cash_rows if t.source_type == "kassa_debt")
     total_kassa_repay = sum(float(t.amount) for t, _ in cash_rows if t.source_type == "kassa_repay")
+    total_expense = sum(float(t.amount) for t, _ in cash_rows if t.source_type == "expense")
 
     # Sheet 1: Xulosa + Kunlik kunlar
     ws_sum = wb.active
@@ -460,10 +463,11 @@ def build_range_excel(date_from: str, date_to: str, data: dict) -> bytes:
         [
             ("Smena kunlari soni", len(sessions)),
             ("Nakladnoylar soni", len(nak_rows)),
-            ("Asosiy kirim", round(total_main_in)),
+            ("Pul oldim (kirim)", round(total_main_in)),
             ("Kassadan qarz (davr)", round(total_kassa_debt)),
             ("Kassaga qaytarilgan (davr)", round(total_kassa_repay)),
             ("Jami nakladnoy rasxod", round(total_spent)),
+            ("Boshqa xarajatlar (davr)", round(total_expense)),
             ("Umumiy kassa qarzi qoldig'i", round(kassa_stats.get("outstanding", 0.0))),
         ],
         highlight_label="Jami nakladnoy rasxod",
@@ -533,9 +537,10 @@ def build_range_excel(date_from: str, date_to: str, data: dict) -> bytes:
     _title(ws_c, f"KIRIM VA QARZLAR ({date_from} — {date_to})", 6)
     _header(ws_c, 3, ["#", "Sana", "Turi", "Summa", "Izoh", "Vaqt"])
     type_labels = {
-        "main": "Asosiy pul olish",
+        "main": "Pul oldim",
         "kassa_debt": "Kassadan qarz",
         "kassa_repay": "Kassaga qaytarish",
+        "expense": "Xarajat",
     }
     for i, (tx, r_date) in enumerate(cash_rows, start=1):
         _body_row(

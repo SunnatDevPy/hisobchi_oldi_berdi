@@ -768,4 +768,70 @@ void main() {
     await tester.pump(const Duration(milliseconds: 900));
     expect(continued, equals(1));
   });
+
+  testWidgets(
+      'HeroBalanceCard renders Pul oldim and Xarajat buttons without Egadan',
+      (WidgetTester tester) async {
+    final summary = StatusSummary.fromJson({
+      'session_id': 1,
+      'report_date': '2026-11-25',
+      'session_status': 'open',
+      'opened_at': '2026-11-25 09:00',
+      'closed_at': '',
+      'opening_balance': 200000,
+      'main_cash_in': 1000000,
+      'kassa_debt_today': 0,
+      'kassa_repay_today': 0,
+      'expense_today': 75000,
+      'total_available_inflow': 1200000,
+      'total_nakladnoy_spent': 300000,
+      'total_card_spent': 0,
+      'total_transfer_spent': 0,
+      'total_debt_nakladnoy': 0,
+      'expected_cash': 825000,
+      'total_kassa_debt_outstanding': 0,
+      'all_unpaid_debt_count': 0,
+      'all_unpaid_debt_total': 0,
+      'group_info': {'bound': true, 'chat_id': -1001, 'title': 'Guruh'},
+      'cash_transactions': [],
+      'nakladnoys': [],
+    });
+    expect(summary.expenseToday, equals(75000));
+
+    var pulOldimTapped = 0;
+    var xarajatTapped = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: HeroBalanceCard(
+                summary: summary,
+                onAddCash: () => pulOldimTapped++,
+                onExpense: () => xarajatTapped++,
+                onKassaDebt: () {},
+                onKassaRepay: () {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Egadan'), findsNothing);
+    expect(find.text('Egadan oldim'), findsNothing);
+    expect(find.text('Pul oldim'), findsNWidgets(2)); // Sub-stat + action button
+    expect(find.text('Xarajat'), findsNWidgets(2)); // Sub-stat + action button
+
+    await tester.tap(find.widgetWithIcon(InkWell, Icons.trending_down_rounded));
+    await tester.pump();
+    expect(xarajatTapped, equals(1));
+
+    await tester.tap(find.widgetWithIcon(InkWell, Icons.add_card_rounded));
+    await tester.pump();
+    expect(pulOldimTapped, equals(1));
+  });
 }

@@ -1126,6 +1126,8 @@ async def cb_history_detail(cb: CallbackQuery) -> None:
         lines.append(f"🏦 Kassadan qarz: <b>{format_uzs(summary.kassa_debt_today)}</b>")
     if summary.kassa_repay_today > 0:
         lines.append(f"↩️ Kassaga qaytarilgan: <b>-{format_uzs(summary.kassa_repay_today)}</b>")
+    if summary.expense_today > 0:
+        lines.append(f"💸 Xarajatlar: <b>-{format_uzs(summary.expense_today)}</b>")
     lines.append(f"💵 Jami kirim: <b>{format_uzs(summary.total_available_inflow)}</b>")
     lines.append(f"➖ Jami rasxod ({len(summary.confirmed_nakladnoys)} ta): <b>{format_uzs(summary.total_nakladnoy_spent)}</b>")
     lines.append(f"💰 Qolishi kerak: <b>{format_uzs(summary.expected_cash)}</b>")
@@ -1139,7 +1141,7 @@ async def cb_history_detail(cb: CallbackQuery) -> None:
 
     if summary.cash_transactions:
         lines.append("\n💵 <b>Pul oldi-berdi:</b>")
-        t_icons = {"main": "➕", "kassa_debt": "🏦", "kassa_repay": "↩️"}
+        t_icons = {"main": "➕", "kassa_debt": "🏦", "kassa_repay": "↩️", "expense": "💸"}
         for tx in summary.cash_transactions[:15]:
             tm = format_local_dt(tx.created_at, "%H:%M")
             note_part = f" ({html.escape(tx.note[:28])})" if tx.note else ""
@@ -1218,9 +1220,10 @@ async def cb_history_all_cash(cb: CallbackQuery) -> None:
         return
 
     labels = {
-        "main": "➕ Pul olindi",
+        "main": "➕ Pul oldim",
         "kassa_debt": "🏦 Kassadan qarz",
         "kassa_repay": "↩️ Kassaga qaytarildi",
+        "expense": "💸 Xarajat",
     }
     lines = [f"💵 <b>Pul Oldi-Berdi Tarixi (Sahifa {page + 1})</b>\n"]
     for idx, tx in enumerate(items, start=page * page_size + 1):

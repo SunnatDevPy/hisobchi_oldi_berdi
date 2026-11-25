@@ -170,6 +170,7 @@ class StatusSummary {
   final double mainCashIn;
   final double kassaDebtToday;
   final double kassaRepayToday;
+  final double expenseToday;
   final double totalAvailableInflow;
   final double totalNakladnoySpent;
   final double totalCardSpent;
@@ -200,6 +201,7 @@ class StatusSummary {
     required this.mainCashIn,
     required this.kassaDebtToday,
     required this.kassaRepayToday,
+    this.expenseToday = 0.0,
     required this.totalAvailableInflow,
     required this.totalNakladnoySpent,
     required this.totalCardSpent,
@@ -224,6 +226,7 @@ class StatusSummary {
         mainCashIn: (j['main_cash_in'] as num).toDouble(),
         kassaDebtToday: (j['kassa_debt_today'] as num).toDouble(),
         kassaRepayToday: (j['kassa_repay_today'] as num).toDouble(),
+        expenseToday: ((j['expense_today'] as num?) ?? 0).toDouble(),
         totalAvailableInflow: (j['total_available_inflow'] as num).toDouble(),
         totalNakladnoySpent: (j['total_nakladnoy_spent'] as num).toDouble(),
         totalCardSpent: (j['total_card_spent'] as num).toDouble(),

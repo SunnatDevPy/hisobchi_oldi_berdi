@@ -1757,7 +1757,8 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     double? presetAmount,
   }) async {
     final titles = {
-      'main': existing != null ? 'Kirimni tahrirlash' : 'Egadan oldim',
+      'main': existing != null ? 'Kirimni tahrirlash' : 'Pul oldim',
+      'expense': existing != null ? 'Xarajatni tahrirlash' : 'Xarajat kiritish',
       'kassa_debt': existing != null
           ? 'Kassa qarzini tahrirlash'
           : 'Kassadan qarz oldim',
@@ -1767,6 +1768,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     };
     final icons = {
       'main': Icons.add_card_rounded,
+      'expense': Icons.trending_down_rounded,
       'kassa_debt': Icons.account_balance_rounded,
       'kassa_repay': Icons.assignment_return_rounded,
     };
@@ -1838,11 +1840,34 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                   const SizedBox(height: 12),
                   TextField(
                     controller: noteCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Izoh (kimdan / nima uchun)',
-                      prefixIcon: Icon(Icons.notes_rounded),
+                    decoration: InputDecoration(
+                      labelText: sourceType == 'expense'
+                          ? "Izoh (masalan: yo'lkira, tushlik...)"
+                          : 'Izoh (kimdan / nima uchun)',
+                      prefixIcon: const Icon(Icons.notes_rounded),
                     ),
                   ),
+                  if (sourceType == 'expense') ...[
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final preset in const [
+                          "Yo'lkira",
+                          'Tushlik',
+                          'Bozorlik',
+                          'Ustaga',
+                          'Boshqa',
+                        ])
+                          ActionChip(
+                            visualDensity: VisualDensity.compact,
+                            label: Text(preset),
+                            onPressed: () => noteCtrl.text = preset,
+                          ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 18),
                   FilledButton.icon(
                     onPressed: () => Navigator.pop(ctx, true),
@@ -2622,7 +2647,8 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
 
     if (intent == 'cash_in' ||
         intent == 'kassa_debt' ||
-        intent == 'kassa_repay') {
+        intent == 'kassa_repay' ||
+        intent == 'expense') {
       final src = intent == 'cash_in' ? 'main' : intent;
       if (amount != null && amount > 0) {
         try {
@@ -2861,6 +2887,9 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
             onTapKassaDebtHistory: _openKassaDebtHistorySheet,
             onAddCash: (!isViewingPast && widget.api.canWrite)
                 ? () => _openCashDialog('main')
+                : null,
+            onExpense: (!isViewingPast && widget.api.canWrite)
+                ? () => _openCashDialog('expense')
                 : null,
             onKassaDebt: (!isViewingPast && widget.api.canWrite)
                 ? () => _openCashDialog('kassa_debt')
@@ -7447,7 +7476,8 @@ class _GlobalHistorySearchSheetState extends State<GlobalHistorySearchSheet> {
   String _cashSourceTitle(String src) {
     if (src == 'kassa_debt') return '🏦 Kassadan qarz';
     if (src == 'kassa_repay') return '↩️ Kassaga qaytarish';
-    return '➕ Egadan oldim';
+    if (src == 'expense') return '💸 Xarajat';
+    return '➕ Pul oldim';
   }
 
   @override

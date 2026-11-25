@@ -542,6 +542,7 @@ def create_api_app() -> FastAPI:
             main_cash_in=float(summary.main_cash_in),
             kassa_debt_today=float(summary.kassa_debt_today),
             kassa_repay_today=float(summary.kassa_repay_today),
+            expense_today=float(summary.expense_today),
             total_available_inflow=float(summary.total_available_inflow),
             total_nakladnoy_spent=float(summary.total_nakladnoy_spent),
             total_card_spent=float(summary.total_card_spent),
@@ -1567,6 +1568,7 @@ def create_api_app() -> FastAPI:
             main_cash_in=float(summary.main_cash_in),
             kassa_debt_today=float(summary.kassa_debt_today),
             kassa_repay_today=float(summary.kassa_repay_today),
+            expense_today=float(summary.expense_today),
             total_available_inflow=float(summary.total_available_inflow),
             total_nakladnoy_spent=float(summary.total_nakladnoy_spent),
             total_card_spent=float(summary.total_card_spent),
@@ -1618,9 +1620,10 @@ def create_api_app() -> FastAPI:
             for pay, r_date in rows
         ]
         src_labels = {
-            "main": "egadan oldim kirim",
+            "main": "pul oldim kirim",
             "kassa_debt": "kassadan qarz oldim",
             "kassa_repay": "kassaga qaytardim qaytarish",
+            "expense": "xarajat chiqim rasxod",
         }
         cash_matches = []
         for tx in recent_cash:

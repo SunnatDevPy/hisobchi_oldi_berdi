@@ -3014,3 +3014,89 @@ def test_sync_revision_tracker_and_endpoint(tmp_path: Path, monkeypatch):
         clear_role_cache()
         get_settings.cache_clear()
 
+
+
+def test_cash_expense_deducts_expected_cash_and_parses_deterministic(
+    tmp_path: Path, monkeypatch
+):
+    import io
+    import httpx
+    from openpyxl import load_workbook
+    import api.app as api_app_mod
+    import api.auth as api_auth_mod
+    from bot.auth import clear_role_cache
+    from config import get_settings
+    from services.gemini_ai import parse_text_deterministic
+
+    det = parse_text_deterministic("Yo'lkiraga 35 000 xarajat")
+    assert det["intent"] == "expense"
+    assert det["amount"] == 35_000.0
+
+    monkeypatch.setenv("BOT_TOKEN", "987654:TEST_BOT_EXPENSE")
+    monkeypatch.setenv("ADMIN_IDS", "111")
+    get_settings.cache_clear()
+    clear_role_cache()
+
+    async def scenario() -> None:
+        db_file = tmp_path / "expense_test.db"
+        eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+        monkeypatch.setattr(api_app_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_auth_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_app_mod, "get_bot", lambda: None)
+        api_auth_mod.clear_auth_memory_state()
+        try:
+            await init_db(engine_override=eng, session_maker_override=maker)
+            async with maker() as db:
+                raw_token, _ = await api_auth_mod.issue_api_token(
+                    db, user_id=111, device_name="Pytest Expense APK"
+                )
+            headers = {"Authorization": f"Bearer {raw_token}"}
+            app = api_app_mod.create_api_app()
+
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                r_in = await client.post(
+                    "/cash",
+                    json={"amount": 1_000_000, "source_type": "main", "note": "Kassaga pul"},
+                    headers=headers,
+                )
+                assert r_in.status_code == 200
+
+                r_exp = await client.post(
+                    "/cash",
+                    json={"amount": 75_000, "source_type": "expense", "note": "Yo'lkira va tushlik"},
+                    headers=headers,
+                )
+                assert r_exp.status_code == 200
+                assert r_exp.json()["source_type"] == "expense"
+
+                st = (await client.get("/status", headers=headers)).json()
+                assert st["main_cash_in"] == 1_000_000.0
+                assert st["expense_today"] == 75_000.0
+                assert st["expected_cash"] == 925_000.0
+
+                s_exp = (await client.get("/history/search", params={"q": "xarajat"}, headers=headers)).json()
+                assert len(s_exp["cash_items"]) == 1
+                assert s_exp["cash_items"][0]["source_type"] == "expense"
+
+                s_main = (await client.get("/history/search", params={"q": "pul oldim"}, headers=headers)).json()
+                assert len(s_main["cash_items"]) == 1
+                assert s_main["cash_items"][0]["source_type"] == "main"
+
+            async with maker() as db:
+                summary = await compute_session_summary(db)
+                wb = load_workbook(io.BytesIO(build_session_excel(summary)))
+                labels_col = [
+                    wb["Xulosa"].cell(r, 1).value for r in range(1, wb["Xulosa"].max_row + 1)
+                ]
+                assert "Pul oldim (kirim)" in labels_col
+                assert "Boshqa xarajatlar (bugun)" in labels_col
+        finally:
+            await eng.dispose()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        clear_role_cache()
+        get_settings.cache_clear()

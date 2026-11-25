@@ -104,13 +104,16 @@ def render_status_text(summary: SessionSummary) -> str:
         f"↩️ Kassaga berilgan (qaytarilgan): <b>{format_uzs(summary.kassa_repay_today)}</b>",
         f"💵 Jami kirim (Qo'ldagi jami): <b>{format_uzs(summary.total_available_inflow)}</b>",
     ]
+    if summary.expense_today > 0:
+        lines.append(f"💸 Boshqa xarajatlar: <b>-{format_uzs(summary.expense_today)}</b>")
     if summary.cash_transactions:
-        t_icons = {"main": "➕", "kassa_debt": "🏦", "kassa_repay": "↩️"}
+        t_icons = {"main": "➕", "kassa_debt": "🏦", "kassa_repay": "↩️", "expense": "💸"}
         for tx in summary.cash_transactions:
             tm = format_local_dt(tx.created_at, "%H:%M")
-            sign = "-" if tx.source_type == "kassa_repay" else ""
+            sign = "-" if tx.source_type in ("kassa_repay", "expense") else ""
+            note_sfx = f" <i>({html.escape(tx.note[:28])})</i>" if tx.note else ""
             lines.append(
-                f"  • <code>{tm}</code> {t_icons.get(tx.source_type, '💵')} {sign}{format_uzs(tx.amount)}"
+                f"  • <code>{tm}</code> {t_icons.get(tx.source_type, '💵')} {sign}{format_uzs(tx.amount)}{note_sfx}"
             )
 
     lines.append("===============================")
@@ -2512,7 +2515,12 @@ async def cb_cash_tx_view(cb: CallbackQuery) -> None:
     if not tx or tx.is_deleted:
         await cb.answer("Topilmadi", show_alert=True)
         return
-    labels = {"main": "Asosiy pul olish", "kassa_debt": "Kassadan qarz", "kassa_repay": "Kassaga qaytarish"}
+    labels = {
+        "main": "Pul oldim",
+        "kassa_debt": "Kassadan qarz",
+        "kassa_repay": "Kassaga qaytarish",
+        "expense": "Xarajat",
+    }
     await _safe_edit_text(
         cb.message,
         f"💵 <b>{labels.get(tx.source_type, tx.source_type)}</b>\n"
@@ -2797,15 +2805,21 @@ async def _handle_parsed_command(
         )
         return True
 
-    if intent in ("cash_in", "kassa_debt", "kassa_repay") and amount and amount > 0:
+    if intent in ("cash_in", "kassa_debt", "kassa_repay", "expense") and amount and amount > 0:
         if await deny_if_unauthorized(message, ("admin", "kassir")):
             return True
         await state.clear()
-        src_map = {"cash_in": "main", "kassa_debt": "kassa_debt", "kassa_repay": "kassa_repay"}
+        src_map = {
+            "cash_in": "main",
+            "kassa_debt": "kassa_debt",
+            "kassa_repay": "kassa_repay",
+            "expense": "expense",
+        }
         lbl_map = {
-            "cash_in": "Asosiy balansga qo'shildi",
+            "cash_in": "Pul oldim (balansga qo'shildi)",
             "kassa_debt": "Kassadan qarzga olindi",
             "kassa_repay": "Kassaga qaytarildi",
+            "expense": "Xarajat yozildi",
         }
         async with async_session_maker() as db:
             await add_cash_transaction(db, amount=amount, source_type=src_map[intent], note=raw_note)

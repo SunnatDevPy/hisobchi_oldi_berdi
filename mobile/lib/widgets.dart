@@ -10,6 +10,7 @@ class HeroBalanceCard extends StatelessWidget {
   final StatusSummary summary;
   final int animSeed;
   final VoidCallback? onAddCash;
+  final VoidCallback? onExpense;
   final VoidCallback? onKassaDebt;
   final VoidCallback? onKassaRepay;
   final VoidCallback? onTapKassaDebtHistory;
@@ -19,6 +20,7 @@ class HeroBalanceCard extends StatelessWidget {
     required this.summary,
     this.animSeed = 0,
     this.onAddCash,
+    this.onExpense,
     this.onKassaDebt,
     this.onKassaRepay,
     this.onTapKassaDebtHistory,
@@ -206,7 +208,8 @@ class HeroBalanceCard extends StatelessWidget {
                     Expanded(
                       child: _HeroMetricTile(
                         label: 'Naqd rasxod',
-                        numericValue: summary.totalNakladnoySpent,
+                        numericValue:
+                            summary.totalNakladnoySpent + summary.expenseToday,
                         animSeed: animSeed,
                         icon: Icons.north_east_rounded,
                         color: const Color(0xFFFDA4AF),
@@ -224,22 +227,33 @@ class HeroBalanceCard extends StatelessWidget {
                         animSeed: animSeed,
                       ),
                     ),
+                    const SizedBox(width: 6),
                     Expanded(
                       child: _HeroSubStat(
-                        label: 'Egadan',
+                        label: 'Pul oldim',
                         numericValue: summary.mainCashIn,
                         prefix: '+',
                         animSeed: animSeed,
                       ),
                     ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: _HeroSubStat(
+                        label: 'Xarajat',
+                        numericValue: summary.expenseToday,
+                        prefix: summary.expenseToday > 0 ? '−' : '',
+                        animSeed: animSeed,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
                     Expanded(
                       child: InkWell(
                         borderRadius: BorderRadius.circular(8),
                         onTap: onTapKassaDebtHistory,
                         child: _HeroSubStat(
                           label: onTapKassaDebtHistory != null
-                              ? 'Kassa qarzi ›'
-                              : 'Kassa qarzi',
+                              ? 'Kassa qarz ›'
+                              : 'Kassa qarz',
                           numericValue: summary.totalKassaDebtOutstanding,
                           animSeed: animSeed,
                         ),
@@ -258,11 +272,25 @@ class HeroBalanceCard extends StatelessWidget {
                 Expanded(
                   child: _HeroActionBtn(
                     icon: Icons.add_card_rounded,
-                    label: 'Egadan oldim',
+                    label: 'Pul oldim',
                     onTap: onAddCash!,
                   ),
                 ),
-                const SizedBox(width: 8),
+                if (onExpense != null) ...[
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _HeroActionBtn(
+                      icon: Icons.trending_down_rounded,
+                      label: 'Xarajat',
+                      onTap: onExpense!,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
                 Expanded(
                   child: _HeroActionBtn(
                     icon: Icons.account_balance_rounded,
@@ -783,7 +811,7 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
 
     for (final tx in summary.cashTransactions) {
       final spec = _txTypeSpec(context, tx.sourceType);
-      final isOut = tx.sourceType == 'kassa_repay';
+      final isOut = tx.sourceType == 'kassa_repay' || tx.sourceType == 'expense';
       events.add(
         _TimelineEvent(
           kind: isOut ? 'out' : 'in',
@@ -829,7 +857,7 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Kassa kirim va qarz amallari',
+                        'Kassa kirim, xarajat va qarz amallari',
                         style: TextStyle(
                           fontSize: 15.5,
                           fontWeight: FontWeight.w900,
@@ -1121,12 +1149,24 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
           bg: bg,
           border: border,
         );
+      case 'expense':
+        final (fg, bg, border) =
+            AppTokens.semanticSurface(context, AppTokens.dangerRed);
+        return (
+          title: 'Xarajat (Chiqim)',
+          badge: '💸 XARAJAT',
+          sign: '−',
+          icon: Icons.trending_down_rounded,
+          fg: fg,
+          bg: bg,
+          border: border,
+        );
       default:
         final (fg, bg, border) =
             AppTokens.semanticSurface(context, AppTokens.cashGreen);
         return (
-          title: 'Asosiy pul olindi (Kirim)',
-          badge: '🟢 PUL OLINDI',
+          title: 'Pul oldim (Kirim)',
+          badge: '🟢 PUL OLDIM',
           sign: '+',
           icon: Icons.add_card_rounded,
           fg: fg,

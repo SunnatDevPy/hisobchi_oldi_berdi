@@ -88,6 +88,7 @@ class SessionSummary:
     noncash_nakladnoys: List[NakladnoyPayment] = field(default_factory=list)
     total_card_spent: float = 0.0
     total_transfer_spent: float = 0.0
+    expense_today: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -374,7 +375,8 @@ async def _sync_session_expected_cash(db: AsyncSession, session_id: int) -> None
     main_in = float(tx_sums.get("main") or 0.0)
     kassa_debt = float(tx_sums.get("kassa_debt") or 0.0)
     kassa_repay = float(tx_sums.get("kassa_repay") or 0.0)
-    expected_cash = opening + main_in + kassa_debt - kassa_repay - cash_spent
+    expense_out = float(tx_sums.get("expense") or 0.0)
+    expected_cash = opening + main_in + kassa_debt - kassa_repay - expense_out - cash_spent
 
     if abs(float(sess.expected_cash or 0.0) - expected_cash) > 0.001:
         sess.expected_cash = expected_cash
@@ -437,6 +439,7 @@ async def compute_session_summary(
     main_in = sum(t.amount for t in txs if t.source_type == "main")
     kassa_debt_today = sum(t.amount for t in txs if t.source_type == "kassa_debt")
     kassa_repay_today = sum(t.amount for t in txs if t.source_type == "kassa_repay")
+    expense_today = sum(t.amount for t in txs if t.source_type == "expense")
     total_available_inflow = opening + main_in + kassa_debt_today - kassa_repay_today
     total_nakladnoy_spent = sum(n.amount for n in nakladnoys)
     total_card_spent = sum(
@@ -450,7 +453,7 @@ async def compute_session_summary(
         if normalize_payment_method(getattr(n, "payment_method", "cash")) == "transfer"
     )
     total_debt_nakladnoy = sum(n.amount for n in debt_nakladnoys)
-    expected_cash = total_available_inflow - total_nakladnoy_spent
+    expected_cash = total_available_inflow - total_nakladnoy_spent - expense_today
 
     if abs(sess.expected_cash - expected_cash) > 0.001:
         sess.expected_cash = expected_cash
@@ -491,6 +494,7 @@ async def compute_session_summary(
         noncash_nakladnoys=noncash_nakladnoys,
         total_card_spent=total_card_spent,
         total_transfer_spent=total_transfer_spent,
+        expense_today=expense_today,
     )
 
 
@@ -1762,9 +1766,13 @@ async def get_period_statistics(db: AsyncSession, date_from: str, date_to: str) 
         entry[1] += 1
         entry[2] += float(pay.amount)
 
+    expense_spent = 0.0
     for tx, r_date in cash_rows:
         if tx.source_type == "main":
             by_day_cash_in[r_date] = by_day_cash_in.get(r_date, 0.0) + float(tx.amount)
+        elif tx.source_type == "expense":
+            expense_spent += float(tx.amount)
+            by_day[r_date] = by_day.get(r_date, 0.0) + float(tx.amount)
 
     is_single_day = date_from == date_to
     if is_single_day:
@@ -1777,10 +1785,12 @@ async def get_period_statistics(db: AsyncSession, date_from: str, date_to: str) 
             by_hour_spent[hr] = by_hour_spent.get(hr, 0.0) + float(pay.amount)
             by_hour_count[hr] = by_hour_count.get(hr, 0) + 1
         for tx, _ in cash_rows:
+            hr_str = format_local_dt(tx.created_at, "%H")
+            hr = int(hr_str) if hr_str.isdigit() else 12
             if tx.source_type == "main":
-                hr_str = format_local_dt(tx.created_at, "%H")
-                hr = int(hr_str) if hr_str.isdigit() else 12
                 by_hour_cash_in[hr] = by_hour_cash_in.get(hr, 0.0) + float(tx.amount)
+            elif tx.source_type == "expense":
+                by_hour_spent[hr] = by_hour_spent.get(hr, 0.0) + float(tx.amount)
 
         active_hours = set(by_hour_spent.keys()) | set(by_hour_cash_in.keys())
         is_today = date_from == today_iso()
@@ -1849,6 +1859,7 @@ async def get_period_statistics(db: AsyncSession, date_from: str, date_to: str) 
         "date_to": date_to,
         "granularity": granularity,
         "total_spent": total_spent,
+        "expense_spent": expense_spent,
         "cash_spent": pm_totals["cash"],
         "card_spent": pm_totals["card"],
         "transfer_spent": pm_totals["transfer"],
