@@ -9,6 +9,7 @@ import 'package:hisobchi_app/main.dart';
 import 'package:hisobchi_app/offline_sync.dart';
 import 'package:hisobchi_app/theme.dart';
 import 'package:hisobchi_app/widgets.dart';
+import 'package:hisobchi_app/widgets_3d.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:image/image.dart' as img;
@@ -607,5 +608,137 @@ void main() {
     } finally {
       SyncBus.remoteChangeTick.removeListener(listener);
     }
+  });
+
+  testWidgets(
+      '3D cube math projects 6 depth-sorted faces and Interactive3DFintechCube handles drag & tap',
+      (WidgetTester tester) async {
+    final faces = computeCubeFaces(0.5, 0.7, 0.1, const Size(200, 200));
+    expect(faces.length, equals(6));
+    for (var i = 1; i < faces.length; i++) {
+      expect(faces[i].avgZ, greaterThanOrEqualTo(faces[i - 1].avgZ));
+    }
+    for (final f in faces) {
+      expect(f.points.length, equals(4));
+      expect(f.light, inInclusiveRange(0.0, 1.0));
+    }
+
+    var started = 0;
+    var ended = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: Scaffold(
+          body: Center(
+            child: Interactive3DFintechCube(
+              size: 160,
+              continuousSpin: false,
+              onInteractStart: () => started++,
+              onInteractEnd: () => ended++,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.drag(find.byType(Interactive3DFintechCube), const Offset(55, -25));
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.byType(Interactive3DFintechCube));
+    await tester.pump(const Duration(milliseconds: 50));
+    // Settle intro & inertia cleanly
+    await tester.pumpAndSettle(const Duration(milliseconds: 200));
+
+    expect(started, greaterThanOrEqualTo(2));
+    expect(ended, greaterThanOrEqualTo(2));
+  });
+
+  test('hasNakladnoyEdits and buildNakladnoyEditSummary detect changes accurately',
+      () {
+    expect(
+      hasNakladnoyEdits(
+        originalSupplier: 'Coca Cola',
+        originalAmount: 450000,
+        originalNote: 'naqd',
+        currentSupplier: 'Coca Cola',
+        currentAmountText: '450 000',
+        currentNote: 'naqd',
+      ),
+      isFalse,
+    );
+    expect(
+      hasNakladnoyEdits(
+        originalSupplier: 'Coca Cola',
+        originalAmount: 450000,
+        originalNote: '',
+        currentSupplier: 'Pepsi',
+        currentAmountText: '450 000',
+        currentNote: '',
+      ),
+      isTrue,
+    );
+    expect(
+      hasNakladnoyEdits(
+        originalSupplier: 'Coca Cola',
+        originalAmount: 450000,
+        originalNote: '',
+        currentSupplier: 'Coca Cola',
+        currentAmountText: '500 000',
+        currentNote: '',
+      ),
+      isTrue,
+    );
+
+    final summary = buildNakladnoyEditSummary(
+      oldSupplier: 'Coca Cola',
+      oldAmount: 450000,
+      oldNote: '',
+      newSupplier: 'Pepsi',
+      newAmount: 500000,
+      newNote: 'chek bor',
+    );
+    expect(summary, contains('Coca Cola → Pepsi'));
+    expect(summary, contains('450 000'));
+    expect(summary, contains('500 000'));
+    expect(summary, contains('Izoh: chek bor'));
+  });
+
+  testWidgets(
+      'showTopSlideNotification slides in at top overlay and renders title & subtitle',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => Center(
+              child: ElevatedButton(
+                onPressed: () {
+                  showTopSlideNotification(
+                    ctx,
+                    title: "Nakladnoy o'zgartirildi",
+                    subtitle: "Coca Cola • 450 000 → 500 000 so'm",
+                    tone: TopNotifyTone.edit,
+                    duration: const Duration(milliseconds: 900),
+                  );
+                },
+                child: const Text('Trigger'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Trigger'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    expect(find.text("Nakladnoy o'zgartirildi"), findsOneWidget);
+    expect(find.text("Coca Cola • 450 000 → 500 000 so'm"), findsOneWidget);
+
+    // Wait for auto-dismiss timer + reverse animation to finish cleanly
+    await tester.pump(const Duration(milliseconds: 1000));
+    await tester.pumpAndSettle();
+    expect(find.text("Nakladnoy o'zgartirildi"), findsNothing);
   });
 }

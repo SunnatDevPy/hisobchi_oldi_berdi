@@ -3870,6 +3870,383 @@ class _ActionFeedbackOverlayWidgetState
   }
 }
 
+/// Visual tone for [showTopSlideNotification].
+enum TopNotifyTone { success, edit, info, error }
+
+/// Returns true when the user edited supplier, amount, or note relative to saved values.
+bool hasNakladnoyEdits({
+  required String originalSupplier,
+  required double originalAmount,
+  required String originalNote,
+  required String currentSupplier,
+  required String currentAmountText,
+  required String currentNote,
+}) {
+  if (currentSupplier.trim() != originalSupplier.trim()) return true;
+  if (currentNote.trim() != originalNote.trim()) return true;
+  final parsed = parseUzsInput(currentAmountText);
+  if (parsed == null) return currentAmountText.trim().isNotEmpty;
+  return parsed.round() != originalAmount.round();
+}
+
+/// Builds a concise single-line human-readable diff for edited nakladnoy fields.
+String buildNakladnoyEditSummary({
+  required String oldSupplier,
+  required double oldAmount,
+  required String oldNote,
+  required String newSupplier,
+  required double newAmount,
+  required String newNote,
+}) {
+  final parts = <String>[];
+  if (oldSupplier.trim() != newSupplier.trim()) {
+    parts.add('${oldSupplier.trim()} → ${newSupplier.trim()}');
+  }
+  if (oldAmount.round() != newAmount.round()) {
+    parts.add(
+      '${formatUzs(oldAmount)} → ${formatUzs(newAmount, withCurrency: true)}',
+    );
+  }
+  if (oldNote.trim() != newNote.trim()) {
+    parts.add(
+      newNote.trim().isEmpty ? 'Izoh olib tashlandi' : 'Izoh: ${newNote.trim()}',
+    );
+  }
+  if (parts.isEmpty) {
+    return '${newSupplier.trim()} • ${formatUzs(newAmount, withCurrency: true)}';
+  }
+  return parts.join(' • ');
+}
+
+OverlayEntry? _activeTopNotifyEntry;
+
+/// Shows a rich custom notification card that slides down smoothly from the top
+/// of the screen (above bottom sheets and dialogs) with an animated progress bar.
+void showTopSlideNotification(
+  BuildContext context, {
+  required String title,
+  String? subtitle,
+  TopNotifyTone tone = TopNotifyTone.success,
+  IconData? icon,
+  Duration duration = const Duration(milliseconds: 3200),
+}) {
+  if (tone == TopNotifyTone.error) {
+    HapticFeedback.heavyImpact();
+  } else {
+    HapticFeedback.mediumImpact();
+  }
+
+  final overlay = Overlay.maybeOf(context, rootOverlay: true);
+  if (overlay == null) return;
+
+  _activeFeedbackEntry?.remove();
+  _activeFeedbackEntry = null;
+  _activeTopNotifyEntry?.remove();
+  _activeTopNotifyEntry = null;
+
+  late OverlayEntry entry;
+  entry = OverlayEntry(
+    builder: (ctx) => _TopSlideNotificationOverlay(
+      title: title,
+      subtitle: subtitle,
+      tone: tone,
+      icon: icon,
+      duration: duration,
+      onDismissed: () {
+        if (_activeTopNotifyEntry == entry) {
+          _activeTopNotifyEntry = null;
+        }
+        if (entry.mounted) {
+          entry.remove();
+        }
+      },
+    ),
+  );
+  _activeTopNotifyEntry = entry;
+  overlay.insert(entry);
+}
+
+class _TopSlideNotificationOverlay extends StatefulWidget {
+  final String title;
+  final String? subtitle;
+  final TopNotifyTone tone;
+  final IconData? icon;
+  final Duration duration;
+  final VoidCallback onDismissed;
+
+  const _TopSlideNotificationOverlay({
+    required this.title,
+    this.subtitle,
+    required this.tone,
+    this.icon,
+    required this.duration,
+    required this.onDismissed,
+  });
+
+  @override
+  State<_TopSlideNotificationOverlay> createState() =>
+      _TopSlideNotificationOverlayState();
+}
+
+class _TopSlideNotificationOverlayState
+    extends State<_TopSlideNotificationOverlay>
+    with TickerProviderStateMixin {
+  late final AnimationController _slideCtrl;
+  late final AnimationController _barCtrl;
+  late final Animation<Offset> _slide;
+  late final Animation<double> _opacity;
+  late final Animation<double> _scale;
+  Timer? _timer;
+  bool _closing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _slideCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 320),
+      reverseDuration: const Duration(milliseconds: 200),
+    );
+    _barCtrl = AnimationController(
+      vsync: this,
+      duration: widget.duration,
+    );
+    _slide = Tween<Offset>(
+      begin: const Offset(0, -1.35),
+      end: Offset.zero,
+    ).animate(
+      CurvedAnimation(
+        parent: _slideCtrl,
+        curve: Curves.easeOutBack,
+        reverseCurve: Curves.easeInCubic,
+      ),
+    );
+    _opacity = CurvedAnimation(parent: _slideCtrl, curve: Curves.easeOutCubic);
+    _scale = Tween<double>(begin: 0.94, end: 1.0).animate(
+      CurvedAnimation(parent: _slideCtrl, curve: Curves.easeOutCubic),
+    );
+
+    _slideCtrl.forward();
+    _barCtrl.forward();
+    _timer = Timer(widget.duration, _dismiss);
+  }
+
+  Future<void> _dismiss() async {
+    if (_closing || !mounted) return;
+    _closing = true;
+    _timer?.cancel();
+    await _slideCtrl.reverse();
+    if (mounted) {
+      widget.onDismissed();
+    }
+  }
+
+  void _dismissImmediately() {
+    if (_closing || !mounted) return;
+    _closing = true;
+    _timer?.cancel();
+    widget.onDismissed();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _slideCtrl.dispose();
+    _barCtrl.dispose();
+    super.dispose();
+  }
+
+  (Color accent, IconData defaultIcon) _toneStyle() {
+    switch (widget.tone) {
+      case TopNotifyTone.edit:
+        return (const Color(0xFFF59E0B), Icons.edit_note_rounded);
+      case TopNotifyTone.info:
+        return (AppTokens.brand, Icons.info_rounded);
+      case TopNotifyTone.error:
+        return (AppTokens.dangerRed, Icons.error_rounded);
+      case TopNotifyTone.success:
+        return (AppTokens.cashGreen, Icons.check_circle_rounded);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = isDarkCtx(context);
+    final (accent, defaultIcon) = _toneStyle();
+    final topPad = MediaQuery.paddingOf(context).top;
+    final cardBg = isDark
+        ? const Color(0xFF171E31).withValues(alpha: 0.97)
+        : Colors.white.withValues(alpha: 0.98);
+    final titleColor = isDark ? AppTokens.textPrimaryDark : AppTokens.textPrimaryLight;
+    final subColor =
+        isDark ? AppTokens.textSecondaryDark : AppTokens.textSecondaryLight;
+
+    return Positioned(
+      top: topPad + 10,
+      left: 14,
+      right: 14,
+      child: Material(
+        color: Colors.transparent,
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: SlideTransition(
+            position: _slide,
+            child: FadeTransition(
+              opacity: _opacity,
+              child: ScaleTransition(
+                scale: _scale,
+                child: Dismissible(
+                  key: ValueKey('top_notify_${widget.hashCode}'),
+                  direction: DismissDirection.up,
+                  onDismissed: (_) => _dismissImmediately(),
+                  child: GestureDetector(
+                    onTap: _dismiss,
+                    child: Container(
+                      constraints: const BoxConstraints(maxWidth: 460),
+                      decoration: BoxDecoration(
+                        color: cardBg,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: accent.withValues(alpha: 0.50),
+                          width: 1.2,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: accent.withValues(alpha: isDark ? 0.24 : 0.16),
+                            blurRadius: 20,
+                            offset: const Offset(0, 8),
+                          ),
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.22),
+                            blurRadius: 14,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(17),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(12, 11, 10, 10),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 4,
+                                    height: widget.subtitle != null &&
+                                            widget.subtitle!.trim().isNotEmpty
+                                        ? 36
+                                        : 26,
+                                    decoration: BoxDecoration(
+                                      color: accent,
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Container(
+                                    width: 34,
+                                    height: 34,
+                                    decoration: BoxDecoration(
+                                      color: accent.withValues(alpha: 0.16),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Icon(
+                                      widget.icon ?? defaultIcon,
+                                      color: accent,
+                                      size: 20,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          widget.title,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: titleColor,
+                                            fontSize: 13.5,
+                                            fontWeight: FontWeight.w900,
+                                          ),
+                                        ),
+                                        if (widget.subtitle != null &&
+                                            widget.subtitle!.trim().isNotEmpty) ...[
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            widget.subtitle!.trim(),
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              color: subColor,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                  IconButton(
+                                    visualDensity: VisualDensity.compact,
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(
+                                      minWidth: 28,
+                                      minHeight: 28,
+                                    ),
+                                    onPressed: _dismiss,
+                                    icon: Icon(
+                                      Icons.close_rounded,
+                                      size: 17,
+                                      color: subColor,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            AnimatedBuilder(
+                              animation: _barCtrl,
+                              builder: (context, _) {
+                                final remaining =
+                                    (1.0 - _barCtrl.value).clamp(0.0, 1.0);
+                                return Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: FractionallySizedBox(
+                                    widthFactor: remaining,
+                                    child: Container(
+                                      height: 3,
+                                      decoration: BoxDecoration(
+                                        gradient: LinearGradient(
+                                          colors: [
+                                            accent,
+                                            accent.withValues(alpha: 0.55),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 // ============================================================================
 // ANIMATED ROLL-UP UZS NUMBER & 4-DIGIT PIN + BIOMETRIC LOCK SCREEN
 // ============================================================================

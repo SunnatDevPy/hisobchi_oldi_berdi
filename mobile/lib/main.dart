@@ -15,6 +15,7 @@ import 'platform_bridge.dart';
 import 'theme.dart';
 import 'version.dart';
 import 'widgets.dart';
+import 'widgets_3d.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -435,6 +436,7 @@ class _HisobchiAppState extends State<HisobchiApp> with WidgetsBindingObserver {
   ThemeMode _themeMode = ThemeMode.system;
   bool _initializing = true;
   bool _transitioningToHome = false;
+  bool _pendingPinSetupCheck = false;
   bool _pinLocked = false;
   bool _needsPinSetup = false;
   String? _savedPin;
@@ -517,13 +519,20 @@ class _HisobchiAppState extends State<HisobchiApp> with WidgetsBindingObserver {
 
   Future<void> _playTransitionAndEnter({bool checkPinSetup = false}) async {
     if (!mounted) return;
-    setState(() => _transitioningToHome = true);
-    await Future<void>.delayed(const Duration(milliseconds: 650));
+    setState(() {
+      _transitioningToHome = true;
+      _pendingPinSetupCheck = checkPinSetup;
+    });
+  }
+
+  void _completeTransition() {
     if (!mounted) return;
+    final checkPin = _pendingPinSetupCheck;
     setState(() {
       _transitioningToHome = false;
+      _pendingPinSetupCheck = false;
       _pinLocked = false;
-      if (checkPinSetup &&
+      if (checkPin &&
           !kIsWeb &&
           widget.apiOverride == null &&
           _savedPin == null) {
@@ -559,11 +568,9 @@ class _HisobchiAppState extends State<HisobchiApp> with WidgetsBindingObserver {
         ),
       );
     } else if (_transitioningToHome) {
-      home = const Scaffold(
-        key: ValueKey('app_entering'),
-        body: HisobchiAnimatedLoadingScreen(
-          subtitle: "Xush kelibsiz! Ma'lumotlar yuklanmoqda...",
-        ),
+      home = Hisobchi3DWelcomeScreen(
+        key: const ValueKey('app_entering'),
+        onContinue: _completeTransition,
       );
     } else if (_api.isAuthenticated && _pinLocked && _savedPin != null) {
       home = PinLockScreen(
@@ -964,43 +971,11 @@ class _LoginScreenState extends State<LoginScreen> with WidgetsBindingObserver {
                     children: [
                       Column(
                         children: [
-                          Container(
-                            width: 84,
-                            height: 84,
-                            padding: const EdgeInsets.all(11),
-                            decoration: BoxDecoration(
-                              gradient: AppTokens.aiGradient,
-                              borderRadius: BorderRadius.circular(25),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: AppTokens.brandViolet
-                                      .withValues(alpha: isDark ? 0.48 : 0.25),
-                                  blurRadius: 28,
-                                  spreadRadius: 1,
-                                ),
-                              ],
-                            ),
-                            child: Container(
-                              padding: const EdgeInsets.all(4),
-                              decoration: BoxDecoration(
-                                color: isDark ? AppTokens.cardDark : Colors.white,
-                                borderRadius: BorderRadius.circular(18),
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(14),
-                                child: Image.asset(
-                                  'assets/app_icon.png',
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) => const Icon(
-                                    Icons.account_balance_wallet_rounded,
-                                    color: AppTokens.brand,
-                                    size: 36,
-                                  ),
-                                ),
-                              ),
-                            ),
+                          const Interactive3DFintechCube(
+                            size: 116,
+                            continuousSpin: false,
                           ),
-                          const SizedBox(height: 14),
+                          const SizedBox(height: 10),
                           Text(
                             'Hisobchi Mobil',
                             textAlign: TextAlign.center,
@@ -6165,6 +6140,7 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
   List<String> _suppliers = [];
   bool _busy = false;
   bool _changed = false;
+  bool _hasUnsavedEdits = false;
   int _photoCacheBust = 0;
 
   bool get _isReadOnly =>
@@ -6180,13 +6156,33 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
           _cur.amount.round().toString()),
     );
     _noteCtrl = TextEditingController(text: _cur.note);
+    _supCtrl.addListener(_onEditFieldChanged);
+    _amtCtrl.addListener(_onEditFieldChanged);
+    _noteCtrl.addListener(_onEditFieldChanged);
     if (!_isReadOnly) {
       _loadSuppliers();
     }
   }
 
+  void _onEditFieldChanged() {
+    final dirty = hasNakladnoyEdits(
+      originalSupplier: _cur.supplierName,
+      originalAmount: _cur.amount,
+      originalNote: _cur.note,
+      currentSupplier: _supCtrl.text,
+      currentAmountText: _amtCtrl.text,
+      currentNote: _noteCtrl.text,
+    );
+    if (dirty != _hasUnsavedEdits && mounted) {
+      setState(() => _hasUnsavedEdits = dirty);
+    }
+  }
+
   @override
   void dispose() {
+    _supCtrl.removeListener(_onEditFieldChanged);
+    _amtCtrl.removeListener(_onEditFieldChanged);
+    _noteCtrl.removeListener(_onEditFieldChanged);
     _supCtrl.dispose();
     _amtCtrl.dispose();
     _noteCtrl.dispose();
@@ -6302,14 +6298,22 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
           _photoCacheBust++;
           _changed = true;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('📷 Rasm biriktirildi!')),
+        showTopSlideNotification(
+          context,
+          title: 'Rasm biriktirildi',
+          subtitle: '${updated.supplierName} nakladnoyiga yuklandi',
+          tone: TopNotifyTone.success,
+          icon: Icons.add_a_photo_rounded,
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.toString())));
+        showTopSlideNotification(
+          context,
+          title: 'Rasm yuklashda xatolik',
+          subtitle: e.toString(),
+          tone: TopNotifyTone.error,
+        );
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -6319,18 +6323,25 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
   Future<void> _saveAllChanges() async {
     final sup = _supCtrl.text.trim();
     if (sup.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Postavshik nomini kiriting')),
+      showTopSlideNotification(
+        context,
+        title: 'Postavshik nomini kiriting',
+        tone: TopNotifyTone.error,
       );
       return;
     }
     final parsed = parseUzsInput(_amtCtrl.text);
     if (parsed == null || parsed <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Summani to'g'ri kiriting")),
+      showTopSlideNotification(
+        context,
+        title: "Summani to'g'ri kiriting",
+        tone: TopNotifyTone.error,
       );
       return;
     }
+    final oldSup = _cur.supplierName;
+    final oldAmt = _cur.amount;
+    final oldNote = _cur.note;
     setState(() => _busy = true);
     try {
       final updated = await widget.api.updateNakladnoy(
@@ -6348,15 +6359,30 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
               updated.amount.round().toString());
           _noteCtrl.text = updated.note;
           _changed = true;
+          _hasUnsavedEdits = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("✅ O'zgarishlar saqlandi")),
+        showTopSlideNotification(
+          context,
+          title: "Nakladnoy o'zgartirildi",
+          subtitle: buildNakladnoyEditSummary(
+            oldSupplier: oldSup,
+            oldAmount: oldAmt,
+            oldNote: oldNote,
+            newSupplier: updated.supplierName,
+            newAmount: updated.amount,
+            newNote: updated.note,
+          ),
+          tone: TopNotifyTone.edit,
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.toString())));
+        showTopSlideNotification(
+          context,
+          title: 'Saqlashda xatolik',
+          subtitle: e.toString(),
+          tone: TopNotifyTone.error,
+        );
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -6381,11 +6407,21 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
           _cur = updated;
           _changed = true;
         });
+        showTopSlideNotification(
+          context,
+          title: "To'lov holati yangilandi",
+          subtitle: '${updated.supplierName} • ${_paymentMethodLabel(updated)}',
+          tone: TopNotifyTone.edit,
+        );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.toString())));
+        showTopSlideNotification(
+          context,
+          title: 'Xatolik',
+          subtitle: e.toString(),
+          tone: TopNotifyTone.error,
+        );
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -6692,13 +6728,102 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                 ),
                 const SizedBox(height: 14),
 
-                // Single consolidated Save button for Supplier + Amount + Note
-                FilledButton.icon(
-                  onPressed: _busy ? null : _saveAllChanges,
-                  icon: const Icon(Icons.check_circle_rounded, size: 19),
-                  label: Text(_busy
-                      ? 'Saqlanmoqda...'
-                      : "O'zgarishlarni saqlash"),
+                // Consolidated Save button: shifts to vivid Amber/Orange glow when edited
+                TactileScaleTap(
+                  enabled: !_busy,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOutCubic,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(14),
+                      gradient: _hasUnsavedEdits
+                          ? const LinearGradient(
+                              colors: [Color(0xFFF59E0B), Color(0xFFEA580C)],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            )
+                          : null,
+                      color: _hasUnsavedEdits
+                          ? null
+                          : AppTokens.brand.withValues(alpha: 0.12),
+                      border: Border.all(
+                        color: _hasUnsavedEdits
+                            ? const Color(0xFFFBBF24).withValues(alpha: 0.75)
+                            : AppTokens.brand.withValues(alpha: 0.25),
+                      ),
+                      boxShadow: _hasUnsavedEdits
+                          ? [
+                              BoxShadow(
+                                color: const Color(0xFFF59E0B)
+                                    .withValues(alpha: 0.36),
+                                blurRadius: 14,
+                                offset: const Offset(0, 6),
+                              ),
+                            ]
+                          : const [],
+                    ),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(14),
+                        onTap: _busy ? null : _saveAllChanges,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 13),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                _hasUnsavedEdits
+                                    ? Icons.edit_note_rounded
+                                    : Icons.check_circle_rounded,
+                                size: 20,
+                                color: _hasUnsavedEdits
+                                    ? Colors.white
+                                    : AppTokens.brand,
+                              ),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  _busy
+                                      ? 'Saqlanmoqda...'
+                                      : "O'zgarishlarni saqlash",
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: _hasUnsavedEdits
+                                        ? Colors.white
+                                        : AppTokens.brand,
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 14.5,
+                                  ),
+                                ),
+                              ),
+                              if (_hasUnsavedEdits && !_busy) ...[
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 7, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.24),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: const Text(
+                                    "O'zgardi",
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 16),
 
@@ -6735,14 +6860,21 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                                       .sendNakladnoyToGroup(_cur.id);
                                   _changed = true;
                                   if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(content: Text('📤 $msg')),
+                                    showTopSlideNotification(
+                                      context,
+                                      title: 'Telegram guruhga yuborildi',
+                                      subtitle: msg,
+                                      tone: TopNotifyTone.info,
+                                      icon: Icons.send_rounded,
                                     );
                                   }
                                 } catch (e) {
                                   if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(content: Text(e.toString())),
+                                    showTopSlideNotification(
+                                      context,
+                                      title: 'Yuborishda xatolik',
+                                      subtitle: e.toString(),
+                                      tone: TopNotifyTone.error,
                                     );
                                   }
                                 } finally {
