@@ -67,7 +67,7 @@ Offset project3D(
   );
 }
 
-/// Depth-sorted projected quad representing one face of a 3D solid.
+/// Depth-sorted projected quad representing one face of a 3D cube.
 class ProjectedCubeFace {
   final int faceIndex;
   final List<Offset> points;
@@ -156,19 +156,261 @@ List<ProjectedCubeFace> computeCubeFaces(
   return out;
 }
 
-/// Precomputed G2-smooth superellipse (squircle) unit contour points `(x, y)` in `[-1, 1]`.
-final List<Offset> _kSquircleContour = List<Offset>.generate(56, (i) {
-  final theta = (i / 56.0) * 2.0 * math.pi;
-  final ct = math.cos(theta);
-  final st = math.sin(theta);
-  const exp = 2.0 / 4.35; // Smooth iOS/fintech squircle curvature
-  final sx = ct == 0 ? 0.0 : ct.sign * math.pow(ct.abs(), exp).toDouble();
-  final sy = st == 0 ? 0.0 : st.sign * math.pow(st.abs(), exp).toDouble();
-  return Offset(sx, sy);
-}, growable: false);
+/// Hisobchi — yuklanish (splash) ekrani.
+/// Silliq radial yorug'lik, 3D egilgan binafsha kub-ikonka, 12 yaproqli burst va pastki yoy.
+class HisobchiSplash extends StatefulWidget {
+  const HisobchiSplash({
+    super.key,
+    this.onFinished,
+    this.duration = const Duration(seconds: 3),
+    this.title = 'Hisobchi',
+    this.subtitle = 'Ilova tayyorlanmoqda...',
+  });
 
-/// Interactive 3D glossy beveled violet-magenta squircle block housing a
-/// 12-spoke neon pink-white starburst spinner and gossamer orbital trails.
+  final VoidCallback? onFinished;
+  final Duration duration;
+  final String title;
+  final String subtitle;
+
+  @override
+  State<HisobchiSplash> createState() => _HisobchiSplashState();
+}
+
+class _HisobchiSplashState extends State<HisobchiSplash>
+    with TickerProviderStateMixin {
+  late final AnimationController _spin = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  )..repeat();
+  late final AnimationController _orbit = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 9),
+  )..repeat();
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 2400),
+  )..repeat(reverse: true);
+  late final AnimationController _bar = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1600),
+  )..repeat(reverse: true);
+
+  Timer? _finishTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.onFinished != null) {
+      _finishTimer = Timer(widget.duration, () {
+        if (mounted) widget.onFinished!();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _finishTimer?.cancel();
+    _spin.dispose();
+    _orbit.dispose();
+    _pulse.dispose();
+    _bar.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF05030F),
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: CustomPaint(painter: _BottomArcPainter(_pulse)),
+          ),
+          SafeArea(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildIcon(),
+                    const SizedBox(height: 36),
+                    Text(
+                      widget.title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 34,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      widget.subtitle,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.55),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 28),
+                    _buildBar(),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIcon() {
+    return SizedBox(
+      width: 300,
+      height: 300,
+      child: AnimatedBuilder(
+        animation: Listenable.merge([_spin, _orbit, _pulse]),
+        builder: (context, _) {
+          final p = Curves.easeInOut.transform(_pulse.value);
+          final tiltX = -0.30 + 0.06 * math.sin(_orbit.value * 2 * math.pi);
+          final tiltY = 0.35 + 0.08 * math.cos(_orbit.value * 2 * math.pi);
+          return Stack(
+            alignment: Alignment.center,
+            children: [
+              Container(
+                width: 280,
+                height: 280,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [
+                      const Color(0xFFB44CFF).withValues(alpha: 0.30 + 0.20 * p),
+                      const Color(0xFF7C3AED).withValues(alpha: 0.10),
+                      Colors.transparent,
+                    ],
+                    stops: const [0.0, 0.55, 1.0],
+                  ),
+                ),
+              ),
+              CustomPaint(
+                size: const Size(300, 300),
+                painter: _OrbitPainter(_orbit.value),
+              ),
+              Transform(
+                alignment: Alignment.center,
+                transform: Matrix4.identity()
+                  ..setEntry(3, 2, 0.0012)
+                  ..rotateX(tiltX)
+                  ..rotateY(tiltY)
+                  ..rotateZ(-0.12),
+                child: _buildGlossyTile(size: 164, pulse: p, spin: _spin.value),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildBar() {
+    return SizedBox(
+      width: 230,
+      height: 5,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Stack(
+          children: [
+            Container(color: Colors.white.withValues(alpha: 0.08)),
+            AnimatedBuilder(
+              animation: _bar,
+              builder: (context, _) {
+                final t = Curves.easeInOut.transform(_bar.value);
+                return Align(
+                  alignment: Alignment(-1 + 2 * t, 0),
+                  child: FractionallySizedBox(
+                    widthFactor: 0.38,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(10),
+                        gradient: const LinearGradient(
+                          colors: [
+                            Color(0xFFA855F7),
+                            Color(0xFFFF7ACB),
+                            Colors.white,
+                          ],
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFFA855F7).withValues(alpha: 0.7),
+                            blurRadius: 10,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+Widget _buildGlossyTile({
+  required double size,
+  required double pulse,
+  required double spin,
+}) {
+  final scale = size / 164.0;
+  return Container(
+    width: size,
+    height: size,
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(44 * scale),
+      gradient: const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          Color(0xFFE0A8FF),
+          Color(0xFFA855F7),
+          Color(0xFF5B21B6),
+          Color(0xFFC026D3),
+        ],
+        stops: [0.0, 0.35, 0.75, 1.0],
+      ),
+      boxShadow: [
+        BoxShadow(
+          color: const Color(0xFFB44CFF).withValues(alpha: 0.45 + 0.25 * pulse),
+          blurRadius: (50 + 20 * pulse) * scale,
+          spreadRadius: 2 * scale,
+        ),
+        BoxShadow(
+          color: const Color(0xFFFF4FD8).withValues(alpha: 0.18),
+          blurRadius: 90 * scale,
+          spreadRadius: 6 * scale,
+        ),
+      ],
+    ),
+    padding: EdgeInsets.all(11 * scale),
+    child: Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(34 * scale),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF1B1030), Color(0xFF07040F)],
+        ),
+      ),
+      child: CustomPaint(painter: _BurstPainter(spin)),
+    ),
+  );
+}
+
+/// Interactive 3D emblem matching [HisobchiSplash] (used on LoginScreen hero).
 class Interactive3DFintechCube extends StatefulWidget {
   final double size;
   final VoidCallback? onInteractStart;
@@ -192,22 +434,17 @@ class Interactive3DFintechCube extends StatefulWidget {
 
 class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
     with SingleTickerProviderStateMixin {
-  // Base showcase pose matching the tilted 3D glossy squircle in the reference design.
-  static const double _baseRotX = -0.24;
-  static const double _baseRotY = 0.38;
-  static const double _baseRotZ = -0.11;
-
   Ticker? _ticker;
   Duration _lastTick = Duration.zero;
-  double _rotX = _baseRotX;
-  double _rotY = _baseRotY;
-  double _rotZ = _baseRotZ;
-  double _userOffsetX = 0.0;
-  double _userOffsetY = 0.0;
+  double _tiltX = -0.26;
+  double _tiltY = 0.32;
+  double _offsetX = 0.0;
+  double _offsetY = 0.0;
   double _velX = 0.0;
   double _velY = 0.0;
   double _phase = 0.0;
-  double _pulse = 0.0;
+  double _spin = 0.0;
+  double _pulse = 0.35;
   double _introRemaining = 0.0;
   bool _dragging = false;
 
@@ -215,12 +452,11 @@ class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
   void initState() {
     super.initState();
     if (!widget.continuousSpin) {
-      // Smooth 1.1s 3D entrance settle so LoginScreen stays lively yet test-friendly.
-      _introRemaining = 1.1;
-      _userOffsetY = -0.55;
-      _userOffsetX = 0.28;
-      _velY = 1.35;
-      _velX = -0.55;
+      _introRemaining = 1.05;
+      _offsetY = -0.35;
+      _offsetX = 0.16;
+      _velY = 1.05;
+      _velX = -0.45;
     }
     _ticker = createTicker(_onTick);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -234,14 +470,6 @@ class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
     _syncTickerState();
   }
 
-  @override
-  void didUpdateWidget(covariant Interactive3DFintechCube oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.continuousSpin != widget.continuousSpin) {
-      _syncTickerState();
-    }
-  }
-
   void _syncTickerState() {
     final disabled = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     final ticker = _ticker;
@@ -253,7 +481,6 @@ class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
     final needsRun = widget.continuousSpin ||
         _dragging ||
         _introRemaining > 0 ||
-        _pulse > 0.005 ||
         _velX.abs() > 0.012 ||
         _velY.abs() > 0.012;
     if (needsRun && !ticker.isActive) {
@@ -279,48 +506,33 @@ class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
 
     setState(() {
       _phase += dt;
-      if (_pulse > 0) {
-        _pulse = math.max(0.0, _pulse - dt * 1.5);
-      }
+      _spin = (_spin + dt / 1.4) % 1.0;
+      _pulse = 0.5 - 0.5 * math.cos(_phase * 2.2);
       if (_introRemaining > 0) {
         _introRemaining = math.max(0.0, _introRemaining - dt);
       }
-
       if (!_dragging) {
-        _userOffsetY += _velY * dt;
-        _userOffsetX += _velX * dt;
-
-        final damping = math.pow(0.06, dt).toDouble();
+        _offsetY += _velY * dt;
+        _offsetX += _velX * dt;
+        final damping = math.pow(0.05, dt).toDouble();
         _velX *= damping;
         _velY *= damping;
-
-        // Gently spring back toward the hero showcase tilt while floating smoothly
-        final spring = (dt * 2.6).clamp(0.0, 0.25);
-        _userOffsetX *= (1.0 - spring * 0.45);
-        _userOffsetY *= (1.0 - spring * 0.35);
-
-        if (_velX.abs() < 0.010) _velX = 0.0;
-        if (_velY.abs() < 0.010) _velY = 0.0;
+        _offsetX *= (1.0 - (dt * 2.2).clamp(0.0, 0.25));
+        _offsetY *= (1.0 - (dt * 2.2).clamp(0.0, 0.25));
+        if (_velX.abs() < 0.012) _velX = 0.0;
+        if (_velY.abs() < 0.012) _velY = 0.0;
       }
-
-      if (widget.continuousSpin) {
-        final floatX = math.sin(_phase * 1.55) * 0.11;
-        final floatY = math.cos(_phase * 1.15) * 0.16;
-        final floatZ = math.sin(_phase * 0.95) * 0.05;
-        _rotX = (_baseRotX + floatX + _userOffsetX).clamp(-1.15, 1.15);
-        _rotY = _baseRotY + floatY + _userOffsetY;
-        _rotZ = _baseRotZ + floatZ;
-      } else {
-        _rotX = (_baseRotX + _userOffsetX).clamp(-1.15, 1.15);
-        _rotY = _baseRotY + _userOffsetY;
-        _rotZ = _baseRotZ;
-      }
+      final floatX =
+          widget.continuousSpin ? 0.06 * math.sin(_phase * 0.7) : 0.0;
+      final floatY =
+          widget.continuousSpin ? 0.08 * math.cos(_phase * 0.7) : 0.0;
+      _tiltX = (-0.28 + floatX + _offsetX).clamp(-0.95, 0.95);
+      _tiltY = (0.34 + floatY + _offsetY).clamp(-1.1, 1.1);
     });
 
     if (!widget.continuousSpin &&
         !_dragging &&
         _introRemaining <= 0 &&
-        _pulse <= 0.005 &&
         _velX == 0.0 &&
         _velY == 0.0) {
       _ticker?.stop();
@@ -341,14 +553,12 @@ class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
   void _handlePanUpdate(DragUpdateDetails details) {
     if (!widget.interactive) return;
     setState(() {
-      final dx = details.delta.dx;
-      final dy = details.delta.dy;
-      _userOffsetY += dx * 0.012;
-      _userOffsetX = (_userOffsetX - dy * 0.012).clamp(-0.95, 0.95);
-      _velY = (dx * 0.38).clamp(-7.5, 7.5);
-      _velX = (-dy * 0.38).clamp(-7.5, 7.5);
-      _rotX = (_baseRotX + _userOffsetX).clamp(-1.15, 1.15);
-      _rotY = _baseRotY + _userOffsetY;
+      _offsetY = (_offsetY + details.delta.dx * 0.01).clamp(-0.85, 0.85);
+      _offsetX = (_offsetX - details.delta.dy * 0.01).clamp(-0.75, 0.75);
+      _velY = (details.delta.dx * 0.35).clamp(-6.5, 6.5);
+      _velX = (-details.delta.dy * 0.35).clamp(-6.5, 6.5);
+      _tiltX = (-0.28 + _offsetX).clamp(-0.95, 0.95);
+      _tiltY = (0.34 + _offsetY).clamp(-1.1, 1.1);
     });
   }
 
@@ -357,8 +567,8 @@ class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
     final pps = details.velocity.pixelsPerSecond;
     setState(() {
       _dragging = false;
-      _velY = (pps.dx * 0.0038).clamp(-7.5, 7.5);
-      _velX = (-pps.dy * 0.0038).clamp(-7.5, 7.5);
+      _velY = (pps.dx * 0.003).clamp(-6.5, 6.5);
+      _velX = (-pps.dy * 0.003).clamp(-6.5, 6.5);
     });
     widget.onInteractEnd?.call();
     _syncTickerState();
@@ -369,9 +579,8 @@ class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
     HapticFeedback.lightImpact();
     widget.onInteractStart?.call();
     setState(() {
-      _pulse = 1.0;
-      _velY += 3.2;
-      _velX -= 1.2;
+      _velY += 2.6;
+      _velX -= 1.0;
     });
     _syncTickerState();
     widget.onInteractEnd?.call();
@@ -385,6 +594,7 @@ class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
 
   @override
   Widget build(BuildContext context) {
+    final tileSize = widget.size * 0.55;
     return RepaintBoundary(
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -395,14 +605,43 @@ class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
         child: SizedBox(
           width: widget.size,
           height: widget.size,
-          child: CustomPaint(
-            painter: _GlossySquircle3DPainter(
-              rotX: _rotX,
-              rotY: _rotY,
-              rotZ: _rotZ,
-              phase: _phase,
-              pulse: _pulse,
-            ),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Container(
+                width: widget.size * 0.94,
+                height: widget.size * 0.94,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [
+                      const Color(0xFFB44CFF)
+                          .withValues(alpha: 0.28 + 0.16 * _pulse),
+                      const Color(0xFF7C3AED).withValues(alpha: 0.09),
+                      Colors.transparent,
+                    ],
+                    stops: const [0.0, 0.55, 1.0],
+                  ),
+                ),
+              ),
+              CustomPaint(
+                size: Size(widget.size, widget.size),
+                painter: _OrbitPainter((_phase / 9.0) % 1.0),
+              ),
+              Transform(
+                alignment: Alignment.center,
+                transform: Matrix4.identity()
+                  ..setEntry(3, 2, 0.0012)
+                  ..rotateX(_tiltX)
+                  ..rotateY(_tiltY)
+                  ..rotateZ(-0.12),
+                child: _buildGlossyTile(
+                  size: tileSize,
+                  pulse: _pulse,
+                  spin: _spin,
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -410,650 +649,8 @@ class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
   }
 }
 
-class _BevelQuad {
-  final List<Offset> pts;
-  final double avgZ;
-  final Color color;
-
-  const _BevelQuad({
-    required this.pts,
-    required this.avgZ,
-    required this.color,
-  });
-}
-
-class _GlossySquircle3DPainter extends CustomPainter {
-  final double rotX;
-  final double rotY;
-  final double rotZ;
-  final double phase;
-  final double pulse;
-
-  const _GlossySquircle3DPainter({
-    required this.rotX,
-    required this.rotY,
-    required this.rotZ,
-    required this.phase,
-    required this.pulse,
-  });
-
-  Vec3 _xform(double x, double y, double z) =>
-      Vec3(x, y, z).rotateX(rotX).rotateY(rotY).rotateZ(rotZ);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width * 0.5, size.height * 0.5);
-    final minDim = math.min(size.width, size.height);
-    final breathe = 1.0 + 0.028 * math.sin(phase * 2.4) + 0.05 * math.sin(pulse * math.pi);
-    final fov = minDim * 1.48 * breathe;
-
-    // 1. Soft multi-stop magenta-violet aura directly behind the 3D block
-    final auraPaint = Paint()
-      ..shader = RadialGradient(
-        colors: [
-          const Color(0xFFF472B6).withValues(alpha: 0.42),
-          const Color(0xFFA855F7).withValues(alpha: 0.28),
-          const Color(0xFF581C87).withValues(alpha: 0.12),
-          Colors.transparent,
-        ],
-        stops: const [0.0, 0.36, 0.68, 1.0],
-      ).createShader(Rect.fromCircle(center: center, radius: minDim * 0.56));
-    canvas.drawCircle(center, minDim * 0.56, auraPaint);
-
-    // Optional tap shockwave halo
-    if (pulse > 0.01) {
-      final t = 1.0 - pulse;
-      final ringPaint = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.2 * pulse
-        ..color = const Color(0xFFF9A8D4).withValues(alpha: 0.75 * pulse);
-      canvas.drawCircle(center, minDim * (0.34 + 0.22 * t), ringPaint);
-    }
-
-    // 2. Compute 3D orbital gossamer light trails (split into back z < 0 & front z >= 0)
-    final orbitSegments = <({Offset p1, Offset p2, double z, double alpha})>[];
-    for (var ringIdx = 0; ringIdx < 2; ringIdx++) {
-      final tiltX = ringIdx == 0 ? 0.52 : -0.38;
-      final tiltY = ringIdx == 0 ? -0.34 : 0.48;
-      final tiltZ = ringIdx == 0 ? -0.38 : 0.32;
-      final radiusX = ringIdx == 0 ? 1.30 : 1.24;
-      final radiusY = ringIdx == 0 ? 1.12 : 1.20;
-      final spinSpeed = ringIdx == 0 ? 0.85 : -0.68;
-      const steps = 44;
-
-      Vec3? prev3;
-      Offset? prev2;
-      for (var s = 0; s <= steps; s++) {
-        final u = s / steps;
-        final a = u * 2.0 * math.pi + phase * spinSpeed;
-        final v = Vec3(math.cos(a) * radiusX, math.sin(a) * radiusY, 0.0)
-            .rotateX(tiltX + rotX * 0.35)
-            .rotateY(tiltY + rotY * 0.35)
-            .rotateZ(tiltZ);
-        final p = project3D(v, size, fov: fov);
-        if (prev3 != null && prev2 != null) {
-          // Tapered comet intensity along each ring
-          final comet = 0.5 + 0.5 * math.sin(u * 2.0 * math.pi * 2.0 - phase * 2.2 + ringIdx * 1.7);
-          final alpha = (0.08 + 0.44 * math.pow(comet, 2.2)).clamp(0.05, 0.58);
-          orbitSegments.add((
-            p1: prev2,
-            p2: p,
-            z: (prev3.z + v.z) * 0.5,
-            alpha: alpha,
-          ));
-        }
-        prev3 = v;
-        prev2 = p;
-      }
-    }
-
-    void drawOrbitHalf({required bool front}) {
-      for (final seg in orbitSegments) {
-        if (front ? seg.z < 0.02 : seg.z >= 0.02) continue;
-        final mul = front ? 1.0 : 0.45;
-        final p = Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeCap = StrokeCap.round
-          ..strokeWidth = front ? 1.35 : 0.95
-          ..color = Color.lerp(
-            const Color(0xFFF472B6),
-            Colors.white,
-            seg.alpha,
-          )!
-              .withValues(alpha: seg.alpha * mul);
-        canvas.drawLine(seg.p1, seg.p2, p);
-      }
-    }
-
-    drawOrbitHalf(front: false);
-
-    // 3. Build 3-ring cushioned 3D squircle extrusion:
-    //    back ring (z = -0.25, scale = 0.96)
-    //    mid bulge (z =  0.00, scale = 1.04)
-    //    front ring (z = +0.25, scale = 0.99)
-    const zBack = -0.25;
-    const zMid = 0.0;
-    const zFront = 0.25;
-    final nPts = _kSquircleContour.length;
-
-    final ringBack3 = <Vec3>[];
-    final ringMid3 = <Vec3>[];
-    final ringFront3 = <Vec3>[];
-    final ringBack2 = <Offset>[];
-    final ringMid2 = <Offset>[];
-    final ringFront2 = <Offset>[];
-
-    for (var i = 0; i < nPts; i++) {
-      final c = _kSquircleContour[i];
-      final vb = _xform(c.dx * 0.96, c.dy * 0.96, zBack);
-      final vm = _xform(c.dx * 1.045, c.dy * 1.045, zMid);
-      final vf = _xform(c.dx * 0.99, c.dy * 0.99, zFront);
-      ringBack3.add(vb);
-      ringMid3.add(vm);
-      ringFront3.add(vf);
-      ringBack2.add(project3D(vb, size, fov: fov));
-      ringMid2.add(project3D(vm, size, fov: fov));
-      ringFront2.add(project3D(vf, size, fov: fov));
-    }
-
-    final keyLight = const Vec3(-0.58, -0.68, 0.45).normalized();
-    final rimLight = const Vec3(0.62, 0.52, 0.58).normalized();
-
-    Color shadeBevelNormal(Vec3 normal) {
-      final keyDot = normal.dot(keyLight).clamp(0.0, 1.0);
-      final rimDot = normal.dot(rimLight).clamp(0.0, 1.0);
-      final spec = math.pow(keyDot, 9.0).toDouble();
-
-      // Deep glossy amethyst base -> electric magenta-purple -> hot pink -> white chrome specular
-      var col = Color.lerp(
-        const Color(0xFF1E093E),
-        const Color(0xFF9333EA),
-        (keyDot * 0.85 + 0.15).clamp(0.0, 1.0),
-      )!;
-      col = Color.lerp(col, const Color(0xFFEC4899), (rimDot * 0.65).clamp(0.0, 1.0))!;
-      col = Color.lerp(col, const Color(0xFFFDF2F8), (spec * 0.92).clamp(0.0, 1.0))!;
-      return col;
-    }
-
-    final sideQuads = <_BevelQuad>[];
-    for (var i = 0; i < nPts; i++) {
-      final j = (i + 1) % nPts;
-
-      // Back -> Mid bevel band
-      final bm0 = ringBack3[i];
-      final bm1 = ringBack3[j];
-      final bm2 = ringMid3[j];
-      final bm3 = ringMid3[i];
-      final n1 = (bm1 - bm0).cross(bm3 - bm0).normalized();
-      sideQuads.add(
-        _BevelQuad(
-          pts: [ringBack2[i], ringBack2[j], ringMid2[j], ringMid2[i]],
-          avgZ: (bm0.z + bm1.z + bm2.z + bm3.z) * 0.25,
-          color: shadeBevelNormal(n1),
-        ),
-      );
-
-      // Mid -> Front bevel band
-      final mf0 = ringMid3[i];
-      final mf1 = ringMid3[j];
-      final mf2 = ringFront3[j];
-      final mf3 = ringFront3[i];
-      final n2 = (mf1 - mf0).cross(mf3 - mf0).normalized();
-      sideQuads.add(
-        _BevelQuad(
-          pts: [ringMid2[i], ringMid2[j], ringFront2[j], ringFront2[i]],
-          avgZ: (mf0.z + mf1.z + mf2.z + mf3.z) * 0.25,
-          color: shadeBevelNormal(n2),
-        ),
-      );
-    }
-
-    sideQuads.sort((a, b) => a.avgZ.compareTo(b.avgZ));
-
-    final frontNormal = _xform(0, 0, 1);
-    final showFrontOnTop = frontNormal.z >= 0;
-
-    void drawCapFace({required bool isFront}) {
-      final zPlane = isFront ? zFront : zBack;
-      final outer2 = isFront ? ringFront2 : ringBack2;
-      final outerPath = Path()..addPolygon(outer2, true);
-      final outerBounds = outerPath.getBounds();
-
-      // Glossy metallic-glass outer bezel frame
-      final bezelPaint = Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: const [
-            Color(0xFFFCE7F3),
-            Color(0xFFC084FC),
-            Color(0xFF581C87),
-            Color(0xFF2E1065),
-            Color(0xFFDB2777),
-          ],
-          stops: const [0.0, 0.22, 0.54, 0.78, 1.0],
-        ).createShader(outerBounds);
-      canvas.drawPath(outerPath, bezelPaint);
-
-      // Inner recessed dark obsidian cavity (scale = 0.82)
-      final inner2 = <Offset>[];
-      for (var i = 0; i < nPts; i++) {
-        final c = _kSquircleContour[i];
-        final v = _xform(c.dx * 0.82, c.dy * 0.82, zPlane + (isFront ? 0.004 : -0.004));
-        inner2.add(project3D(v, size, fov: fov));
-      }
-      final innerPath = Path()..addPolygon(inner2, true);
-      final innerBounds = innerPath.getBounds();
-
-      final cavityPaint = Paint()
-        ..shader = RadialGradient(
-          center: const Alignment(-0.15, -0.15),
-          radius: 0.95,
-          colors: const [
-            Color(0xFF1A0E33),
-            Color(0xFF0B0618),
-            Color(0xFF05030C),
-          ],
-          stops: const [0.0, 0.58, 1.0],
-        ).createShader(innerBounds);
-      canvas.drawPath(innerPath, cavityPaint);
-
-      // Subtle purple inner ambient glow under the 12-spoke starburst
-      final centerFace = project3D(_xform(0, 0, zPlane), size, fov: fov);
-      final centerGlow = Paint()
-        ..shader = RadialGradient(
-          colors: [
-            const Color(0xFFEC4899).withValues(alpha: 0.30),
-            const Color(0xFF9333EA).withValues(alpha: 0.14),
-            Colors.transparent,
-          ],
-        ).createShader(Rect.fromCircle(center: centerFace, radius: minDim * 0.26));
-      canvas.drawCircle(centerFace, minDim * 0.26, centerGlow);
-
-      // 12-Spoke Glowing Pink-White Radial Starburst Loader projected in 3D!
-      const bladeCount = 12;
-      const rInner = 0.215;
-      const rOuter = 0.545;
-      const halfAngInner = 0.115; // radians (~6.6 deg half-width)
-      const halfAngOuter = 0.128; // slightly wider outer flare like reference
-      final zStar = zPlane + (isFront ? 0.014 : -0.014);
-      final slowTurn = phase * 0.38;
-      final waveHead = (phase * 1.55) % 1.0; // 0..1 sweeping around the 12 spokes
-
-      for (var b = 0; b < bladeCount; b++) {
-        final frac = b / bladeCount;
-        // Clockwise distance behind the sweeping bright wave head
-        final dist = (waveHead - frac + 1.0) % 1.0;
-        final intensity = math.pow(1.0 - dist, 2.35).toDouble().clamp(0.0, 1.0);
-
-        final midA = frac * 2.0 * math.pi - math.pi * 0.5 + slowTurn;
-        final dirSign = isFront ? 1.0 : -1.0;
-        final a = midA * dirSign;
-
-        // 6-point rounded-tip wedge in 3D face space
-        final p0 = _xform(
-          math.cos(a - halfAngInner) * rInner,
-          math.sin(a - halfAngInner) * rInner,
-          zStar,
-        );
-        final p1 = _xform(
-          math.cos(a) * (rInner * 0.95),
-          math.sin(a) * (rInner * 0.95),
-          zStar,
-        );
-        final p2 = _xform(
-          math.cos(a + halfAngInner) * rInner,
-          math.sin(a + halfAngInner) * rInner,
-          zStar,
-        );
-        final p3 = _xform(
-          math.cos(a + halfAngOuter) * (rOuter * 0.95),
-          math.sin(a + halfAngOuter) * (rOuter * 0.95),
-          zStar,
-        );
-        final p4 = _xform(
-          math.cos(a) * rOuter,
-          math.sin(a) * rOuter,
-          zStar,
-        );
-        final p5 = _xform(
-          math.cos(a - halfAngOuter) * (rOuter * 0.95),
-          math.sin(a - halfAngOuter) * (rOuter * 0.95),
-          zStar,
-        );
-
-        final poly = [
-          project3D(p0, size, fov: fov),
-          project3D(p1, size, fov: fov),
-          project3D(p2, size, fov: fov),
-          project3D(p3, size, fov: fov),
-          project3D(p4, size, fov: fov),
-          project3D(p5, size, fov: fov),
-        ];
-        final bladePath = Path()..addPolygon(poly, true);
-
-        final innerCol = Color.lerp(
-          const Color(0xFF9333EA),
-          const Color(0xFFF9A8D4),
-          intensity,
-        )!;
-        final outerCol = Color.lerp(
-          const Color(0xFFEC4899),
-          const Color(0xFFFFFFFF),
-          (intensity * 1.15).clamp(0.0, 1.0),
-        )!;
-
-        // Soft neon bloom behind the brightest leading blades
-        if (intensity > 0.35) {
-          final tip2D = poly[4];
-          canvas.drawCircle(
-            tip2D,
-            minDim * (0.045 + 0.035 * intensity),
-            Paint()
-              ..color = const Color(0xFFF472B6)
-                  .withValues(alpha: 0.34 * intensity),
-          );
-        }
-
-        final bladeAlpha = (0.48 + 0.52 * intensity).clamp(0.45, 1.0);
-        final bladePaint = Paint()
-          ..shader = LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              innerCol.withValues(alpha: bladeAlpha),
-              outerCol.withValues(alpha: bladeAlpha),
-            ],
-          ).createShader(bladePath.getBounds());
-        canvas.drawPath(bladePath, bladePaint);
-      }
-
-      // Glossy diagonal crystal reflection across upper-left half of inner face
-      canvas.save();
-      canvas.clipPath(innerPath);
-      final sheenPath = Path()
-        ..moveTo(innerBounds.left - 10, innerBounds.top - 10)
-        ..lineTo(innerBounds.right + 10, innerBounds.top - 10)
-        ..lineTo(
-          innerBounds.left + innerBounds.width * 0.18,
-          innerBounds.bottom * 0.92,
-        )
-        ..lineTo(innerBounds.left - 10, innerBounds.bottom * 0.65)
-        ..close();
-      canvas.drawPath(
-        sheenPath,
-        Paint()
-          ..shader = LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              Colors.white.withValues(alpha: 0.13),
-              const Color(0xFFF9A8D4).withValues(alpha: 0.05),
-              Colors.transparent,
-            ],
-          ).createShader(innerBounds),
-      );
-      canvas.restore();
-
-      // Inner cavity rim highlight & outer specular edge highlight
-      canvas.drawPath(
-        innerPath,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.2
-          ..shader = LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              const Color(0xFFF9A8D4).withValues(alpha: 0.70),
-              const Color(0xFF7E22CE).withValues(alpha: 0.35),
-              const Color(0xFFF472B6).withValues(alpha: 0.60),
-            ],
-          ).createShader(innerBounds),
-      );
-
-      canvas.drawPath(
-        outerPath,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.6
-          ..shader = LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              Colors.white.withValues(alpha: 0.92),
-              const Color(0xFFF472B6).withValues(alpha: 0.65),
-              const Color(0xFF6B21A8).withValues(alpha: 0.30),
-              const Color(0xFFF9A8D4).withValues(alpha: 0.78),
-            ],
-            stops: const [0.0, 0.28, 0.68, 1.0],
-          ).createShader(outerBounds),
-      );
-    }
-
-    // Painter's order: far cap -> sorted 3D curved bevel quads -> near cap
-    drawCapFace(isFront: !showFrontOnTop);
-
-    final quadPaint = Paint()..style = PaintingStyle.fill;
-    final seamPaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.65
-      ..strokeJoin = StrokeJoin.round;
-    for (final q in sideQuads) {
-      final path = Path()..addPolygon(q.pts, true);
-      quadPaint.color = q.color;
-      seamPaint.color = q.color;
-      canvas.drawPath(path, quadPaint);
-      canvas.drawPath(path, seamPaint);
-    }
-
-    drawCapFace(isFront: showFrontOnTop);
-
-    // Front-half gossamer orbital streaks & tiny glowing sparkle nodes
-    drawOrbitHalf(front: true);
-    for (var k = 0; k < 4; k++) {
-      final a = phase * 1.1 + k * (math.pi * 0.5);
-      final sv = Vec3(math.cos(a) * 1.28, math.sin(a * 1.3) * 0.95, math.sin(a) * 0.6)
-          .rotateX(rotX * 0.4)
-          .rotateY(rotY * 0.4);
-      if (sv.z < 0) continue;
-      final sp = project3D(sv, size, fov: fov);
-      canvas.drawCircle(
-        sp,
-        3.8,
-        Paint()..color = const Color(0xFFF472B6).withValues(alpha: 0.32),
-      );
-      canvas.drawCircle(
-        sp,
-        1.5,
-        Paint()..color = Colors.white.withValues(alpha: 0.92),
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _GlossySquircle3DPainter oldDelegate) =>
-      oldDelegate.rotX != rotX ||
-      oldDelegate.rotY != rotY ||
-      oldDelegate.rotZ != rotZ ||
-      oldDelegate.phase != phase ||
-      oldDelegate.pulse != pulse;
-}
-
-/// Shared obsidian + vertical violet light pillar + bottom curved neon horizon
-/// backdrop matching the dark purple fintech splash aesthetic.
-class HisobchiCosmicSplashScene extends StatelessWidget {
-  final Widget child;
-  final double pulse;
-
-  const HisobchiCosmicSplashScene({
-    super.key,
-    required this.child,
-    this.pulse = 0.5,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return ColoredBox(
-      color: const Color(0xFF070510),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          // 1. Subtle starry ambient purple aura + vertical light beam
-          IgnorePointer(
-            child: CustomPaint(
-              painter: _CosmicBeamAndHorizonPainter(pulse: pulse),
-            ),
-          ),
-          // 2. Foreground content
-          child,
-        ],
-      ),
-    );
-  }
-}
-
-class _CosmicBeamAndHorizonPainter extends CustomPainter {
-  final double pulse;
-
-  const _CosmicBeamAndHorizonPainter({required this.pulse});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final cx = size.width * 0.5;
-    final emblemCenterY = size.height * 0.43;
-
-    // Wide ambient violet radial nebula
-    final nebulaRect = Rect.fromCircle(
-      center: Offset(cx, emblemCenterY),
-      radius: math.min(size.width, size.height) * (0.62 + 0.04 * pulse),
-    );
-    canvas.drawRect(
-      Offset.zero & size,
-      Paint()
-        ..shader = RadialGradient(
-          center: const Alignment(0, -0.14),
-          radius: 0.72 + 0.05 * pulse,
-          colors: [
-            const Color(0xFFA855F7).withValues(alpha: 0.30 + 0.08 * pulse),
-            const Color(0xFFEC4899).withValues(alpha: 0.14 + 0.04 * pulse),
-            const Color(0xFF3B0764).withValues(alpha: 0.10),
-            Colors.transparent,
-          ],
-          stops: const [0.0, 0.34, 0.64, 1.0],
-        ).createShader(nebulaRect),
-    );
-
-    // Vertical luminous light pillar passing behind the 3D squircle
-    final beamHeight = size.height * 0.74;
-    final beamTop = emblemCenterY - beamHeight * 0.5;
-    final outerBeamRect = Rect.fromLTWH(cx - 72, beamTop, 144, beamHeight);
-    canvas.drawRect(
-      outerBeamRect,
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.centerLeft,
-          end: Alignment.centerRight,
-          colors: [
-            Colors.transparent,
-            const Color(0xFF9333EA).withValues(alpha: 0.16 + 0.06 * pulse),
-            const Color(0xFFE879F9).withValues(alpha: 0.30 + 0.10 * pulse),
-            const Color(0xFF9333EA).withValues(alpha: 0.16 + 0.06 * pulse),
-            Colors.transparent,
-          ],
-          stops: const [0.0, 0.28, 0.50, 0.72, 1.0],
-        ).createShader(outerBeamRect),
-    );
-
-    // Vertical fade mask effect via bright core flare above & below emblem
-    final coreBeamRect =
-        Rect.fromLTWH(cx - 18, emblemCenterY - 210, 36, 420);
-    canvas.drawRect(
-      coreBeamRect,
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.transparent,
-            const Color(0xFFF5D0FE).withValues(alpha: 0.42 + 0.14 * pulse),
-            const Color(0xFFFFFFFF).withValues(alpha: 0.58 + 0.14 * pulse),
-            const Color(0xFFF5D0FE).withValues(alpha: 0.42 + 0.14 * pulse),
-            Colors.transparent,
-          ],
-          stops: const [0.0, 0.27, 0.50, 0.73, 1.0],
-        ).createShader(coreBeamRect),
-    );
-
-    // Subtle static cosmic starlight specks
-    final starPaint = Paint();
-    const starSeeds = [
-      Offset(0.16, 0.22),
-      Offset(0.84, 0.20),
-      Offset(0.22, 0.34),
-      Offset(0.79, 0.36),
-      Offset(0.14, 0.54),
-      Offset(0.87, 0.52),
-      Offset(0.28, 0.64),
-      Offset(0.73, 0.62),
-    ];
-    for (var i = 0; i < starSeeds.length; i++) {
-      final s = starSeeds[i];
-      final twinkle = 0.25 + 0.45 * (0.5 + 0.5 * math.sin(pulse * math.pi * 2 + i));
-      starPaint.color = Colors.white.withValues(alpha: twinkle * 0.45);
-      canvas.drawCircle(
-        Offset(size.width * s.dx, size.height * s.dy),
-        i.isEven ? 1.2 : 0.9,
-        starPaint,
-      );
-    }
-
-    // Bottom curved glowing purple-magenta horizon arc (planet limb glow)
-    final arcRadius = size.width * 1.45;
-    final arcCenter = Offset(cx, size.height + arcRadius - 42);
-
-    // Soft atmospheric bloom rising from the curved horizon
-    final horizonGlowRect =
-        Rect.fromLTWH(0, size.height - 130, size.width, 140);
-    canvas.drawRect(
-      horizonGlowRect,
-      Paint()
-        ..shader = RadialGradient(
-          center: const Alignment(0, 1.25),
-          radius: 1.05,
-          colors: [
-            const Color(0xFFD946EF).withValues(alpha: 0.42 + 0.08 * pulse),
-            const Color(0xFF7C3AED).withValues(alpha: 0.22),
-            Colors.transparent,
-          ],
-          stops: const [0.0, 0.48, 1.0],
-        ).createShader(horizonGlowRect),
-    );
-
-    // Crisp glowing curved horizon rim
-    for (final layer in const [
-      (width: 18.0, alpha: 0.16, color: Color(0xFFA855F7)),
-      (width: 7.0, alpha: 0.34, color: Color(0xFFEC4899)),
-      (width: 2.2, alpha: 0.72, color: Color(0xFFF5D0FE)),
-    ]) {
-      canvas.drawCircle(
-        arcCenter,
-        arcRadius,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = layer.width
-          ..color = layer.color.withValues(alpha: layer.alpha),
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _CosmicBeamAndHorizonPainter oldDelegate) =>
-      (oldDelegate.pulse - pulse).abs() > 0.004;
-}
-
-/// Cinematic 3–4s post-login / post-PIN-unlock 3D welcome transition screen.
-class Hisobchi3DWelcomeScreen extends StatefulWidget {
+/// Wrapper keeping the welcome screen API backed by [HisobchiSplash].
+class Hisobchi3DWelcomeScreen extends StatelessWidget {
   final VoidCallback onContinue;
   final String title;
   final String subtitle;
@@ -1063,144 +660,161 @@ class Hisobchi3DWelcomeScreen extends StatefulWidget {
     super.key,
     required this.onContinue,
     this.title = 'Hisobchi',
-    this.subtitle = "Ma'lumotlar sinxronizatsiya qilinmoqda...",
-    this.autoContinueDelay = const Duration(milliseconds: 3200),
+    this.subtitle = 'Ilova tayyorlanmoqda...',
+    this.autoContinueDelay = const Duration(seconds: 3),
   });
 
   @override
-  State<Hisobchi3DWelcomeScreen> createState() =>
-      _Hisobchi3DWelcomeScreenState();
-}
-
-class _Hisobchi3DWelcomeScreenState extends State<Hisobchi3DWelcomeScreen>
-    with SingleTickerProviderStateMixin {
-  Timer? _autoTimer;
-  late final AnimationController _pulseCtrl;
-  bool _completed = false;
-  bool _interacted = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _pulseCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2200),
-    )..repeat(reverse: true);
-    _scheduleContinue(widget.autoContinueDelay);
-  }
-
-  void _scheduleContinue(Duration delay) {
-    _autoTimer?.cancel();
-    if (_completed) return;
-    _autoTimer = Timer(delay, _finish);
-  }
-
-  void _finish() {
-    if (_completed || !mounted) return;
-    _completed = true;
-    _autoTimer?.cancel();
-    widget.onContinue();
-  }
-
-  @override
-  void dispose() {
-    _autoTimer?.cancel();
-    _pulseCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF070510),
-      body: AnimatedBuilder(
-        animation: _pulseCtrl,
-        builder: (context, child) => HisobchiCosmicSplashScene(
-          pulse: _pulseCtrl.value,
-          child: child!,
-        ),
-        child: SafeArea(
-          child: Stack(
-            children: [
-              Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Interactive3DFintechCube(
-                        size: 214,
-                        onInteractStart: () {
-                          _autoTimer?.cancel();
-                          if (!_interacted && mounted) {
-                            setState(() => _interacted = true);
-                          }
-                        },
-                        onInteractEnd: () {
-                          _scheduleContinue(
-                              const Duration(milliseconds: 1600));
-                        },
-                      ),
-                      const SizedBox(height: 20),
-                      Text(
-                        widget.title,
-                        style: const TextStyle(
-                          fontSize: 26,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: -0.4,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        _interacted
-                            ? 'Davom etish uchun pastdagi tugmani bosing'
-                            : widget.subtitle,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white.withValues(alpha: 0.72),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 28,
-                child: Center(
-                  child: TextButton.icon(
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.white.withValues(alpha: 0.85),
-                      backgroundColor: Colors.white.withValues(alpha: 0.08),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 18, vertical: 10),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(999),
-                        side: BorderSide(
-                          color: const Color(0xFFE879F9).withValues(alpha: 0.35),
-                        ),
-                      ),
-                    ),
-                    onPressed: _finish,
-                    icon: const Icon(Icons.arrow_forward_rounded, size: 17),
-                    label: const Text(
-                      'Kirish',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 13.5,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+    return HisobchiSplash(
+      title: title,
+      subtitle: subtitle,
+      duration: autoContinueDelay,
+      onFinished: onContinue,
     );
   }
+}
+
+/// 12 ta yaproqli aylanuvchi "burst" (rasmdagi markaziy belgi).
+class _BurstPainter extends CustomPainter {
+  _BurstPainter(this.t);
+  final double t;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = size.center(Offset.zero);
+    final r1 = size.width * 0.36;
+    final r0 = size.width * 0.15;
+    const n = 12;
+    const step = 2 * math.pi / n;
+    const gap = 0.16;
+
+    for (int i = 0; i < n; i++) {
+      final a0 = i * step + gap / 2 - math.pi / 2;
+      final sweep = step - gap;
+      final a1 = a0 + sweep;
+
+      final path = Path()
+        ..moveTo(c.dx + math.cos(a0) * r0, c.dy + math.sin(a0) * r0)
+        ..lineTo(c.dx + math.cos(a0) * r1, c.dy + math.sin(a0) * r1)
+        ..arcTo(Rect.fromCircle(center: c, radius: r1), a0, sweep, false)
+        ..lineTo(c.dx + math.cos(a1) * r0, c.dy + math.sin(a1) * r0)
+        ..arcTo(Rect.fromCircle(center: c, radius: r0), a1, -sweep, false)
+        ..close();
+
+      final k = ((i / n) - t) % 1.0;
+      final bright = math.pow(k < 0 ? k + 1 : k, 1.6).toDouble();
+      final color = Color.lerp(
+        const Color(0xFF9B3FA8),
+        Colors.white,
+        bright,
+      )!
+          .withValues(alpha: 0.35 + 0.65 * bright);
+
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = color.withValues(alpha: 0.45 * bright)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
+      );
+      canvas.drawPath(path, Paint()..color = color);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _BurstPainter old) => old.t != t;
+}
+
+/// Ikonka atrofidagi qiya orbita halqalari va nuqtalar.
+class _OrbitPainter extends CustomPainter {
+  _OrbitPainter(this.t);
+  final double t;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = size.center(Offset.zero);
+    final s = size.width / 300.0;
+    final ring = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1
+      ..color = Colors.white.withValues(alpha: 0.16);
+
+    void orbit(double w, double h, double rot, double phase, double speed) {
+      canvas.save();
+      canvas.translate(c.dx, c.dy);
+      canvas.rotate(rot);
+      canvas.drawOval(
+        Rect.fromCenter(center: Offset.zero, width: w * s, height: h * s),
+        ring,
+      );
+      final a = (t * speed + phase) * 2 * math.pi;
+      final dot = Offset(
+        math.cos(a) * (w * s) / 2,
+        math.sin(a) * (h * s) / 2,
+      );
+      canvas.drawCircle(
+        dot,
+        5 * s,
+        Paint()
+          ..color = const Color(0xFFFF9BE5).withValues(alpha: 0.7)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5),
+      );
+      canvas.drawCircle(dot, 2.4 * s, Paint()..color = Colors.white);
+      canvas.restore();
+    }
+
+    orbit(285, 215, -0.35, 0.10, 1);
+    orbit(255, 175, 0.55, 0.60, -1);
+  }
+
+  @override
+  bool shouldRepaint(covariant _OrbitPainter old) => old.t != t;
+}
+
+/// Ekran pastidagi yorqin binafsha yoy.
+class _BottomArcPainter extends CustomPainter {
+  _BottomArcPainter(this.anim) : super(repaint: anim);
+  final Animation<double> anim;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final p = Curves.easeInOut.transform(anim.value);
+    final rect = Rect.fromCenter(
+      center: Offset(w / 2, size.height + w * 0.36),
+      width: w * 1.7,
+      height: w * 0.92,
+    );
+
+    canvas.drawOval(
+      rect,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            const Color(0xFF8B2FE0).withValues(alpha: 0.35 + 0.15 * p),
+            Colors.transparent,
+          ],
+        ).createShader(rect),
+    );
+    canvas.drawOval(
+      rect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 5
+        ..color = const Color(0xFFD27BFF).withValues(alpha: 0.85)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
+    );
+    canvas.drawOval(
+      rect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..color = const Color(0xFFF0C8FF).withValues(alpha: 0.9),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _BottomArcPainter old) => false;
 }

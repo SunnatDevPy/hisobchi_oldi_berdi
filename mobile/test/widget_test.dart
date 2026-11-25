@@ -756,8 +756,7 @@ void main() {
     );
 
     await tester.pump(const Duration(milliseconds: 500));
-    expect(find.byType(HisobchiCosmicSplashScene), findsOneWidget);
-    expect(find.byType(Interactive3DFintechCube), findsOneWidget);
+    expect(find.byType(HisobchiSplash), findsOneWidget);
     expect(continued, equals(0));
 
     // Still animating at 2.5s

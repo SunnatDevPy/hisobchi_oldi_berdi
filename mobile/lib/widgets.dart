@@ -3043,127 +3043,21 @@ class _CustomDropdownSheetState<T> extends State<_CustomDropdownSheet<T>> {
 // ANIMATED GLOWING LOGO SPLASH & DASHBOARD LOADING SKELETON
 // ============================================================================
 
-class HisobchiAnimatedLoadingScreen extends StatefulWidget {
+class HisobchiAnimatedLoadingScreen extends StatelessWidget {
   final String title;
   final String subtitle;
 
   const HisobchiAnimatedLoadingScreen({
     super.key,
     this.title = 'Hisobchi',
-    this.subtitle = 'Ilova yuklanmoqda...',
+    this.subtitle = 'Ilova tayyorlanmoqda...',
   });
 
   @override
-  State<HisobchiAnimatedLoadingScreen> createState() =>
-      _HisobchiAnimatedLoadingScreenState();
-}
-
-class _HisobchiAnimatedLoadingScreenState
-    extends State<HisobchiAnimatedLoadingScreen>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2400),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    const glowViolet = Color(0xFFA855F7);
-    const glowPink = Color(0xFFEC4899);
-
-    return AnimatedBuilder(
-      animation: _ctrl,
-      builder: (context, child) {
-        final t = _ctrl.value;
-        final pulse = 0.5 - 0.5 * math.cos(t * 2 * math.pi);
-        return HisobchiCosmicSplashScene(
-          pulse: pulse,
-          child: SafeArea(
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  child!,
-                  const SizedBox(height: 18),
-                  Text(
-                    widget.title,
-                    style: const TextStyle(
-                      fontSize: 25,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: -0.4,
-                      color: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    widget.subtitle,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white.withValues(alpha: 0.72),
-                    ),
-                  ),
-                  const SizedBox(height: 22),
-                  Container(
-                    width: 158,
-                    height: 4.5,
-                    decoration: BoxDecoration(
-                      color: glowViolet.withValues(alpha: 0.22),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: LayoutBuilder(
-                      builder: (ctx, box) {
-                        final barW = box.maxWidth * 0.44;
-                        final travel = box.maxWidth - barW;
-                        return Align(
-                          alignment: Alignment.centerLeft,
-                          child: Transform.translate(
-                            offset: Offset(travel * pulse, 0),
-                            child: Container(
-                              width: barW,
-                              height: 4.5,
-                              decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  colors: [
-                                    Color(0xFFA855F7),
-                                    Color(0xFFF472B6),
-                                    Colors.white,
-                                  ],
-                                ),
-                                borderRadius: BorderRadius.circular(999),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: glowPink.withValues(alpha: 0.65),
-                                    blurRadius: 10,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-      child: const Interactive3DFintechCube(size: 214),
+    return HisobchiSplash(
+      title: title,
+      subtitle: subtitle,
     );
   }
 }
