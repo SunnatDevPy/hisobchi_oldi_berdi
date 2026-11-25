@@ -435,8 +435,6 @@ class _HisobchiAppState extends State<HisobchiApp> with WidgetsBindingObserver {
   late final HisobchiApiClient _api;
   ThemeMode _themeMode = ThemeMode.system;
   bool _initializing = true;
-  bool _transitioningToHome = false;
-  bool _pendingPinSetupCheck = false;
   bool _pinLocked = false;
   bool _needsPinSetup = false;
   String? _savedPin;
@@ -480,33 +478,37 @@ class _HisobchiAppState extends State<HisobchiApp> with WidgetsBindingObserver {
 
   Future<void> _bootstrap() async {
     if (widget.apiOverride == null) {
-      // Play the full 3.4s Yandex/SuperApp-style 3D splash animation in parallel
-      // with session & lock initialization so cold start feels smooth and intentional.
-      final minSplash = Future<void>.delayed(const Duration(milliseconds: 3400));
-      Future<void> loadState() async {
-        if (kIsWeb) {
-          initTelegramWebApp();
-          final scheme = getTelegramColorScheme();
-          if (scheme == 'dark') {
-            _themeMode = ThemeMode.dark;
-          } else if (scheme == 'light') {
-            _themeMode = ThemeMode.light;
-          }
-          syncTelegramChromeColors(isDark: _themeMode == ThemeMode.dark);
+      if (kIsWeb) {
+        // index.html #hisobchi-splash already played while JS loaded — do not
+        // add a second artificial splash wait on Web.
+        initTelegramWebApp();
+        final scheme = getTelegramColorScheme();
+        if (scheme == 'dark') {
+          _themeMode = ThemeMode.dark;
+        } else if (scheme == 'light') {
+          _themeMode = ThemeMode.light;
+        }
+        syncTelegramChromeColors(isDark: _themeMode == ThemeMode.dark);
 
-          final initData = getTelegramWebAppInitData();
-          if (initData == null || initData.isEmpty) {
-            _webAuthError =
-                "Mini App faqat Telegram bot ichidan (@hisobchi_my_bot) ochiladi.";
-          } else {
-            try {
-              await _api.loginWithTelegramWebApp(initData: initData);
-              _webAuthError = null;
-            } catch (e) {
-              _webAuthError = e.toString();
-            }
-          }
+        final initData = getTelegramWebAppInitData();
+        if (initData == null || initData.isEmpty) {
+          _webAuthError =
+              "Mini App faqat Telegram bot ichidan (@hisobchi_my_bot) ochiladi.";
         } else {
+          try {
+            await _api.loginWithTelegramWebApp(initData: initData);
+            _webAuthError = null;
+            await _api.prewarmHomeData();
+          } catch (e) {
+            _webAuthError = e.toString();
+          }
+        }
+      } else {
+        // Single 3.0s cosmic 3D splash on Android cold launch while session +
+        // home data load in parallel so the second screen opens immediately.
+        final minSplash =
+            Future<void>.delayed(const Duration(milliseconds: 3000));
+        Future<void> loadAndroidState() async {
           await _api.loadSavedSession();
           final lock = await AppLockStorage.load();
           _savedPin = lock.pin;
@@ -514,10 +516,13 @@ class _HisobchiAppState extends State<HisobchiApp> with WidgetsBindingObserver {
           if (_api.isAuthenticated && lock.enabled && lock.pin != null) {
             _pinLocked = true;
           }
+          if (_api.isAuthenticated) {
+            await _api.prewarmHomeData();
+          }
         }
-      }
 
-      await Future.wait([loadState(), minSplash]);
+        await Future.wait([loadAndroidState(), minSplash]);
+      }
     }
     if (mounted) {
       setState(() => _initializing = false);
@@ -526,20 +531,10 @@ class _HisobchiAppState extends State<HisobchiApp> with WidgetsBindingObserver {
 
   Future<void> _playTransitionAndEnter({bool checkPinSetup = false}) async {
     if (!mounted) return;
+    // Open immediately on the second step (no second loading screen!).
     setState(() {
-      _transitioningToHome = true;
-      _pendingPinSetupCheck = checkPinSetup;
-    });
-  }
-
-  void _completeTransition() {
-    if (!mounted) return;
-    final checkPin = _pendingPinSetupCheck;
-    setState(() {
-      _transitioningToHome = false;
-      _pendingPinSetupCheck = false;
       _pinLocked = false;
-      if (checkPin &&
+      if (checkPinSetup &&
           !kIsWeb &&
           widget.apiOverride == null &&
           _savedPin == null) {
@@ -573,11 +568,6 @@ class _HisobchiAppState extends State<HisobchiApp> with WidgetsBindingObserver {
         body: HisobchiAnimatedLoadingScreen(
           subtitle: 'Ilova tayyorlanmoqda...',
         ),
-      );
-    } else if (_transitioningToHome) {
-      home = Hisobchi3DWelcomeScreen(
-        key: const ValueKey('app_entering'),
-        onContinue: _completeTransition,
       );
     } else if (_api.isAuthenticated && _pinLocked && _savedPin != null) {
       home = PinLockScreen(
@@ -936,6 +926,7 @@ class _LoginScreenState extends State<LoginScreen> with WidgetsBindingObserver {
         code: code,
         deviceName: _deviceCtrl.text,
       );
+      await widget.api.prewarmHomeData();
       if (mounted) widget.onLoggedIn();
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -1317,7 +1308,16 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
       const Duration(seconds: 5),
       (_) => _pollSyncVersion(),
     );
-    _refreshAll();
+    final prewarmed = widget.api.consumePrewarmedData();
+    if (prewarmed.status != null) {
+      _summary = prewarmed.status;
+      _allDebts = prewarmed.debts ?? [];
+      _loading = false;
+      _dataAnimSeed = 1;
+      _refreshAll(silent: true);
+    } else {
+      _refreshAll();
+    }
   }
 
   @override
@@ -2283,69 +2283,111 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
               ),
             )
           : null,
-      bottomNavigationBar: DecoratedBox(
-        decoration: BoxDecoration(
-          color: isDarkCtx(context) ? AppTokens.cardDark : Colors.white,
-          border: Border(
-            top: BorderSide(
+      bottomNavigationBar: SafeArea(
+        top: false,
+        maintainBottomViewPadding: true,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
               color: isDarkCtx(context)
-                  ? AppTokens.cardBorderDark
-                  : AppTokens.cardBorderLight,
+                  ? const Color(0xFF151125).withValues(alpha: 0.96)
+                  : Colors.white.withValues(alpha: 0.98),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                color: isDarkCtx(context)
+                    ? const Color(0xFF342954)
+                    : AppTokens.cardBorderLight,
+                width: 1.1,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: isDarkCtx(context)
+                      ? Colors.black.withValues(alpha: 0.48)
+                      : AppTokens.brandViolet.withValues(alpha: 0.08),
+                  blurRadius: 22,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(24),
+              child: NavigationBar(
+                selectedIndex: _tabIndex,
+                onDestinationSelected: _switchToTab,
+                destinations: [
+                  const NavigationDestination(
+                    icon: Icon(Icons.space_dashboard_outlined),
+                    selectedIcon: Icon(Icons.space_dashboard_rounded),
+                    label: 'Dashboard',
+                  ),
+                  NavigationDestination(
+                    icon: Badge(
+                      isLabelVisible: nakCount > 0,
+                      label: Text('$nakCount'),
+                      child: const Icon(Icons.receipt_long_outlined),
+                    ),
+                    selectedIcon: Badge(
+                      isLabelVisible: nakCount > 0,
+                      label: Text('$nakCount'),
+                      child: const Icon(Icons.receipt_long_rounded),
+                    ),
+                    label: 'Amallar',
+                  ),
+                  NavigationDestination(
+                    icon: Badge(
+                      isLabelVisible: debtCount > 0,
+                      label: Text('$debtCount'),
+                      child: const Icon(Icons.storefront_outlined),
+                    ),
+                    selectedIcon: Badge(
+                      isLabelVisible: debtCount > 0,
+                      label: Text('$debtCount'),
+                      child: const Icon(Icons.storefront_rounded),
+                    ),
+                    label: "Ta'minotchilar",
+                  ),
+                  const NavigationDestination(
+                    icon: Icon(Icons.assessment_outlined),
+                    selectedIcon: Icon(Icons.assessment_rounded),
+                    label: 'Smena',
+                  ),
+                ],
+              ),
             ),
           ),
         ),
-        child: SafeArea(
-          top: false,
-          maintainBottomViewPadding: true,
-          child: NavigationBar(
-          selectedIndex: _tabIndex,
-          onDestinationSelected: _switchToTab,
-          destinations: [
-            const NavigationDestination(
-              icon: Icon(Icons.space_dashboard_outlined),
-              selectedIcon: Icon(Icons.space_dashboard_rounded),
-              label: 'Dashboard',
-            ),
-            NavigationDestination(
-              icon: Badge(
-                isLabelVisible: nakCount > 0,
-                label: Text('$nakCount'),
-                child: const Icon(Icons.receipt_long_outlined),
-              ),
-              selectedIcon: Badge(
-                isLabelVisible: nakCount > 0,
-                label: Text('$nakCount'),
-                child: const Icon(Icons.receipt_long_rounded),
-              ),
-              label: 'Amallar',
-            ),
-            NavigationDestination(
-              icon: Badge(
-                isLabelVisible: debtCount > 0,
-                label: Text('$debtCount'),
-                child: const Icon(Icons.storefront_outlined),
-              ),
-              selectedIcon: Badge(
-                isLabelVisible: debtCount > 0,
-                label: Text('$debtCount'),
-                child: const Icon(Icons.storefront_rounded),
-              ),
-              label: "Ta'minotchilar",
-            ),
-            const NavigationDestination(
-              icon: Icon(Icons.assessment_outlined),
-              selectedIcon: Icon(Icons.assessment_rounded),
-              label: 'Smena',
-            ),
-          ],
-        ),
-        ),
       ),
-      body: _loading && _summary == null
-          ? const DashboardLoadingSkeleton()
-          : _error != null && _summary == null
-              ? _buildErrorState()
-              : Column(
+      body: Stack(
+        children: [
+          if (isDarkCtx(context))
+            Positioned(
+              top: -90,
+              left: 0,
+              right: 0,
+              height: 240,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      center: const Alignment(0, -0.7),
+                      radius: 1.05,
+                      colors: [
+                        AppTokens.brandViolet.withValues(alpha: 0.16),
+                        AppTokens.brandOrchid.withValues(alpha: 0.06),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          Positioned.fill(
+            child: _loading && _summary == null
+                ? const DashboardLoadingSkeleton()
+                : _error != null && _summary == null
+                    ? _buildErrorState()
+                    : Column(
                   children: [
                     if (_isOfflineMode || _outboxCount > 0)
                       _buildOfflineStatusBanner(),
@@ -2468,6 +2510,9 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                     ),
                   ],
                 ),
+          ),
+        ],
+      ),
     );
   }
 

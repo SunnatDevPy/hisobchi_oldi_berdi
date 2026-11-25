@@ -31,10 +31,14 @@ class HeroBalanceCard extends StatelessWidget {
       decoration: BoxDecoration(
         gradient: AppTokens.heroGradient,
         borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: const Color(0xFFE879F9).withValues(alpha: 0.34),
+          width: 1.1,
+        ),
         boxShadow: [
           BoxShadow(
-            color: AppTokens.brand.withValues(alpha: 0.28),
-            blurRadius: 24,
+            color: AppTokens.brandViolet.withValues(alpha: 0.32),
+            blurRadius: 26,
             offset: const Offset(0, 10),
           ),
         ],
@@ -174,10 +178,10 @@ class HeroBalanceCard extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.22),
+              color: const Color(0xFF0A0614).withValues(alpha: 0.36),
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
-                color: Colors.white.withValues(alpha: 0.12),
+                color: const Color(0xFFF5D0FE).withValues(alpha: 0.16),
               ),
             ),
             child: Column(
@@ -3272,9 +3276,9 @@ class _DashboardLoadingSkeletonState extends State<DashboardLoadingSkeleton>
   Widget build(BuildContext context) {
     final isDark = isDarkCtx(context);
     final baseBg =
-        isDark ? const Color(0xFF1F2742) : const Color(0xFFE6EAF3);
+        isDark ? const Color(0xFF1A142B) : const Color(0xFFECE7F7);
     final hiBg =
-        isDark ? const Color(0xFF2D3860) : const Color(0xFFF3F6FC);
+        isDark ? const Color(0xFF2C2248) : const Color(0xFFF7F4FD);
     final heroBase = Colors.white.withValues(alpha: 0.14);
     final heroHi = Colors.white.withValues(alpha: 0.30);
 
@@ -3933,7 +3937,7 @@ class _TopSlideNotificationOverlayState
     final (accent, defaultIcon) = _toneStyle();
     final topPad = MediaQuery.paddingOf(context).top;
     final cardBg = isDark
-        ? const Color(0xFF171E31).withValues(alpha: 0.97)
+        ? const Color(0xFF161128).withValues(alpha: 0.97)
         : Colors.white.withValues(alpha: 0.98);
     final titleColor = isDark ? AppTokens.textPrimaryDark : AppTokens.textPrimaryLight;
     final subColor =
@@ -4412,7 +4416,7 @@ class _PinLockScreenState extends State<PinLockScreen>
     final bg = accent
         ? AppTokens.brandViolet.withValues(alpha: isDark ? 0.24 : 0.14)
         : (isDark
-            ? const Color(0xFF1A223A)
+            ? const Color(0xFF18132B)
             : Colors.white);
     final border = accent
         ? AppTokens.brandViolet.withValues(alpha: 0.45)

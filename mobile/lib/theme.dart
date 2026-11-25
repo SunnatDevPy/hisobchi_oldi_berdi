@@ -2,50 +2,59 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
-/// Design tokens for Hisobchi — high-contrast fintech palette for Light & Dark modes.
+/// Design tokens for Hisobchi — unified obsidian, electric-violet, orchid & cyan fintech palette.
 class AppTokens {
-  // Brand
-  static const Color brand = Color(0xFF4F46E5); // indigo-600
-  static const Color brandDeep = Color(0xFF312E81); // indigo-900
-  static const Color brandViolet = Color(0xFF7C3AED); // violet-600
-  static const Color brandSky = Color(0xFF0EA5E9);
+  // Brand (Electric Violet + Royal Amethyst + Orchid Pink + Luminous Cyan)
+  static const Color brand = Color(0xFF8B5CF6); // electric violet-500
+  static const Color brandDeep = Color(0xFF3B0764); // royal amethyst-950
+  static const Color brandViolet = Color(0xFFA855F7); // luminous purple-500
+  static const Color brandOrchid = Color(0xFFEC4899); // neon orchid-pink-500
+  static const Color brandSky = Color(0xFF38BDF8); // luminous cyan-400
 
   // Legacy names kept for compatibility
-  static const Color navyDark = Color(0xFF0F172A);
+  static const Color navyDark = Color(0xFF090712);
   static const Color navyPrimary = brand;
-  static const Color navyAccent = Color(0xFF6366F1);
+  static const Color navyAccent = Color(0xFFA855F7);
 
   // Semantic money colors (base)
-  static const Color cashGreen = Color(0xFF059669);
+  static const Color cashGreen = Color(0xFF10B981);
   static const Color cashGreenBg = Color(0xFFECFDF5);
-  static const Color cardBlue = Color(0xFF2563EB);
-  static const Color cardBlueBg = Color(0xFFEFF6FF);
-  static const Color transferPurple = Color(0xFF9333EA);
+  static const Color cardBlue = Color(0xFF0284C7);
+  static const Color cardBlueBg = Color(0xFFF0F9FF);
+  static const Color transferPurple = Color(0xFFA855F7);
   static const Color transferPurpleBg = Color(0xFFFAF5FF);
-  static const Color debtAmber = Color(0xFFD97706);
+  static const Color debtAmber = Color(0xFFF59E0B);
   static const Color debtAmberBg = Color(0xFFFFFBEB);
-  static const Color dangerRed = Color(0xFFDC2626);
+  static const Color dangerRed = Color(0xFFEF4444);
   static const Color dangerRedBg = Color(0xFFFEF2F2);
 
-  static const Color surfaceLight = Color(0xFFF3F5FA);
-  static const Color cardBorderLight = Color(0xFFE2E8F0);
-  static const Color textPrimaryLight = Color(0xFF0F172A);
-  static const Color textSecondaryLight = Color(0xFF475569);
+  // Light surfaces (crisp pearl-lavender)
+  static const Color surfaceLight = Color(0xFFF6F4FB);
+  static const Color cardBorderLight = Color(0xFFE5DFF3);
+  static const Color textPrimaryLight = Color(0xFF140F26);
+  static const Color textSecondaryLight = Color(0xFF5A5275);
 
-  static const Color surfaceDark = Color(0xFF090D18);
-  static const Color cardDark = Color(0xFF13192B);
-  static const Color cardBorderDark = Color(0xFF26304D);
-  static const Color textPrimaryDark = Color(0xFFF8FAFC);
-  static const Color textSecondaryDark = Color(0xFFCBD5E1);
+  // Dark surfaces (deep obsidian-plum matching 3D cosmic splash)
+  static const Color surfaceDark = Color(0xFF090712);
+  static const Color cardDark = Color(0xFF131020);
+  static const Color cardElevatedDark = Color(0xFF1B162D);
+  static const Color cardBorderDark = Color(0xFF2B2344);
+  static const Color textPrimaryDark = Color(0xFFFAF8FF);
+  static const Color textSecondaryDark = Color(0xFFB8B0D0);
 
   static const LinearGradient heroGradient = LinearGradient(
-    colors: [Color(0xFF1E1B4B), Color(0xFF4338CA), Color(0xFF6D28D9)],
+    colors: [
+      Color(0xFF170B30),
+      Color(0xFF3B0F70),
+      Color(0xFF7E22CE),
+      Color(0xFFA21CAF),
+    ],
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );
 
   static const LinearGradient aiGradient = LinearGradient(
-    colors: [Color(0xFF7C3AED), Color(0xFFDB2777)],
+    colors: [Color(0xFF8B5CF6), Color(0xFFD946EF), Color(0xFFEC4899)],
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );
@@ -189,15 +198,16 @@ ThemeData buildAppTheme(Brightness brightness) {
       isDark ? AppTokens.textPrimaryDark : AppTokens.textPrimaryLight;
   final secondaryText =
       isDark ? AppTokens.textSecondaryDark : AppTokens.textSecondaryLight;
-  final primaryColor = isDark ? const Color(0xFF818CF8) : AppTokens.brand;
+  final primaryColor = isDark ? const Color(0xFFA78BFA) : const Color(0xFF7C3AED);
 
   final colorScheme = ColorScheme.fromSeed(
     seedColor: AppTokens.brand,
     brightness: brightness,
     primary: primaryColor,
     onPrimary: Colors.white,
-    secondary: AppTokens.brandViolet,
+    secondary: AppTokens.brandOrchid,
     onSecondary: Colors.white,
+    tertiary: AppTokens.brandSky,
     error: AppTokens.dangerRed,
     surface: isDark ? AppTokens.cardDark : Colors.white,
     onSurface: primaryText,
@@ -222,8 +232,9 @@ ThemeData buildAppTheme(Brightness brightness) {
     appBarTheme: AppBarTheme(
       centerTitle: false,
       elevation: 0,
-      scrolledUnderElevation: 1,
-      backgroundColor: isDark ? AppTokens.cardDark : Colors.white,
+      scrolledUnderElevation: 0,
+      surfaceTintColor: Colors.transparent,
+      backgroundColor: isDark ? AppTokens.surfaceDark : Colors.white,
       foregroundColor: primaryText,
       iconTheme: IconThemeData(color: primaryText),
       titleTextStyle: TextStyle(
@@ -235,6 +246,7 @@ ThemeData buildAppTheme(Brightness brightness) {
     ),
     cardTheme: CardThemeData(
       elevation: 0,
+      surfaceTintColor: Colors.transparent,
       color: isDark ? AppTokens.cardDark : Colors.white,
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
@@ -254,15 +266,16 @@ ThemeData buildAppTheme(Brightness brightness) {
       ),
     ),
     navigationBarTheme: NavigationBarThemeData(
-      height: 68,
+      height: 64,
       elevation: 0,
-      backgroundColor: isDark ? AppTokens.cardDark : Colors.white,
+      surfaceTintColor: Colors.transparent,
+      backgroundColor: Colors.transparent,
       indicatorColor:
-          primaryColor.withValues(alpha: isDark ? 0.28 : 0.14),
+          AppTokens.brandViolet.withValues(alpha: isDark ? 0.30 : 0.15),
       iconTheme: WidgetStateProperty.resolveWith(
         (s) => IconThemeData(
           color: s.contains(WidgetState.selected)
-              ? (isDark ? Colors.white : AppTokens.brand)
+              ? (isDark ? Colors.white : const Color(0xFF7C3AED))
               : secondaryText,
         ),
       ),
@@ -278,9 +291,9 @@ ThemeData buildAppTheme(Brightness brightness) {
     ),
     chipTheme: ChipThemeData(
       backgroundColor:
-          isDark ? const Color(0xFF1D253D) : const Color(0xFFF1F5F9),
+          isDark ? AppTokens.cardElevatedDark : const Color(0xFFF2EEFA),
       selectedColor:
-          primaryColor.withValues(alpha: isDark ? 0.32 : 0.16),
+          AppTokens.brandViolet.withValues(alpha: isDark ? 0.34 : 0.16),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       side: BorderSide(
         color: isDark ? AppTokens.cardBorderDark : AppTokens.cardBorderLight,
@@ -293,13 +306,13 @@ ThemeData buildAppTheme(Brightness brightness) {
       secondaryLabelStyle: TextStyle(
         fontWeight: FontWeight.w800,
         fontSize: 13,
-        color: isDark ? Colors.white : AppTokens.brand,
+        color: isDark ? Colors.white : const Color(0xFF7C3AED),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: isDark ? const Color(0xFF1B233A) : const Color(0xFFF8FAFC),
+      fillColor: isDark ? AppTokens.cardElevatedDark : const Color(0xFFFAF8FE),
       labelStyle: TextStyle(
         color: secondaryText,
         fontWeight: FontWeight.w600,
@@ -331,11 +344,11 @@ ThemeData buildAppTheme(Brightness brightness) {
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        backgroundColor: AppTokens.brand,
+        backgroundColor: const Color(0xFF8B5CF6),
         foregroundColor: Colors.white,
         minimumSize: const Size(0, 48),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         textStyle: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800),
       ),
     ),
@@ -343,7 +356,7 @@ ThemeData buildAppTheme(Brightness brightness) {
       style: OutlinedButton.styleFrom(
         foregroundColor: primaryText,
         side: BorderSide(
-          color: isDark ? AppTokens.cardBorderDark : const Color(0xFFCBD5E1),
+          color: isDark ? AppTokens.cardBorderDark : AppTokens.cardBorderLight,
         ),
         minimumSize: const Size(0, 46),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
@@ -352,13 +365,18 @@ ThemeData buildAppTheme(Brightness brightness) {
       ),
     ),
     floatingActionButtonTheme: FloatingActionButtonThemeData(
-      backgroundColor: AppTokens.brand,
+      backgroundColor: const Color(0xFF9333EA),
       foregroundColor: Colors.white,
-      elevation: 4,
+      elevation: 6,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
     ),
     snackBarTheme: SnackBarThemeData(
       behavior: SnackBarBehavior.floating,
+      backgroundColor: isDark ? AppTokens.cardElevatedDark : const Color(0xFF1F1638),
+      contentTextStyle: const TextStyle(
+        color: Colors.white,
+        fontWeight: FontWeight.w700,
+      ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
     ),
   );

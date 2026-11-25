@@ -257,7 +257,26 @@ class HisobchiApiClient {
   String role;
   int? userId;
   bool lastFetchUsedOfflineCache = false;
+  StatusSummary? _prewarmedStatus;
+  List<NakladnoyItem>? _prewarmedDebts;
   final http.Client _http;
+
+  Future<void> prewarmHomeData() async {
+    if (!isAuthenticated) return;
+    try {
+      final res = await Future.wait([getStatus(), getUnpaidDebts()]);
+      _prewarmedStatus = res[0] as StatusSummary;
+      _prewarmedDebts = res[1] as List<NakladnoyItem>;
+    } catch (_) {}
+  }
+
+  ({StatusSummary? status, List<NakladnoyItem>? debts}) consumePrewarmedData() {
+    final s = _prewarmedStatus;
+    final d = _prewarmedDebts;
+    _prewarmedStatus = null;
+    _prewarmedDebts = null;
+    return (status: s, debts: d);
+  }
 
   HisobchiApiClient({
     this.baseUrl = defaultBaseUrl,
