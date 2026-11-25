@@ -1,9 +1,26 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_client.dart';
+
+/// Pure check for whether a newly polled revision token indicates remote changes.
+bool shouldTriggerRemoteSync(String? lastRev, String nextRev) {
+  return lastRev != null &&
+      lastRev.isNotEmpty &&
+      nextRev.isNotEmpty &&
+      lastRev != nextRev;
+}
+
+/// Broadcasts remote database changes to open views/tabs so they reload silently.
+class SyncBus {
+  static final ValueNotifier<int> remoteChangeTick = ValueNotifier<int>(0);
+
+  static void notifyRemoteChange() {
+    remoteChangeTick.value++;
+  }
+}
 
 /// Returns true for connectivity / timeout / DNS / socket errors (never for HTTP 4xx/5xx ApiException).
 bool isNetworkOfflineError(Object error) {

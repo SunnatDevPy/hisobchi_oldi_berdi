@@ -13,7 +13,7 @@ from aiogram.types import BufferedInputFile
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from sqlalchemy import func, select
 
 mimetypes.add_type("application/wasm", ".wasm")
@@ -138,6 +138,7 @@ from database.crud import (
 )
 from database.models import CashTransaction, DailyCashSession, NakladnoyPayment
 from database.session import async_session_maker
+from database.sync_state import get_sync_snapshot
 from services.backup import send_backup
 from services.excel_export import build_range_excel, build_session_excel, build_sverka_excel
 from services.gemini_ai import extract_nakladnoy_from_image, parse_voice_or_text
@@ -346,6 +347,31 @@ def create_api_app() -> FastAPI:
             **meta,
             "download_path": "/download/hisobchi.apk",
         }
+
+    def _compute_web_version() -> str:
+        bootstrap = WEBAPP_DIR / "flutter_bootstrap.js"
+        try:
+            st = bootstrap.stat()
+            return f"{int(st.st_mtime_ns)}-{int(st.st_size)}"
+        except OSError:
+            return ""
+
+    @app.get("/sync/version")
+    async def get_sync_version(
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> JSONResponse:
+        snap = get_sync_snapshot()
+        meta = get_apk_version_metadata()
+        payload = {
+            **snap,
+            "apk_version": meta["version"],
+            "apk_build": meta["build"],
+            "web_version": _compute_web_version(),
+        }
+        return JSONResponse(
+            content=payload,
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
 
     @app.get("/download/hisobchi.apk")
     async def download_apk_binary():

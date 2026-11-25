@@ -23,6 +23,8 @@ String? getTelegramColorScheme() => null;
 
 void syncTelegramChromeColors({required bool isDark}) {}
 
+void reloadWebApp() {}
+
 Future<void> saveAndShareBinaryFile({
   required Future<Uint8List> Function() fetchBytes,
   required String filename,

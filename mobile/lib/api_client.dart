@@ -828,6 +828,13 @@ class HisobchiApiClient {
     return ApkVersionInfo.fromJson(_decodeJson(res), baseUrl);
   }
 
+  Future<SyncVersionInfo> getSyncVersion() async {
+    final res = await _http
+        .get(_uri('/sync/version'), headers: _headers(jsonBody: false))
+        .timeout(const Duration(seconds: 6));
+    return SyncVersionInfo.fromJson(_decodeJson(res));
+  }
+
   Future<Uint8List> downloadLatestApkBytes() async {
     final res = await _http
         .get(_uri('/download/hisobchi.apk'))
@@ -1320,6 +1327,36 @@ class HistorySessionItem {
         closedAt: j['closed_at']?.toString(),
         shiftSeq: ((j['shift_seq'] as num?) ?? 1).toInt(),
         shiftTotal: ((j['shift_total'] as num?) ?? 1).toInt(),
+      );
+}
+
+class SyncVersionInfo {
+  final String rev;
+  final int seq;
+  final String lastEvent;
+  final String updatedAt;
+  final String apkVersion;
+  final int apkBuild;
+  final String webVersion;
+
+  const SyncVersionInfo({
+    required this.rev,
+    required this.seq,
+    required this.lastEvent,
+    required this.updatedAt,
+    required this.apkVersion,
+    required this.apkBuild,
+    required this.webVersion,
+  });
+
+  factory SyncVersionInfo.fromJson(Map<String, dynamic> j) => SyncVersionInfo(
+        rev: (j['rev'] ?? '').toString(),
+        seq: (j['seq'] as num?)?.toInt() ?? 0,
+        lastEvent: (j['last_event'] ?? '').toString(),
+        updatedAt: (j['updated_at'] ?? '').toString(),
+        apkVersion: (j['apk_version'] ?? '1.0.0').toString(),
+        apkBuild: (j['apk_build'] as num?)?.toInt() ?? 1,
+        webVersion: (j['web_version'] ?? '').toString(),
       );
 }
 

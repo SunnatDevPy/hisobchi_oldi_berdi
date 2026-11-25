@@ -147,6 +147,11 @@
             document.body.appendChild(input);
             input.click();
           });
+        },
+        reloadApp: function () {
+          try {
+            window.location.reload();
+          } catch (_) {}
         }
       };
 

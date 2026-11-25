@@ -2905,7 +2905,112 @@ def test_multi_smena_timestamps_24h_date_filter_partial_debt_and_undo(
         get_settings.cache_clear()
 
 
+def test_sync_revision_tracker_and_endpoint(tmp_path: Path, monkeypatch):
+    import httpx
+    import api.app as api_app_mod
+    import api.auth as api_auth_mod
+    from bot.auth import clear_role_cache
+    from config import get_settings
+    from database.models import ApiToken
+    from database.sync_state import get_sync_snapshot
 
+    monkeypatch.setenv("BOT_TOKEN", "987654:TEST_BOT_SYNC")
+    monkeypatch.setenv("ADMIN_IDS", "111")
+    get_settings.cache_clear()
+    clear_role_cache()
 
+    async def scenario() -> None:
+        db_file = tmp_path / "sync_rev.db"
+        eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+        monkeypatch.setattr(api_app_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_auth_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_app_mod, "get_bot", lambda: None)
+        api_auth_mod.clear_auth_memory_state()
+        try:
+            await init_db(engine_override=eng, session_maker_override=maker)
+            async with maker() as db:
+                raw_token, _ = await api_auth_mod.issue_api_token(
+                    db, user_id=111, device_name="Pytest Sync APK"
+                )
+            headers = {"Authorization": f"Bearer {raw_token}"}
+            app = api_app_mod.create_api_app()
 
+            snap0 = get_sync_snapshot()
+            # Auth-only token touch (noise table) must NOT bump revision
+            async with maker() as db:
+                tok = await db.get(ApiToken, 1)
+                assert tok is not None
+                tok.device_name = "Pytest Sync APK Renamed"
+                await db.commit()
+            assert get_sync_snapshot()["rev"] == snap0["rev"]
+
+            # Rolled-back business write must NOT bump revision
+            from database.models import DailyCashSession
+
+            async with maker() as db:
+                db.add(
+                    DailyCashSession(
+                        report_date="2026-11-24",
+                        status="open",
+                        opening_balance=0.0,
+                        expected_cash=0.0,
+                    )
+                )
+                await db.flush()
+                await db.rollback()
+            assert get_sync_snapshot()["rev"] == snap0["rev"]
+
+            # Committed business write MUST bump revision
+            async with maker() as db:
+                sess = await get_or_create_open_session(db, report_date="2026-11-25")
+                await add_cash_transaction(db, 500_000, source_type="main", session_id=sess.id)
+            snap1 = get_sync_snapshot()
+            assert snap1["seq"] > snap0["seq"]
+            assert snap1["rev"] != snap0["rev"]
+
+            # Pending nakladnoy creation MUST bump revision again
+            async with maker() as db:
+                await create_pending_nakladnoy(
+                    db, "Sync Test Supplier", 250_000, session_id=sess.id
+                )
+            snap2 = get_sync_snapshot()
+            assert snap2["seq"] > snap1["seq"]
+            assert "nakladnoy_payments" in snap2["last_event"]
+
+            # /sync/version endpoint requires auth and returns no-cache JSON
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                r_unauth = await client.get("/sync/version")
+                assert r_unauth.status_code == 401
+
+                r_ver = await client.get("/sync/version", headers=headers)
+                assert r_ver.status_code == 200
+                assert "no-cache" in r_ver.headers.get("cache-control", "").lower()
+                body = r_ver.json()
+                assert body["rev"] == snap2["rev"]
+                assert body["seq"] == snap2["seq"]
+                assert "apk_version" in body
+                assert "apk_build" in body
+                assert "web_version" in body
+
+                # API write updates rev even further via the same endpoint
+                r_cash = await client.post(
+                    "/cash",
+                    json={"amount": 100_000, "source_type": "main", "note": "Sync api"},
+                    headers=headers,
+                )
+                assert r_cash.status_code == 200
+                r_ver2 = await client.get("/sync/version", headers=headers)
+                assert r_ver2.status_code == 200
+                assert r_ver2.json()["seq"] > body["seq"]
+                assert r_ver2.json()["rev"] != body["rev"]
+        finally:
+            await eng.dispose()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        clear_role_cache()
+        get_settings.cache_clear()
 

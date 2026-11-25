@@ -15,6 +15,9 @@ from sqlalchemy.ext.asyncio import (
 
 from config import get_settings
 from database.models import Base, SupplierConfig
+from database.sync_state import attach_sync_listeners
+
+attach_sync_listeners()
 
 
 DEFAULT_SUPPLIERS = [

@@ -29,6 +29,9 @@ external JSPromise<JSObject?> _jsPickFile(JSString accept);
 @JS('HisobchiWebBridge.openTelegramLink')
 external JSBoolean _jsOpenTelegramLink(JSString url);
 
+@JS('HisobchiWebBridge.reloadApp')
+external void _jsReloadApp();
+
 extension type _JsPickedFile(JSObject _) implements JSObject {
   external JSString get name;
   external JSUint8Array get bytes;
@@ -71,6 +74,12 @@ String? getTelegramColorScheme() {
 void syncTelegramChromeColors({required bool isDark}) {
   try {
     _jsSyncChromeColors(isDark.toJS);
+  } catch (_) {}
+}
+
+void reloadWebApp() {
+  try {
+    _jsReloadApp();
   } catch (_) {}
 }
 

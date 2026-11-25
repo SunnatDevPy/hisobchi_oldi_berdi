@@ -1302,9 +1302,16 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
   double _refreshTurns = 0.0;
   int _dataAnimSeed = 0;
   Timer? _outboxTimer;
+  Timer? _liveSyncTimer;
   int _outboxCount = 0;
   bool _syncingOutbox = false;
   bool _isOfflineMode = false;
+  bool _isForeground = true;
+  bool _pollingSync = false;
+  bool _refreshInFlight = false;
+  String? _lastSyncRev;
+  String? _initialWebVersion;
+  bool _webUpdateAvailable = false;
   double? _voiceCountedCashPreset;
 
   @override
@@ -1317,12 +1324,17 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
       const Duration(seconds: 20),
       (_) => _trySyncOutbox(silent: true),
     );
+    _liveSyncTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => _pollSyncVersion(),
+    );
     _refreshAll();
   }
 
   @override
   void dispose() {
     _outboxTimer?.cancel();
+    _liveSyncTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _pageController.dispose();
     super.dispose();
@@ -1331,7 +1343,87 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      _isForeground = true;
       _trySyncOutbox(silent: true);
+      _pollSyncVersion(force: true);
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached) {
+      _isForeground = false;
+    }
+  }
+
+  Future<void> _pollSyncVersion({bool force = false}) async {
+    if (!mounted || (!_isForeground && !force) || _pollingSync || _refreshInFlight) {
+      return;
+    }
+    _pollingSync = true;
+    try {
+      final info = await widget.api.getSyncVersion();
+      if (!mounted) return;
+
+      final recoveredFromOffline = _isOfflineMode;
+      var stateChanged = false;
+
+      if (!kIsWeb &&
+          info.apkBuild > kAppBuildNumber &&
+          (_remoteVersion == null || _remoteVersion!.build < info.apkBuild)) {
+        _remoteVersion = ApkVersionInfo(
+          version: info.apkVersion,
+          build: info.apkBuild,
+          full: '${info.apkVersion}+${info.apkBuild}',
+          builtAt: '',
+          sizeBytes: 0,
+          available: true,
+          downloadUrl: widget.api.apkDownloadUri.toString(),
+        );
+        stateChanged = true;
+      }
+
+      if (kIsWeb && info.webVersion.isNotEmpty) {
+        if (_initialWebVersion == null) {
+          _initialWebVersion = info.webVersion;
+        } else if (_initialWebVersion != info.webVersion &&
+            !_webUpdateAvailable) {
+          _webUpdateAvailable = true;
+          stateChanged = true;
+        }
+      }
+
+      final revChanged = shouldTriggerRemoteSync(_lastSyncRev, info.rev);
+      if (_lastSyncRev == null && info.rev.isNotEmpty) {
+        _lastSyncRev = info.rev;
+      }
+
+      if (stateChanged && mounted) {
+        setState(() {});
+      }
+
+      if (recoveredFromOffline) {
+        await _trySyncOutbox(silent: true);
+        await _refreshAll(silent: true, fromRemoteSync: true);
+        _lastSyncRev = info.rev;
+        SyncBus.notifyRemoteChange();
+      } else if (revChanged) {
+        _lastSyncRev = info.rev;
+        if (mounted) {
+          setState(() => _refreshTurns += 1.0);
+        }
+        await _refreshAll(silent: true, fromRemoteSync: true);
+        SyncBus.notifyRemoteChange();
+      }
+    } on ApiException catch (e) {
+      if (e.statusCode == 401 && mounted) {
+        await widget.api.clearSession();
+        if (mounted) widget.onLoggedOut();
+      }
+    } catch (_) {
+      if (!_isOfflineMode && mounted) {
+        setState(() => _isOfflineMode = true);
+      }
+    } finally {
+      _pollingSync = false;
     }
   }
 
@@ -1416,11 +1508,19 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     return widget.api.getPeriodStats(days: 7);
   }
 
-  Future<void> _refreshAll() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<void> _refreshAll({
+    bool silent = false,
+    bool fromRemoteSync = false,
+  }) async {
+    if (_refreshInFlight) return;
+    _refreshInFlight = true;
+    final showLoader = !silent || _summary == null;
+    if (showLoader && mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
       final prePending = await OfflineOutboxStore.count();
       if (prePending > 0) {
@@ -1432,6 +1532,12 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
         widget.api.getUnpaidDebts(),
       ]);
       final usedOffline = widget.api.lastFetchUsedOfflineCache;
+      SyncVersionInfo? syncInfo;
+      if (!usedOffline) {
+        try {
+          syncInfo = await widget.api.getSyncVersion();
+        } catch (_) {}
+      }
       ApkVersionInfo? ver;
       if (!kIsWeb && !usedOffline) {
         try {
@@ -1470,12 +1576,29 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
           if (_viewedSessionSummary != null && refreshedViewed != null) {
             _viewedSessionSummary = refreshedViewed;
           }
+          if (syncInfo != null) {
+            if (syncInfo.rev.isNotEmpty) {
+              _lastSyncRev = syncInfo.rev;
+            }
+            if (kIsWeb && syncInfo.webVersion.isNotEmpty) {
+              if (_initialWebVersion == null) {
+                _initialWebVersion = syncInfo.webVersion;
+              } else if (_initialWebVersion != syncInfo.webVersion) {
+                _webUpdateAvailable = true;
+              }
+            }
+          }
           if (ver != null) _remoteVersion = ver;
           _outboxCount = postPending;
           _isOfflineMode = usedOffline;
-          _dataAnimSeed++;
+          if (!silent) {
+            _dataAnimSeed++;
+          }
           _loading = false;
         });
+      }
+      if (!fromRemoteSync && !usedOffline) {
+        SyncBus.notifyRemoteChange();
       }
     } on ApiException catch (e) {
       if (e.statusCode == 401) {
@@ -1483,19 +1606,21 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
         if (mounted) widget.onLoggedOut();
         return;
       }
-      if (mounted) {
+      if (showLoader && mounted) {
         setState(() {
           _error = e.message;
           _loading = false;
         });
       }
     } catch (e) {
-      if (mounted) {
+      if (showLoader && mounted) {
         setState(() {
           _error = 'Aloqa xatosi: $e';
           _loading = false;
         });
       }
+    } finally {
+      _refreshInFlight = false;
     }
   }
 
@@ -2086,17 +2211,42 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
               icon: const Icon(Icons.mic_rounded),
             ),
           IconButton(
-            tooltip: 'Yangilash',
+            tooltip: _isOfflineMode
+                ? 'Oflayn rejim (sinxron kutilmoqda)'
+                : 'Jonli sinxronizatsiya faol — Yangilash',
             onPressed: () {
               HapticFeedback.lightImpact();
               setState(() => _refreshTurns += 1.0);
               _refreshAll();
             },
-            icon: AnimatedRotation(
-              turns: _refreshTurns,
-              duration: const Duration(milliseconds: 520),
-              curve: Curves.easeOutCubic,
-              child: const Icon(Icons.refresh_rounded),
+            icon: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                AnimatedRotation(
+                  turns: _refreshTurns,
+                  duration: const Duration(milliseconds: 520),
+                  curve: Curves.easeOutCubic,
+                  child: const Icon(Icons.refresh_rounded),
+                ),
+                Positioned(
+                  right: -1,
+                  top: -1,
+                  child: Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: _isOfflineMode
+                          ? AppTokens.debtAmber
+                          : AppTokens.cashGreen,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Theme.of(context).scaffoldBackgroundColor,
+                        width: 1.5,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           IconButton(
@@ -2249,6 +2399,43 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                               child: Text(_updatingApk
                                   ? 'Yuklanmoqda...'
                                   : 'Yangilash'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    if (kIsWeb && _webUpdateAvailable)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 10),
+                        decoration: const BoxDecoration(
+                          gradient: AppTokens.aiGradient,
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.auto_awesome_rounded,
+                                color: Colors.white, size: 20),
+                            const SizedBox(width: 10),
+                            const Expanded(
+                              child: Text(
+                                '🚀 Yangi Web versiya tayyor — ilovani yangilang',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                            FilledButton(
+                              style: FilledButton.styleFrom(
+                                backgroundColor: Colors.white,
+                                foregroundColor: AppTokens.brandDeep,
+                                minimumSize: const Size(70, 36),
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 12),
+                              ),
+                              onPressed: reloadWebApp,
+                              child: const Text('Yangilash'),
                             ),
                           ],
                         ),
@@ -7689,11 +7876,22 @@ class _NasiyaLedgerViewState extends State<NasiyaLedgerView> {
   @override
   void initState() {
     super.initState();
+    SyncBus.remoteChangeTick.addListener(_onRemoteSync);
     _load();
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
+  @override
+  void dispose() {
+    SyncBus.remoteChangeTick.removeListener(_onRemoteSync);
+    super.dispose();
+  }
+
+  void _onRemoteSync() {
+    if (mounted) _load(silent: true);
+  }
+
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) setState(() => _loading = true);
     try {
       final res = await Future.wait([
         widget.api.getNasiya(),
@@ -7708,7 +7906,9 @@ class _NasiyaLedgerViewState extends State<NasiyaLedgerView> {
       }
     } catch (e) {
       if (mounted) setState(() => _loading = false);
-      widget.showSnack(e.toString(), isError: true);
+      if (!silent) {
+        widget.showSnack(e.toString(), isError: true);
+      }
     }
   }
 
@@ -8632,20 +8832,28 @@ class _SuppliersDirectoryViewState extends State<SuppliersDirectoryView> {
   @override
   void initState() {
     super.initState();
+    SyncBus.remoteChangeTick.addListener(_onRemoteSync);
     _load();
   }
 
   @override
   void dispose() {
+    SyncBus.remoteChangeTick.removeListener(_onRemoteSync);
     _searchCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  void _onRemoteSync() {
+    if (mounted) _load(silent: true);
+  }
+
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
       final res = await widget.api.getSuppliersDirectory();
       if (mounted) {

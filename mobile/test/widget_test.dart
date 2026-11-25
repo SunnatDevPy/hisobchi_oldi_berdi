@@ -572,4 +572,40 @@ void main() {
     expect(decoded.width, 1400);
     expect(decoded.height, greaterThan(2 * 1800));
   });
+
+  test('SyncVersionInfo, shouldTriggerRemoteSync, and SyncBus work cleanly', () {
+    expect(shouldTriggerRemoteSync(null, 'a:2'), isFalse);
+    expect(shouldTriggerRemoteSync('', 'a:2'), isFalse);
+    expect(shouldTriggerRemoteSync('a:2', ''), isFalse);
+    expect(shouldTriggerRemoteSync('a:2', 'a:2'), isFalse);
+    expect(shouldTriggerRemoteSync('a:2', 'a:3'), isTrue);
+    expect(shouldTriggerRemoteSync('a:2', 'b:1'), isTrue);
+
+    final info = SyncVersionInfo.fromJson({
+      'rev': 'boot1:42',
+      'seq': 42,
+      'last_event': 'nakladnoy_payments',
+      'updated_at': '2026-11-25T10:30:00Z',
+      'apk_version': '1.0.30',
+      'apk_build': 30,
+      'web_version': '123456-789',
+    });
+    expect(info.rev, 'boot1:42');
+    expect(info.seq, 42);
+    expect(info.lastEvent, 'nakladnoy_payments');
+    expect(info.apkVersion, '1.0.30');
+    expect(info.apkBuild, 30);
+    expect(info.webVersion, '123456-789');
+
+    var ticks = 0;
+    void listener() => ticks++;
+    SyncBus.remoteChangeTick.addListener(listener);
+    try {
+      SyncBus.notifyRemoteChange();
+      SyncBus.notifyRemoteChange();
+      expect(ticks, equals(2));
+    } finally {
+      SyncBus.remoteChangeTick.removeListener(listener);
+    }
+  });
 }
