@@ -1832,7 +1832,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                       fontFeatures: AppTokens.tabularNums,
                     ),
                     decoration: const InputDecoration(
-                      labelText: "Summa (so'm)",
+                      labelText: 'Summa',
                       hintText: '5 000 000',
                       prefixIcon: Icon(Icons.payments_outlined),
                     ),
@@ -1840,34 +1840,11 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                   const SizedBox(height: 12),
                   TextField(
                     controller: noteCtrl,
-                    decoration: InputDecoration(
-                      labelText: sourceType == 'expense'
-                          ? "Izoh (masalan: yo'lkira, tushlik...)"
-                          : 'Izoh (kimdan / nima uchun)',
-                      prefixIcon: const Icon(Icons.notes_rounded),
+                    decoration: const InputDecoration(
+                      labelText: 'Izoh',
+                      prefixIcon: Icon(Icons.notes_rounded),
                     ),
                   ),
-                  if (sourceType == 'expense') ...[
-                    const SizedBox(height: 10),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: [
-                        for (final preset in const [
-                          "Yo'lkira",
-                          'Tushlik',
-                          'Bozorlik',
-                          'Ustaga',
-                          'Boshqa',
-                        ])
-                          ActionChip(
-                            visualDensity: VisualDensity.compact,
-                            label: Text(preset),
-                            onPressed: () => noteCtrl.text = preset,
-                          ),
-                      ],
-                    ),
-                  ],
                   const SizedBox(height: 18),
                   FilledButton.icon(
                     onPressed: () => Navigator.pop(ctx, true),

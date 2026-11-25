@@ -522,6 +522,7 @@ class DashboardAnalyticsSection extends StatefulWidget {
 
 class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
   int? _selectedTrendIdx;
+  bool _showAllCashEvents = false;
 
   @override
   Widget build(BuildContext context) {
@@ -833,121 +834,113 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
 
     // Sort newest first by createdAt / timeHm
     events.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final visibleEvents =
+        _showAllCashEvents ? events : events.take(4).toList();
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.all(8),
+                  width: 30,
+                  height: 30,
                   decoration: BoxDecoration(
                     gradient: AppTokens.heroGradient,
-                    borderRadius: BorderRadius.circular(11),
+                    borderRadius: BorderRadius.circular(9),
                   ),
                   child: const Icon(Icons.account_balance_wallet_rounded,
-                      color: Colors.white, size: 20),
+                      color: Colors.white, size: 16),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Kassa kirim, xarajat va qarz amallari',
-                        style: TextStyle(
-                          fontSize: 15.5,
-                          fontWeight: FontWeight.w900,
-                          color: textPrimaryOf(context),
-                        ),
-                      ),
-                      Text(
-                        '${summary.reportDate} sanadagi kassa harakatlari (${events.length} ta)',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: textSecondaryOf(context),
-                        ),
-                      ),
-                    ],
+                const SizedBox(width: 9),
+                Text(
+                  'Amallar',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    color: textPrimaryOf(context),
                   ),
                 ),
+                const SizedBox(width: 6),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: AppTokens.brandViolet.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    '${events.length}',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: AppTokens.brandViolet,
+                      fontFeatures: AppTokens.tabularNums,
+                    ),
+                  ),
+                ),
+                const Spacer(),
                 TextButton.icon(
                   style: TextButton.styleFrom(
-                    minimumSize: const Size(0, 36),
+                    minimumSize: const Size(0, 32),
                     padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
                   onPressed: widget.onOpenNakladnoyTab,
-                  icon: const Icon(Icons.receipt_long_rounded, size: 15),
-                  label: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(
-                      'Amallar (${summary.nakladnoys.length})',
-                      maxLines: 1,
-                      style: const TextStyle(
-                          fontSize: 12, fontWeight: FontWeight.w800),
-                    ),
+                  icon: const Icon(Icons.receipt_long_rounded, size: 14),
+                  label: Text(
+                    'Nakladnoylar (${summary.nakladnoys.length})',
+                    maxLines: 1,
+                    style: const TextStyle(
+                        fontSize: 11.5, fontWeight: FontWeight.w800),
                   ),
                 ),
               ],
-            ),
-            const SizedBox(height: 12),
-
-            // Mini Kassa Summary Strip
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: Theme.of(context)
-                    .colorScheme
-                    .surfaceContainerHighest
-                    .withValues(alpha: 0.45),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _MiniKassaCol(
-                      label: 'Pul olindi',
-                      value: '+${formatUzs(summary.mainCashIn)}',
-                      color: AppTokens.cashGreen,
-                    ),
-                  ),
-                  Expanded(
-                    child: _MiniKassaCol(
-                      label: 'Kassadan qarz',
-                      value: '+${formatUzs(summary.kassaDebtToday)}',
-                      color: AppTokens.cardBlue,
-                    ),
-                  ),
-                  Expanded(
-                    child: _MiniKassaCol(
-                      label: 'Kassaga qaytdi',
-                      value: '−${formatUzs(summary.kassaRepayToday)}',
-                      color: AppTokens.debtAmber,
-                    ),
-                  ),
-                ],
-              ),
             ),
             const SizedBox(height: 6),
 
             if (events.isEmpty)
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 16),
+                padding: const EdgeInsets.symmetric(vertical: 12),
                 child: Text(
-                  "Bu smenada kassa kirim-qarz amallari yo'q.",
+                  "Hozircha amallar yo'q.",
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    fontSize: 13,
+                    fontSize: 12.5,
                     color: textSecondaryOf(context),
                   ),
                 ),
               )
-            else
-              ...events.map((ev) => _buildTimelineRow(context, ev)),
+            else ...[
+              ...visibleEvents.map((ev) => _buildTimelineRow(context, ev)),
+              if (events.length > 4)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: TextButton(
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size(0, 32),
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    onPressed: () => setState(
+                      () => _showAllCashEvents = !_showAllCashEvents,
+                    ),
+                    child: Text(
+                      _showAllCashEvents
+                          ? 'Qisqartirish'
+                          : "Yana ${events.length - 4} ta ko'rish",
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ],
         ),
       ),
@@ -956,128 +949,85 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
 
   Widget _buildTimelineRow(BuildContext context, _TimelineEvent ev) {
     return Container(
-      margin: const EdgeInsets.only(top: 8),
+      margin: const EdgeInsets.only(top: 6),
       decoration: BoxDecoration(
         color: ev.bg,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: ev.border),
       ),
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         onTap: (ev.cashTx != null && widget.canWrite)
             ? () => widget.onEditCashTx(ev.cashTx!)
             : null,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                width: 38,
-                height: 38,
+                width: 30,
+                height: 30,
                 decoration: BoxDecoration(
-                  color: ev.fg.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(11),
+                  color: ev.fg.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(9),
                 ),
-                child: Icon(ev.icon, color: ev.fg, size: 20),
+                child: Icon(ev.icon, color: ev.fg, size: 16),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 9),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 7, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: ev.fg.withValues(alpha: 0.16),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            '⏰ ${ev.timeHm}',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w900,
-                              color: ev.fg,
-                              fontFeatures: AppTokens.tabularNums,
-                            ),
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 7, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: ev.fg.withValues(alpha: 0.11),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            ev.badgeText,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w800,
-                              color: ev.fg,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 5),
                     Text(
                       ev.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontWeight: FontWeight.w900,
-                        fontSize: 14.5,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13,
                         color: textPrimaryOf(context),
                       ),
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 1),
                     Text(
-                      ev.subtitle,
+                      ev.title == ev.subtitle
+                          ? ev.timeHm
+                          : '${ev.timeHm} • ${ev.subtitle}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: 11,
                         fontWeight: FontWeight.w600,
                         color: textSecondaryOf(context),
+                        fontFeatures: AppTokens.tabularNums,
                       ),
                     ),
                   ],
                 ),
               ),
               const SizedBox(width: 8),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    '${ev.sign}${formatUzs(ev.amount)}',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w900,
-                      fontSize: 15,
-                      color: ev.fg,
-                      fontFeatures: AppTokens.tabularNums,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    "so'm",
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: textSecondaryOf(context),
-                    ),
-                  ),
-                ],
+              Text(
+                '${ev.sign}${formatUzs(ev.amount)}',
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 13.5,
+                  color: ev.fg,
+                  fontFeatures: AppTokens.tabularNums,
+                ),
               ),
               if (ev.cashTx != null && widget.canWrite) ...[
                 const SizedBox(width: 2),
                 PopupMenuButton<String>(
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 28,
+                    minHeight: 28,
+                  ),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14)),
                   icon: Icon(Icons.more_vert_rounded,
-                      size: 18, color: textSecondaryOf(context)),
+                      size: 17, color: textSecondaryOf(context)),
                   onSelected: (v) {
                     if (v == 'edit') widget.onEditCashTx(ev.cashTx!);
                     if (v == 'delete') widget.onDeleteCashTx(ev.cashTx!);
@@ -1129,8 +1079,8 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
         final (fg, bg, border) =
             AppTokens.semanticSurface(context, AppTokens.cardBlue);
         return (
-          title: 'Kassadan vaqtincha qarz olindi',
-          badge: '🏦 KASSADAN QARZ',
+          title: 'Kassadan qarz',
+          badge: 'Kassa qarz',
           sign: '+',
           icon: Icons.account_balance_rounded,
           fg: fg,
@@ -1141,8 +1091,8 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
         final (fg, bg, border) =
             AppTokens.semanticSurface(context, AppTokens.debtAmber);
         return (
-          title: 'Kassaga qarz qaytarildi',
-          badge: '↩️ KASSAGA QAYTARILDI',
+          title: 'Kassaga qaytarish',
+          badge: 'Qaytarish',
           sign: '−',
           icon: Icons.assignment_return_rounded,
           fg: fg,
@@ -1153,8 +1103,8 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
         final (fg, bg, border) =
             AppTokens.semanticSurface(context, AppTokens.dangerRed);
         return (
-          title: 'Xarajat (Chiqim)',
-          badge: '💸 XARAJAT',
+          title: 'Xarajat',
+          badge: 'Xarajat',
           sign: '−',
           icon: Icons.trending_down_rounded,
           fg: fg,
@@ -1165,8 +1115,8 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
         final (fg, bg, border) =
             AppTokens.semanticSurface(context, AppTokens.cashGreen);
         return (
-          title: 'Pul oldim (Kirim)',
-          badge: '🟢 PUL OLDIM',
+          title: 'Pul oldim',
+          badge: 'Pul oldim',
           sign: '+',
           icon: Icons.add_card_rounded,
           fg: fg,
@@ -2070,50 +2020,6 @@ class _SmoothLineChartPainter extends CustomPainter {
       oldDelegate.selectedIdx != selectedIdx ||
       oldDelegate.lineColor != lineColor ||
       oldDelegate.labelColor != labelColor;
-}
-
-class _MiniKassaCol extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color color;
-
-  const _MiniKassaCol({
-    required this.label,
-    required this.value,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final (fg, _, _) = AppTokens.semanticSurface(context, color);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-            color: textSecondaryOf(context),
-          ),
-        ),
-        const SizedBox(height: 2),
-        FittedBox(
-          fit: BoxFit.scaleDown,
-          alignment: Alignment.centerLeft,
-          child: Text(
-            value,
-            style: TextStyle(
-              fontSize: 13.5,
-              fontWeight: FontWeight.w900,
-              color: fg,
-              fontFeatures: AppTokens.tabularNums,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
 }
 
 class _PaymentKpiCard extends StatelessWidget {
