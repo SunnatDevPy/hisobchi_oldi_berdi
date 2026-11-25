@@ -1,14 +1,17 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hisobchi_app/api_client.dart';
+import 'package:hisobchi_app/custom_camera.dart';
 import 'package:hisobchi_app/main.dart';
 import 'package:hisobchi_app/offline_sync.dart';
 import 'package:hisobchi_app/theme.dart';
 import 'package:hisobchi_app/widgets.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:image/image.dart' as img;
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -480,5 +483,93 @@ void main() {
     expect(sutkaSession.matchesDate('2026-11-23'), isTrue);
     expect(sutkaSession.matchesDate('2026-11-24'), isTrue);
     expect(sutkaSession.matchesDate('2026-11-25'), isFalse);
+  });
+
+  test('Camera tilt level: flat is good, slightly tilted warns, steep is bad', () {
+    expect(tiltDeviationDegrees(0, 0, 9.8), closeTo(0, 0.01));
+    expect(tiltLevelFor(tiltDeviationDegrees(0, 0, 9.8)), TiltLevel.good);
+    expect(tiltLevelFor(tiltDeviationDegrees(0, 1.0, 9.76)), TiltLevel.warn);
+    expect(tiltLevelFor(tiltDeviationDegrees(0, 2.5, 9.5)), TiltLevel.bad);
+    // Upright phone (sheet on a wall) also counts as aligned.
+    expect(tiltDeviationDegrees(0, 9.8, 0), closeTo(0, 0.01));
+  });
+
+  test('Document frame fractions: landscape frame is wide, portrait is tall', () {
+    final p = documentFrameFractions(landscape: false);
+    final l = documentFrameFractions(landscape: true);
+    const preview = Size(300, 400);
+    final pr = p.toRect(preview);
+    final lr = l.toRect(preview);
+    expect(pr.height, greaterThan(pr.width));
+    expect(lr.width, greaterThan(lr.height));
+    final mid = FrameFractions.lerp(kPortraitFrame, kLandscapeFrame, 0.5);
+    expect(mid.width, closeTo((p.width + l.width) / 2, 1e-9));
+  });
+
+  test('processCapturedImage crops to frame, rotates, and flags quality', () {
+    final flat = img.Image(width: 400, height: 600);
+    img.fill(flat, color: img.ColorRgb8(235, 235, 235));
+    final flatJpg = Uint8List.fromList(img.encodeJpg(flat, quality: 90));
+
+    final cropped = processCapturedImage(
+      CapturedProcessRequest(
+        bytes: flatJpg,
+        left: 0.1,
+        top: 0.1,
+        width: 0.5,
+        height: 0.5,
+      ),
+    );
+    expect(cropped.width, 200);
+    expect(cropped.height, 300);
+    expect(cropped.tooDark, isFalse);
+    expect(cropped.blurry, isTrue); // perfectly flat image has no detail
+
+    final rotated = processCapturedImage(
+      CapturedProcessRequest(bytes: flatJpg, rotateQuarter: 1),
+    );
+    expect(rotated.width, 600);
+    expect(rotated.height, 400);
+
+    final dark = img.Image(width: 200, height: 200);
+    img.fill(dark, color: img.ColorRgb8(10, 10, 10));
+    final darkRes = processCapturedImage(
+      CapturedProcessRequest(
+        bytes: Uint8List.fromList(img.encodeJpg(dark, quality: 90)),
+      ),
+    );
+    expect(darkRes.tooDark, isTrue);
+    expect(darkRes.qualityMessage, contains("qorong'i"));
+
+    // Sharp checkerboard is not blurry.
+    final sharp = img.Image(width: 240, height: 240);
+    for (var y = 0; y < 240; y++) {
+      for (var x = 0; x < 240; x++) {
+        final on = ((x ~/ 6) + (y ~/ 6)) % 2 == 0;
+        sharp.setPixelRgb(x, y, on ? 240 : 20, on ? 240 : 20, on ? 240 : 20);
+      }
+    }
+    final sharpRes = processCapturedImage(
+      CapturedProcessRequest(
+        bytes: Uint8List.fromList(img.encodeJpg(sharp, quality: 95)),
+      ),
+    );
+    expect(sharpRes.blurry, isFalse);
+  });
+
+  test('stitchPagesVertically joins pages into one tall image', () {
+    Uint8List page(int w, int h, int shade) {
+      final im = img.Image(width: w, height: h);
+      img.fill(im, color: img.ColorRgb8(shade, shade, shade));
+      return Uint8List.fromList(img.encodeJpg(im, quality: 90));
+    }
+
+    final single = page(300, 400, 200);
+    expect(stitchPagesVertically([single]), same(single));
+
+    final joined = stitchPagesVertically([page(700, 900, 220), page(700, 900, 180)]);
+    final decoded = img.decodeImage(joined)!;
+    expect(decoded.width, 1400);
+    expect(decoded.height, greaterThan(2 * 1800));
   });
 }

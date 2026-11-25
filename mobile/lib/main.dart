@@ -9,6 +9,7 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_client.dart';
+import 'custom_camera.dart';
 import 'offline_sync.dart';
 import 'platform_bridge.dart';
 import 'theme.dart';
@@ -4725,20 +4726,34 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
 
   Future<void> _pickPhoto(ImageSource source) async {
     try {
-      final xfile = await _picker.pickImage(
-        source: source,
-        maxWidth: 1600,
-        maxHeight: 1600,
-        imageQuality: 85,
-      );
-      if (xfile != null && mounted) {
+      PickedBytesFile? file;
+      if (source == ImageSource.camera && !kIsWeb) {
+        final res = await openCustomCamera(context);
+        if (!mounted) return;
+        if (res.file != null) {
+          file = res.file;
+        } else if (!res.fallbackToSystem) {
+          return;
+        }
+      }
+      if (file == null) {
+        final xfile = await _picker.pickImage(
+          source: source,
+          maxWidth: 1600,
+          maxHeight: 1600,
+          imageQuality: 85,
+        );
+        if (xfile == null || !mounted) return;
         final bytes = await xfile.readAsBytes();
-        final file = PickedBytesFile(
+        file = PickedBytesFile(
           bytes: bytes,
           filename: xfile.name.isNotEmpty ? xfile.name : 'nakladnoy.jpg',
         );
-        setState(() => _photoFile = file);
-        await _runAiExtract(file);
+      }
+      if (mounted) {
+        final picked = file;
+        setState(() => _photoFile = picked);
+        await _runAiExtract(picked);
       }
     } catch (e) {
       if (mounted) {
@@ -6064,19 +6079,35 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
 
   Future<void> _pickAndUploadPhoto(ImageSource source) async {
     try {
-      final xfile = await _picker.pickImage(
-        source: source,
-        maxWidth: 1600,
-        maxHeight: 1600,
-        imageQuality: 85,
-      );
-      if (xfile == null || !mounted) return;
+      PickedBytesFile? file;
+      if (source == ImageSource.camera && !kIsWeb) {
+        final res = await openCustomCamera(context);
+        if (!mounted) return;
+        if (res.file != null) {
+          file = res.file;
+        } else if (!res.fallbackToSystem) {
+          return;
+        }
+      }
+      if (file == null) {
+        final xfile = await _picker.pickImage(
+          source: source,
+          maxWidth: 1600,
+          maxHeight: 1600,
+          imageQuality: 85,
+        );
+        if (xfile == null || !mounted) return;
+        file = PickedBytesFile(
+          bytes: await xfile.readAsBytes(),
+          filename: xfile.name.isNotEmpty ? xfile.name : 'nakladnoy.jpg',
+        );
+      }
+      if (!mounted) return;
       setState(() => _busy = true);
-      final bytes = await xfile.readAsBytes();
       final updated = await widget.api.uploadNakladnoyPhoto(
         _cur.id,
-        bytes,
-        filename: xfile.name.isNotEmpty ? xfile.name : 'nakladnoy.jpg',
+        file.bytes,
+        filename: file.filename,
       );
       if (mounted) {
         setState(() {
