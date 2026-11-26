@@ -2113,7 +2113,8 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                       ),
                       const SizedBox(height: 8),
                       Wrap(
-                        spacing: 8,
+                        spacing: 10,
+                        runSpacing: 8,
                         children: [
                           ActionChip(
                             label: const Text("To'liq"),
@@ -2157,7 +2158,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                         icon: const Icon(Icons.payments_rounded),
                         label: const Text('Naqd'),
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 12),
                       FilledButton.icon(
                         style: FilledButton.styleFrom(
                             backgroundColor: AppTokens.cardBlue),
@@ -2165,7 +2166,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                         icon: const Icon(Icons.credit_card_rounded),
                         label: const Text('Karta'),
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 12),
                       FilledButton.icon(
                         style: FilledButton.styleFrom(
                             backgroundColor: AppTokens.transferPurple),
@@ -2225,7 +2226,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
   }) {
     final isDark = isDarkCtx(context);
     return Padding(
-      padding: const EdgeInsets.only(right: 6),
+      padding: const EdgeInsets.only(right: 8),
       child: Tooltip(
         message: tooltip,
         child: Material(
@@ -2373,7 +2374,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
               ),
             ),
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 8),
         ],
       ),
       // Compact animated "+" icon FAB (no "+ Nakladnoy" text label)
@@ -2881,7 +2882,12 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     return RefreshIndicator(
       onRefresh: _refreshAll,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 124),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          8,
+          16,
+          mainTabScrollBottomPadding(context, hasFab: widget.api.canWrite),
+        ),
         children: [
           _buildDashboardDateSwitcherBar(s, isViewingPast),
           const SizedBox(height: 10),
@@ -2942,7 +2948,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                 ? () => _openCashDialog('kassa_repay')
                 : null,
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           // Frosted Glass Quick Action Pills (Sverka & Arxiv)
           Row(
             children: [
@@ -2954,7 +2960,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                   onTap: _openLiveSverkaSheet,
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 12),
               Expanded(
                 child: _buildDashboardQuickPill(
                   icon: Icons.history_rounded,
@@ -2965,7 +2971,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 16),
           DashboardAnalyticsSection(
             summary: s,
             animSeed: _dataAnimSeed,
@@ -3265,12 +3271,17 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     return RefreshIndicator(
       onRefresh: _refreshAll,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 124),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          8,
+          16,
+          mainTabScrollBottomPadding(context, hasFab: widget.api.canWrite),
+        ),
         children: [
           _buildDashboardDateSwitcherBar(s, isViewingPast),
-          const SizedBox(height: 10),
-          _buildNakladnoyMiniDashboard(s),
           const SizedBox(height: 12),
+          _buildNakladnoyMiniDashboard(s),
+          const SizedBox(height: 14),
           // Header strip
           Row(
             children: [
@@ -3362,7 +3373,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                     onChanged: (v) => setState(() => _filterMode = v),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 12),
                 Expanded(
                   child: HisobchiCustomDropdown<String>(
                     value: _sortMode,
@@ -3416,7 +3427,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 12),
               OutlinedButton.icon(
                 style: OutlinedButton.styleFrom(
                   minimumSize: const Size(0, 46),
@@ -3429,7 +3440,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
 
           if (filtered.isEmpty)
             Card(
@@ -3459,7 +3470,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
           else
             ...filtered.map(
               (item) => Padding(
-                padding: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.only(bottom: 12),
                 child: SwipeableNakladnoyTile(
                   item: item,
                   onTap: () => _openNakladnoyDetail(
@@ -3512,7 +3523,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                 filterKey: 'cash',
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 12),
             Expanded(
               child: _miniNakStatCard(
                 label: 'Karta',
@@ -3525,7 +3536,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
             ),
           ],
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 12),
         Row(
           children: [
             Expanded(
@@ -3538,7 +3549,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                 filterKey: 'transfer',
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 12),
             Expanded(
               child: _miniNakStatCard(
                 label: 'Qarzga',
@@ -3760,10 +3771,15 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     return RefreshIndicator(
       onRefresh: _refreshAll,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 124),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          10,
+          16,
+          mainTabScrollBottomPadding(context, hasFab: widget.api.canWrite),
+        ),
         children: [
           _buildDebtSectionSwitcher(),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           Container(
             decoration: BoxDecoration(
               color: isDarkCtx(context)
@@ -3922,7 +3938,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
           else
             ...visibleDebts.map(
               (item) => Padding(
-                padding: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.only(bottom: 12),
                 child: SwipeableNakladnoyTile(
                   item: item,
                   onTap: () => _openNakladnoyDetail(item),
@@ -4021,7 +4037,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     }
 
     return Container(
-      padding: const EdgeInsets.all(4),
+      padding: const EdgeInsets.all(5),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF130F21) : Colors.white,
         borderRadius: BorderRadius.circular(16),
@@ -4038,14 +4054,14 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
             Icons.storefront_rounded,
             Icons.storefront_outlined,
           ),
-          const SizedBox(width: 4),
+          const SizedBox(width: 6),
           tabBtn(
             'nakladnoy',
             'Qarz (${_allDebts.length})',
             Icons.push_pin_rounded,
             Icons.push_pin_outlined,
           ),
-          const SizedBox(width: 4),
+          const SizedBox(width: 6),
           tabBtn(
             'nasiya',
             'Nasiya',
@@ -4516,7 +4532,12 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
         AppTokens.semanticSurface(context, diffBase);
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 124),
+      padding: EdgeInsets.fromLTRB(
+        16,
+        12,
+        16,
+        mainTabScrollBottomPadding(context, hasFab: false),
+      ),
       children: [
         // 1. SMENA YOPISH CARD
         Card(
@@ -4749,7 +4770,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                     isDense: true,
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
                 Row(
                   children: [
                     Expanded(
@@ -4791,7 +4812,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: TactileScaleTap(
                         pressedScale: 0.96,
@@ -4830,7 +4851,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 12),
                 Text(
                   "Oraliq sverka (vaqtinchalik) qo'ldagi naqd pulni o'zgartirmaydi, faqat vaqt va farqni tarixga saqlaydi. Smenani yopganda esa asosiy sverka ham avtomatik saqlanadi.",
                   style: TextStyle(
@@ -4842,11 +4863,11 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
             ),
           ),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 16),
 
         // 1B. KASSA SVERKALARI TARIXI (Oraliq & Asosiy)
         _buildCashReconciliationsCard(),
-        const SizedBox(height: 14),
+        const SizedBox(height: 16),
 
         // 2. EXCEL HISOBOTLAR & SVERKA (With Dropdown Selector)
         Card(
@@ -4927,7 +4948,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                       ? 'Tayyorlanmoqda...'
                       : 'Yuklab olish'),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
                 FilledButton.tonalIcon(
                   onPressed: _downloadingExcel || _sendingExcelTelegram
                       ? null
@@ -4943,7 +4964,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                       ? 'Yuborilmoqda...'
                       : 'Telegramga yuborish'),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
                 OutlinedButton.icon(
                   onPressed: widget.onOpenLiveSverka,
                   icon: const Icon(Icons.query_stats_rounded),
@@ -4953,7 +4974,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
             ),
           ),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 16),
 
         // 2B. SMENALAR TARIXI & PRIXOD (ITOG 👑)
         Card(
@@ -4982,13 +5003,13 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                   icon: const Icon(Icons.history_rounded),
                   label: const Text('Smenalar arxivi'),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
                 OutlinedButton.icon(
                   onPressed: widget.onOpenPrixod,
                   icon: const Icon(Icons.workspace_premium_rounded),
                   label: const Text('Prixod (ITOG)'),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
                 OutlinedButton.icon(
                   onPressed: widget.onOpenSupplierSettings,
                   icon: const Icon(Icons.tune_rounded),
@@ -4998,7 +5019,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
             ),
           ),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 16),
 
         if (!kIsWeb) ...[
           Card(
@@ -5057,7 +5078,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                       onChanged: _lockLoaded ? _toggleBiometric : null,
                     ),
                   ],
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,
                     child: TactileScaleTap(
@@ -5075,7 +5096,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                     ),
                   ),
                   if (_pinEnabled) ...[
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,
                       child: TactileScaleTap(
@@ -5094,7 +5115,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
               ),
             ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 16),
         ],
         // 3. TELEGRAM GROUP & ACCOUNT SETTINGS
         Card(
@@ -5148,7 +5169,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                     ),
                   ),
                 if (!kIsWeb) ...[
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.tonalIcon(
@@ -5157,7 +5178,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                       label: const Text('Yangilanishni tekshirish'),
                     ),
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
@@ -5249,8 +5270,8 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
             ),
             const SizedBox(height: 8),
             Wrap(
-              spacing: 6,
-              runSpacing: 4,
+              spacing: 8,
+              runSpacing: 8,
               children: [
                 filterChip('all', 'Barchasi'),
                 filterChip('interim', 'Oraliq'),
@@ -5275,7 +5296,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
             else
               ...visible.take(15).map(
                     (item) => Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.only(bottom: 10),
                       child: _CashReconciliationTile(
                         item: item,
                         onDelete: (!item.isClosing && widget.api.canWrite)
@@ -6798,7 +6819,7 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
               // Sticky Bottom Action Dock: Save + Gallery + Camera AI (right thumb)
               Container(
                 padding: EdgeInsets.fromLTRB(
-                    16, 10, 16, hasBottomInsets ? 10 : 12),
+                    16, 12, 16, hasBottomInsets ? 12 : 16),
                 decoration: BoxDecoration(
                   color: Theme.of(context).cardColor,
                   border: Border(
@@ -6859,7 +6880,7 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
                             ),
                           ),
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 10),
                         Tooltip(
                           message: "Galereyadan AI orqali o'qish",
                           child: TactileScaleTap(
@@ -6878,7 +6899,7 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
                             ),
                           ),
                         ),
-                        const SizedBox(width: 7),
+                        const SizedBox(width: 10),
                         Tooltip(
                           message: "Kameradan AI orqali o'qish",
                           child: TactileScaleTap(
@@ -7702,7 +7723,7 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 12),
                     OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
                         foregroundColor: AppTokens.dangerRed,
@@ -7965,8 +7986,9 @@ class _HistorySessionsSheetState extends State<HistorySessionsSheet> {
                       );
                     }
                     return ListView.separated(
+                      padding: const EdgeInsets.only(bottom: 20),
                       itemCount: visible.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      separatorBuilder: (_, __) => const SizedBox(height: 10),
                       itemBuilder: (ctx, i) {
                         final s = visible[i];
                         final isOpen = s.status == 'open';
@@ -8468,11 +8490,11 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
               Row(
                 children: [
                   _modeChip('sverka', '🏢 Oylik'),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 8),
                   _modeChip('cash', '💰 Kassa'),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 8),
                   _modeChip('7d', '📅 7 kun'),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 8),
                   _modeChip('30d', '🗓 30 kun'),
                 ],
               ),
@@ -8552,8 +8574,9 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
       );
     }
     return ListView.separated(
+      padding: const EdgeInsets.only(bottom: 20),
       itemCount: items.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      separatorBuilder: (_, __) => const SizedBox(height: 10),
       itemBuilder: (_, i) => _CashReconciliationTile(item: items[i]),
     );
   }
@@ -8567,6 +8590,7 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
     final canGoNext = _selectedMonth.year < now.year ||
         (_selectedMonth.year == now.year && _selectedMonth.month < now.month);
     return ListView(
+      padding: const EdgeInsets.only(bottom: 20),
       children: [
         Card(
           child: Padding(
@@ -8634,7 +8658,7 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
                 FilledButton.tonalIcon(
                   onPressed: (_downloadingExcel || _sendingTelegram)
                       ? null
@@ -8646,7 +8670,7 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
                         : '📥 $_monthStr Sverka Excel (.xlsx) yuklash',
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 12),
                 OutlinedButton.icon(
                   onPressed: (_downloadingExcel || _sendingTelegram)
                       ? null
@@ -8668,65 +8692,68 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
             ),
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 12),
         ...sups.map((s) {
           final supName = s['supplier'].toString();
           final cash = ((s['cash_total'] as num?) ?? 0).toDouble();
           final card = ((s['card_total'] as num?) ?? 0).toDouble();
           final xfer = ((s['transfer_total'] as num?) ?? 0).toDouble();
           final tot = ((s['total'] as num?) ?? 0).toDouble();
-          return Card(
-            child: InkWell(
-              borderRadius: BorderRadius.circular(AppTokens.radius),
-              onTap: widget.onOpenSupplierProfile != null
-                  ? () => widget.onOpenSupplierProfile!(supName)
-                  : null,
-              child: Padding(
-                padding: const EdgeInsets.all(13),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            '$supName (${s['count']} ta)',
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Card(
+              child: InkWell(
+                borderRadius: BorderRadius.circular(AppTokens.radius),
+                onTap: widget.onOpenSupplierProfile != null
+                    ? () => widget.onOpenSupplierProfile!(supName)
+                    : null,
+                child: Padding(
+                  padding: const EdgeInsets.all(13),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              '$supName (${s['count']} ta)',
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w900, fontSize: 14.5),
+                            ),
+                          ),
+                          Text(
+                            formatUzs(tot, withCurrency: true),
                             style: const TextStyle(
-                                fontWeight: FontWeight.w900, fontSize: 14.5),
+                              fontWeight: FontWeight.w900,
+                              fontSize: 15,
+                              color: AppTokens.brand,
+                            ),
                           ),
-                        ),
-                        Text(
-                          formatUzs(tot, withCurrency: true),
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w900,
-                            fontSize: 15,
-                            color: AppTokens.brand,
-                          ),
-                        ),
-                        if (widget.onOpenSupplierProfile != null) ...[
-                          const SizedBox(width: 4),
-                          Icon(Icons.chevron_right_rounded,
-                              size: 18, color: textSecondaryOf(context)),
+                          if (widget.onOpenSupplierProfile != null) ...[
+                            const SizedBox(width: 4),
+                            Icon(Icons.chevron_right_rounded,
+                                size: 18, color: textSecondaryOf(context)),
+                          ],
                         ],
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 4,
-                      children: [
-                        if (cash > 0)
-                          Text('💵 Naqd: ${formatUzs(cash)}',
-                              style: const TextStyle(fontSize: 12.5)),
-                        if (card > 0)
-                          Text('💳 Karta: ${formatUzs(card)}',
-                              style: const TextStyle(fontSize: 12.5)),
-                        if (xfer > 0)
-                          Text("🏦 O'tkazma: ${formatUzs(xfer)}",
-                              style: const TextStyle(fontSize: 12.5)),
-                      ],
-                    ),
-                  ],
+                      ),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 4,
+                        children: [
+                          if (cash > 0)
+                            Text('💵 Naqd: ${formatUzs(cash)}',
+                                style: const TextStyle(fontSize: 12.5)),
+                          if (card > 0)
+                            Text('💳 Karta: ${formatUzs(card)}',
+                                style: const TextStyle(fontSize: 12.5)),
+                          if (xfer > 0)
+                            Text("🏦 O'tkazma: ${formatUzs(xfer)}",
+                                style: const TextStyle(fontSize: 12.5)),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -8741,6 +8768,7 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
         .map((e) => Map<String, dynamic>.from(e as Map))
         .toList();
     return ListView(
+      padding: const EdgeInsets.only(bottom: 20),
       children: [
         Card(
           child: Padding(
@@ -8781,38 +8809,41 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
             ),
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         const Text(
           'Top postavshiklar:',
           style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 10),
         ...topSups.map(
           (s) {
             final supName = s['supplier'].toString();
-            return Card(
-              child: ListTile(
-                dense: true,
-                onTap: widget.onOpenSupplierProfile != null
-                    ? () => widget.onOpenSupplierProfile!(supName)
-                    : null,
-                title: Text(
-                  '$supName (${s['count']} ta)',
-                  style: const TextStyle(fontWeight: FontWeight.w800),
-                ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      '${formatUzs(s['total'] as num?, withCurrency: true)} (${((s['percent'] as num?) ?? 0).toStringAsFixed(0)}%)',
-                      style: const TextStyle(fontWeight: FontWeight.w900),
-                    ),
-                    if (widget.onOpenSupplierProfile != null) ...[
-                      const SizedBox(width: 4),
-                      Icon(Icons.chevron_right_rounded,
-                          size: 17, color: textSecondaryOf(context)),
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Card(
+                child: ListTile(
+                  dense: true,
+                  onTap: widget.onOpenSupplierProfile != null
+                      ? () => widget.onOpenSupplierProfile!(supName)
+                      : null,
+                  title: Text(
+                    '$supName (${s['count']} ta)',
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '${formatUzs(s['total'] as num?, withCurrency: true)} (${((s['percent'] as num?) ?? 0).toStringAsFixed(0)}%)',
+                        style: const TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                      if (widget.onOpenSupplierProfile != null) ...[
+                        const SizedBox(width: 4),
+                        Icon(Icons.chevron_right_rounded,
+                            size: 17, color: textSecondaryOf(context)),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             );
@@ -9004,7 +9035,12 @@ class _NasiyaLedgerViewState extends State<NasiyaLedgerView> {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 124),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          8,
+          16,
+          mainTabScrollBottomPadding(context, hasFab: widget.api.canWrite),
+        ),
         children: [
           Card(
             child: Padding(
@@ -9026,7 +9062,7 @@ class _NasiyaLedgerViewState extends State<NasiyaLedgerView> {
                     ),
                   ),
                   if (widget.api.canWrite) ...[
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 14),
                     Row(
                       children: [
                         Expanded(
@@ -9045,7 +9081,7 @@ class _NasiyaLedgerViewState extends State<NasiyaLedgerView> {
                             ),
                           ),
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 12),
                         Expanded(
                           child: FilledButton.tonalIcon(
                             style: FilledButton.styleFrom(
@@ -9069,34 +9105,37 @@ class _NasiyaLedgerViewState extends State<NasiyaLedgerView> {
             ),
           ),
           if (balances.isNotEmpty) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
             const Text(
               'Postavshiklar kesimida qoldiq:',
               style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 10),
             ...balances.map(
-              (b) => Card(
-                child: ListTile(
-                  title: Text(
-                    b['supplier'].toString(),
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                  subtitle: Text(
-                    "Olingan: ${formatUzs(b['debt'] as num?)} • To'langan: ${formatUzs(b['paid'] as num?)}",
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  trailing: Text(
-                    formatUzs(b['balance'] as num?, withCurrency: true),
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w900,
-                      color: AppTokens.debtAmber,
+              (b) => Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Card(
+                  child: ListTile(
+                    title: Text(
+                      b['supplier'].toString(),
+                      style: const TextStyle(fontWeight: FontWeight.w800),
                     ),
+                    subtitle: Text(
+                      "Olingan: ${formatUzs(b['debt'] as num?)} • To'langan: ${formatUzs(b['paid'] as num?)}",
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    trailing: Text(
+                      formatUzs(b['balance'] as num?, withCurrency: true),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        color: AppTokens.debtAmber,
+                      ),
+                    ),
+                    onTap: widget.api.canWrite
+                        ? () => _openAddEntryDialog('payment',
+                            presetSup: b['supplier'].toString())
+                        : null,
                   ),
-                  onTap: widget.api.canWrite
-                      ? () => _openAddEntryDialog('payment',
-                          presetSup: b['supplier'].toString())
-                      : null,
                 ),
               ),
             ),
@@ -9107,36 +9146,39 @@ class _NasiyaLedgerViewState extends State<NasiyaLedgerView> {
               'Oxirgi yozuvlar:',
               style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 10),
             ...entries.map((e) {
               final isDebt = e['entry_type'] == 'debt';
-              return Card(
-                child: ListTile(
-                  dense: true,
-                  leading: Icon(
-                    isDebt
-                        ? Icons.arrow_upward_rounded
-                        : Icons.check_circle_rounded,
-                    color: isDebt ? AppTokens.debtAmber : AppTokens.cashGreen,
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Card(
+                  child: ListTile(
+                    dense: true,
+                    leading: Icon(
+                      isDebt
+                          ? Icons.arrow_upward_rounded
+                          : Icons.check_circle_rounded,
+                      color: isDebt ? AppTokens.debtAmber : AppTokens.cashGreen,
+                    ),
+                    title: Text(
+                      '${e['supplier_name']} • ${formatUzs(e['amount'] as num?, withCurrency: true)}',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    subtitle: Text(
+                      '${e['created_at']}${e['note'].toString().isNotEmpty ? ' • ${e['note']}' : ''}',
+                    ),
+                    trailing: widget.api.canWrite
+                        ? IconButton(
+                            icon: const Icon(Icons.delete_outline_rounded,
+                                size: 19, color: AppTokens.dangerRed),
+                            onPressed: () async {
+                              await widget.api
+                                  .deleteNasiya((e['id'] as num).toInt());
+                              await _load();
+                            },
+                          )
+                        : null,
                   ),
-                  title: Text(
-                    '${e['supplier_name']} • ${formatUzs(e['amount'] as num?, withCurrency: true)}',
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                  subtitle: Text(
-                    '${e['created_at']}${e['note'].toString().isNotEmpty ? ' • ${e['note']}' : ''}',
-                  ),
-                  trailing: widget.api.canWrite
-                      ? IconButton(
-                          icon: const Icon(Icons.delete_outline_rounded,
-                              size: 19, color: AppTokens.dangerRed),
-                          onPressed: () async {
-                            await widget.api
-                                .deleteNasiya((e['id'] as num).toInt());
-                            await _load();
-                          },
-                        )
-                      : null,
                 ),
               );
             }),
@@ -9299,7 +9341,7 @@ class _PrixodItogSheetState extends State<PrixodItogSheet> {
                   label: Text(
                       _submitting ? 'Yaratilmoqda...' : 'ITOG 👑 hisobot tuzish'),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 12),
                 OutlinedButton.icon(
                   onPressed: _submitting ? null : _pickAndUploadYesPosFile,
                   icon: const Icon(Icons.upload_file_rounded, size: 18),
@@ -9319,8 +9361,9 @@ class _PrixodItogSheetState extends State<PrixodItogSheet> {
               else
                 Expanded(
                   child: ListView.separated(
+                    padding: const EdgeInsets.only(bottom: 20),
                     itemCount: _items.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
                     itemBuilder: (ctx, i) {
                       final r = _items[i];
                       final txt = (r['formatted_text'] ?? '').toString();
@@ -9381,7 +9424,7 @@ class _PrixodItogSheetState extends State<PrixodItogSheet> {
                                     ),
                                   ),
                                   if (widget.api.canWrite) ...[
-                                    const SizedBox(width: 8),
+                                    const SizedBox(width: 12),
                                     Expanded(
                                       child: FilledButton.tonalIcon(
                                         onPressed: () async {
@@ -9573,6 +9616,7 @@ class _SupplierAndRoundingSettingsSheetState
               else
                 Expanded(
                   child: ListView(
+                    padding: const EdgeInsets.only(bottom: 20),
                     children: [
                       // 1. AI Summa Yaxlitlash (round_mode)
                       Card(
@@ -9706,39 +9750,42 @@ class _SupplierAndRoundingSettingsSheetState
                         final id = (c['id'] as num).toInt();
                         final name = (c['display_name'] ?? '').toString();
                         final aliases = (c['aliases'] ?? '').toString();
-                        return Card(
-                          child: ListTile(
-                            onTap: widget.api.canWrite
-                                ? () {
-                                    setState(() {
-                                      _nameCtrl.text = name;
-                                      _aliasCtrl.text = aliases;
-                                    });
-                                  }
-                                : null,
-                            title: Text(
-                              name,
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w900),
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: Card(
+                            child: ListTile(
+                              onTap: widget.api.canWrite
+                                  ? () {
+                                      setState(() {
+                                        _nameCtrl.text = name;
+                                        _aliasCtrl.text = aliases;
+                                      });
+                                    }
+                                  : null,
+                              title: Text(
+                                name,
+                                style:
+                                    const TextStyle(fontWeight: FontWeight.w900),
+                              ),
+                              subtitle: Text(
+                                aliases.isNotEmpty
+                                    ? 'Taxalluslar: $aliases'
+                                    : 'Taxallus kiritilmagan',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                              trailing: widget.api.canWrite
+                                  ? IconButton(
+                                      icon: const Icon(
+                                        Icons.delete_outline_rounded,
+                                        size: 20,
+                                        color: AppTokens.dangerRed,
+                                      ),
+                                      onPressed: _saving
+                                          ? null
+                                          : () => _deleteSupplier(id, name),
+                                    )
+                                  : null,
                             ),
-                            subtitle: Text(
-                              aliases.isNotEmpty
-                                  ? 'Taxalluslar: $aliases'
-                                  : 'Taxallus kiritilmagan',
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                            trailing: widget.api.canWrite
-                                ? IconButton(
-                                    icon: const Icon(
-                                      Icons.delete_outline_rounded,
-                                      size: 20,
-                                      color: AppTokens.dangerRed,
-                                    ),
-                                    onPressed: _saving
-                                        ? null
-                                        : () => _deleteSupplier(id, name),
-                                  )
-                                : null,
                           ),
                         );
                       }),
@@ -9920,7 +9967,12 @@ class _SuppliersDirectoryViewState extends State<SuppliersDirectoryView> {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 124),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          8,
+          16,
+          mainTabScrollBottomPadding(context, hasFab: widget.api.canWrite),
+        ),
         children: [
           Container(
             padding: const EdgeInsets.all(16),
@@ -9992,14 +10044,14 @@ class _SuppliersDirectoryViewState extends State<SuppliersDirectoryView> {
             child: Row(
               children: [
                 _modeChip('all', 'Barchasi ($totalCount)'),
-                const SizedBox(width: 6),
+                const SizedBox(width: 10),
                 _modeChip('debt', 'Qarzi bor'),
-                const SizedBox(width: 6),
+                const SizedBox(width: 10),
                 _modeChip('active', 'Oldi-berdi bor'),
               ],
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           if (filtered.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 32),
@@ -10023,7 +10075,7 @@ class _SuppliersDirectoryViewState extends State<SuppliersDirectoryView> {
               final lastDate = s['last_date']?.toString();
 
               return Padding(
-                padding: const EdgeInsets.only(bottom: 9),
+                padding: const EdgeInsets.only(bottom: 12),
                 child: TactileScaleTap(
                   pressedScale: 0.985,
                   haptic: false,
@@ -10517,13 +10569,13 @@ class _SupplierProfileSheetState extends State<SupplierProfileSheet> {
                 child: Row(
                   children: [
                     _dateChip('all', 'Barchasi'),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 8),
                     _dateChip('today', 'Bugun'),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 8),
                     _dateChip('7d', '7 kun'),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 8),
                     _dateChip('month', 'Shu oy'),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 8),
                     _dateChip(
                       'custom',
                       _datePreset == 'custom' &&
@@ -10588,6 +10640,7 @@ class _SupplierProfileSheetState extends State<SupplierProfileSheet> {
               else
                 Expanded(
                   child: ListView(
+                    padding: const EdgeInsets.only(bottom: 20),
                     children: [
                       Container(
                         padding: const EdgeInsets.all(16),
@@ -10633,7 +10686,7 @@ class _SupplierProfileSheetState extends State<SupplierProfileSheet> {
                           ],
                         ),
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 12),
                       Row(
                         children: [
                           Expanded(
@@ -10646,7 +10699,7 @@ class _SupplierProfileSheetState extends State<SupplierProfileSheet> {
                               icon: Icons.payments_rounded,
                             ),
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 12),
                           Expanded(
                             child: _statBox(
                               context,
@@ -11979,9 +12032,10 @@ class _KassaDebtHistorySheetState extends State<KassaDebtHistorySheet> {
                           ),
                         )
                       : ListView.separated(
+                          padding: const EdgeInsets.only(bottom: 20),
                           itemCount: items.length,
                           separatorBuilder: (_, __) =>
-                              const SizedBox(height: 6),
+                              const SizedBox(height: 10),
                           itemBuilder: (ctx, i) {
                             final tx = items[i];
                             final isBorrow = tx.sourceType == 'kassa_debt';
@@ -12112,8 +12166,9 @@ class _OfflineQueueSheetState extends State<OfflineQueueSheet> {
               else ...[
                 Expanded(
                   child: ListView.separated(
+                    padding: const EdgeInsets.only(bottom: 20),
                     itemCount: _items.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 6),
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
                     itemBuilder: (ctx, i) {
                       final it = _items[i];
                       return Card(

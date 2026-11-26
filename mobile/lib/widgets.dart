@@ -21,6 +21,22 @@ class FloatingNavDestination {
   });
 }
 
+/// Computes bottom scroll clearance for main tab ListViews so the final item
+/// always stops comfortably above the floating glass nav capsule, Android
+/// 3-button/gesture system bar, and (on tabs 0–2) the floating "+" FAB.
+double mainTabScrollBottomPadding(
+  BuildContext context, {
+  bool hasFab = true,
+}) {
+  final mq = MediaQuery.of(context);
+  final sysBottom = math.max(mq.padding.bottom, mq.viewPadding.bottom);
+  // FloatingGlassBottomNav height (64) + vertical padding (8 top + 12 bottom = 20)
+  // + comfortable breathing space above capsule (28) = 112.
+  // When FAB (56 + 16 margin) is shown on the tab, add 68px extra so bottom cards
+  // and buttons scroll cleanly past the "+" button too.
+  return sysBottom + (hasFab ? 180.0 : 112.0);
+}
+
 /// Floating frosted-glass bottom navigation capsule with animated neon pill indicator.
 class FloatingGlassBottomNav extends StatelessWidget {
   final int selectedIndex;
@@ -52,7 +68,7 @@ class FloatingGlassBottomNav extends StatelessWidget {
         top: false,
         maintainBottomViewPadding: true,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
           child: Container(
             height: 64,
             decoration: BoxDecoration(
@@ -607,7 +623,7 @@ class HeroBalanceCard extends StatelessWidget {
                   ),
 
                   if (onAddCash != null) ...[
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 16),
                     Row(
                       children: [
                         Expanded(
@@ -619,7 +635,7 @@ class HeroBalanceCard extends StatelessWidget {
                           ),
                         ),
                         if (onExpense != null) ...[
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 12),
                           Expanded(
                             child: _HeroActionBtn(
                               icon: Icons.trending_down_rounded,
@@ -631,7 +647,7 @@ class HeroBalanceCard extends StatelessWidget {
                         ],
                       ],
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 12),
                     Row(
                       children: [
                         Expanded(
@@ -642,7 +658,7 @@ class HeroBalanceCard extends StatelessWidget {
                             onTap: onKassaDebt!,
                           ),
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 12),
                         Expanded(
                           child: _HeroActionBtn(
                             icon: Icons.assignment_return_rounded,
@@ -815,7 +831,7 @@ class _HeroActionBtn extends StatelessWidget {
             borderRadius: BorderRadius.circular(14),
             onTap: onTap,
             child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
+              padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 8),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -1012,7 +1028,7 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
             ),
           ],
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 10),
         Row(
           children: [
             Expanded(
@@ -1030,7 +1046,7 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
                 onTap: () => widget.onTapPaymentFilter('cash'),
               ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 12),
             Expanded(
               child: _PaymentKpiCard(
                 title: 'KARTA (NAQDSIZ)',
@@ -1047,7 +1063,7 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
             ),
           ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         Row(
           children: [
             Expanded(
@@ -1065,7 +1081,7 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
                 onTap: () => widget.onTapPaymentFilter('transfer'),
               ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 12),
             Expanded(
               child: _PaymentKpiCard(
                 title: 'QARZGA (SMENA)',
@@ -2139,7 +2155,7 @@ class _TrendLineStatisticsCard extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 10),
               Material(
                 color: isCustom
                     ? AppTokens.brand
@@ -2199,14 +2215,14 @@ class _TrendLineStatisticsCard extends StatelessWidget {
             child: Row(
               children: [
                 _periodPill(context, 'today', 'Bugun', Icons.today_rounded),
-                const SizedBox(width: 6),
+                const SizedBox(width: 8),
                 _periodPill(context, 'yesterday', 'Kecha',
                     Icons.history_toggle_off_rounded),
-                const SizedBox(width: 6),
+                const SizedBox(width: 8),
                 _periodPill(context, '7d', '7 kun', null),
-                const SizedBox(width: 6),
+                const SizedBox(width: 8),
                 _periodPill(context, '14d', '14 kun', null),
-                const SizedBox(width: 6),
+                const SizedBox(width: 8),
                 _periodPill(context, '30d', '30 kun', null),
               ],
             ),
@@ -3258,7 +3274,7 @@ class PaymentModeSelector extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Container(
-          padding: const EdgeInsets.all(4),
+          padding: const EdgeInsets.all(5),
           decoration: BoxDecoration(
             color: isDark
                 ? AppTokens.surfaceDark.withValues(alpha: 0.7)
@@ -3283,7 +3299,7 @@ class PaymentModeSelector extends StatelessWidget {
 
               return Expanded(
                 child: Padding(
-                  padding: EdgeInsets.only(right: i < modes.length - 1 ? 4 : 0),
+                  padding: EdgeInsets.only(right: i < modes.length - 1 ? 6 : 0),
                   child: TactileScaleTap(
                     pressedScale: 0.95,
                     haptic: false,
@@ -4249,7 +4265,12 @@ class _DashboardLoadingSkeletonState extends State<DashboardLoadingSkeleton>
 
         return ListView(
           physics: const NeverScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 124),
+          padding: EdgeInsets.fromLTRB(
+            16,
+            8,
+            16,
+            mainTabScrollBottomPadding(context, hasFab: true),
+          ),
           children: [
             // Date switcher capsule placeholder
             Container(
@@ -4337,19 +4358,19 @@ class _DashboardLoadingSkeletonState extends State<DashboardLoadingSkeleton>
                       ],
                     ),
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 16),
                   Row(
                     children: [
                       Expanded(child: box(52, r: 14, onHero: true)),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 12),
                       Expanded(child: box(52, r: 14, onHero: true)),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 12),
                   Row(
                     children: [
                       Expanded(child: box(52, r: 14, onHero: true)),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 12),
                       Expanded(child: box(52, r: 14, onHero: true)),
                     ],
                   ),

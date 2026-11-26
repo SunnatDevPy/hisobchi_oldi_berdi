@@ -1111,4 +1111,35 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Hisobchi tayyor!'), findsOneWidget);
   });
+
+  testWidgets(
+      'mainTabScrollBottomPadding clears floating bottom nav, 3-button bar, and FAB',
+      (WidgetTester tester) async {
+    late double padWithFab;
+    late double padNoFab;
+
+    await tester.pumpWidget(
+      MediaQuery(
+        data: const MediaQueryData(
+          size: Size(390, 844),
+          padding: EdgeInsets.only(bottom: 48),
+          viewPadding: EdgeInsets.only(bottom: 48),
+        ),
+        child: Directionality(
+          textDirection: TextDirection.ltr,
+          child: Builder(
+            builder: (context) {
+              padWithFab = mainTabScrollBottomPadding(context, hasFab: true);
+              padNoFab = mainTabScrollBottomPadding(context, hasFab: false);
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      ),
+    );
+
+    expect(padWithFab, greaterThan(padNoFab));
+    expect(padNoFab, greaterThanOrEqualTo(160.0));
+    expect(padWithFab, greaterThanOrEqualTo(228.0));
+  });
 }
