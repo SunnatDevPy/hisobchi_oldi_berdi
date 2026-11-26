@@ -1063,4 +1063,30 @@ void main() {
     expect(closing.difference, equals(5000));
     expect(closing.timeHm, equals('21:00'));
   });
+
+  testWidgets(
+      'Hisobchi3DEmblem renders 3D glossy emblem and settles cleanly after drag & tap',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: const Scaffold(
+          body: Stack(
+            children: [
+              Positioned.fill(child: HisobchiBottomHorizonArc()),
+              Center(child: Hisobchi3DEmblem(size: 120)),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(Hisobchi3DEmblem), findsOneWidget);
+    expect(find.byType(HisobchiBottomHorizonArc), findsOneWidget);
+
+    await tester.drag(find.byType(Hisobchi3DEmblem), const Offset(32, -20));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(Hisobchi3DEmblem));
+    await tester.pumpAndSettle();
+  });
 }

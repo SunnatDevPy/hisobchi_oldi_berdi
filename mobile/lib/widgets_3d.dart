@@ -1131,3 +1131,241 @@ class _BottomArcPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _BottomArcPainter old) => false;
 }
+
+/// Finite-animation 3D crystal squircle emblem for Login & PIN lock screens.
+/// Uses intro + spring-back controllers only (zero repeating tickers) so UI
+/// frames and `pumpAndSettle()` stay fast and deterministic.
+class Hisobchi3DEmblem extends StatefulWidget {
+  final double size;
+  final bool showOrbitRings;
+  final bool interactive;
+
+  const Hisobchi3DEmblem({
+    super.key,
+    this.size = 118,
+    this.showOrbitRings = true,
+    this.interactive = true,
+  });
+
+  @override
+  State<Hisobchi3DEmblem> createState() => _Hisobchi3DEmblemState();
+}
+
+class _Hisobchi3DEmblemState extends State<Hisobchi3DEmblem>
+    with TickerProviderStateMixin {
+  late final AnimationController _introCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 520),
+  )..forward();
+
+  late final AnimationController _springCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 280),
+  );
+
+  double _touchTiltX = 0.0;
+  double _touchTiltY = 0.0;
+  double _releaseStartX = 0.0;
+  double _releaseStartY = 0.0;
+  double _tapBoost = 0.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _springCtrl.addListener(_onSpringTick);
+  }
+
+  void _onSpringTick() {
+    if (!mounted) return;
+    final t = Curves.easeOutCubic.transform(_springCtrl.value);
+    setState(() {
+      _touchTiltX = _releaseStartX * (1.0 - t);
+      _touchTiltY = _releaseStartY * (1.0 - t);
+      if (_tapBoost > 0) {
+        _tapBoost = (1.0 - t).clamp(0.0, 1.0);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _springCtrl.removeListener(_onSpringTick);
+    _introCtrl.dispose();
+    _springCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final boxSize = widget.size * (widget.showOrbitRings ? 1.62 : 1.32);
+    final introScale = Tween<double>(begin: 0.84, end: 1.0).animate(
+      CurvedAnimation(parent: _introCtrl, curve: Curves.easeOutBack),
+    );
+    final introFade = CurvedAnimation(
+      parent: _introCtrl,
+      curve: Curves.easeOutCubic,
+    );
+
+    return RepaintBoundary(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onPanStart: widget.interactive
+            ? (_) {
+                if (_springCtrl.isAnimating) _springCtrl.stop();
+              }
+            : null,
+        onPanUpdate: widget.interactive
+            ? (d) {
+                setState(() {
+                  _touchTiltY =
+                      (_touchTiltY + d.delta.dx * 0.008).clamp(-0.52, 0.52);
+                  _touchTiltX =
+                      (_touchTiltX - d.delta.dy * 0.008).clamp(-0.42, 0.42);
+                });
+              }
+            : null,
+        onPanEnd: widget.interactive
+            ? (_) {
+                _releaseStartX = _touchTiltX;
+                _releaseStartY = _touchTiltY;
+                _springCtrl.forward(from: 0);
+              }
+            : null,
+        onTap: widget.interactive
+            ? () {
+                try {
+                  HapticFeedback.lightImpact();
+                } catch (_) {}
+                _releaseStartX = _touchTiltX;
+                _releaseStartY = _touchTiltY;
+                setState(() => _tapBoost = 1.0);
+                _springCtrl.forward(from: 0);
+              }
+            : null,
+        child: SizedBox(
+          width: boxSize,
+          height: boxSize,
+          child: AnimatedBuilder(
+            animation: _introCtrl,
+            builder: (context, child) => Opacity(
+              opacity: introFade.value.clamp(0.0, 1.0),
+              child: Transform.scale(scale: introScale.value, child: child),
+            ),
+            child: Builder(
+              builder: (context) {
+                final tiltX = (-0.28 + _touchTiltX).clamp(-0.85, 0.85);
+                final tiltY = (0.32 + _touchTiltY).clamp(-0.85, 0.85);
+                final pulse = (0.55 + _tapBoost * 0.45).clamp(0.0, 1.0);
+                return Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Transform.translate(
+                      offset: Offset(-tiltY * 12, tiltX * 12),
+                      child: Container(
+                        width: boxSize * 0.94,
+                        height: boxSize * 0.94,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: RadialGradient(
+                            colors: [
+                              const Color(0xFFB44CFF)
+                                  .withValues(alpha: 0.28 + 0.16 * pulse),
+                              const Color(0xFF7C3AED).withValues(alpha: 0.10),
+                              Colors.transparent,
+                            ],
+                            stops: const [0.0, 0.55, 1.0],
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (widget.showOrbitRings)
+                      CustomPaint(
+                        size: Size(boxSize, boxSize),
+                        painter: _OrbitPainter(0.28),
+                      ),
+                    Transform(
+                      alignment: Alignment.center,
+                      transform: Matrix4.identity()
+                        ..setEntry(3, 2, 0.0012)
+                        ..rotateX(tiltX)
+                        ..rotateY(tiltY)
+                        ..rotateZ(-0.10),
+                      child: _buildGlossyTile(
+                        size: widget.size,
+                        pulse: pulse,
+                        spin: 0.18,
+                        tiltX: tiltX,
+                        tiltY: tiltY,
+                        shimmerPhase: 0.34,
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Static soft violet-orchid bottom horizon glow arc matching HisobchiSplash.
+class HisobchiBottomHorizonArc extends StatelessWidget {
+  const HisobchiBottomHorizonArc({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: CustomPaint(
+        painter: const _StaticHorizonArcPainter(),
+        child: const SizedBox.expand(),
+      ),
+    );
+  }
+}
+
+class _StaticHorizonArcPainter extends CustomPainter {
+  const _StaticHorizonArcPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final rect = Rect.fromCenter(
+      center: Offset(w / 2, size.height + w * 0.38),
+      width: w * 1.7,
+      height: w * 0.90,
+    );
+
+    canvas.drawOval(
+      rect,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            const Color(0xFF8B2FE0).withValues(alpha: 0.34),
+            Colors.transparent,
+          ],
+        ).createShader(rect),
+    );
+    canvas.drawOval(
+      rect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 4.5
+        ..color = const Color(0xFFD27BFF).withValues(alpha: 0.65)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 9),
+    );
+    canvas.drawOval(
+      rect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.3
+        ..color = const Color(0xFFF0C8FF).withValues(alpha: 0.72),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _StaticHorizonArcPainter oldDelegate) => false;
+}

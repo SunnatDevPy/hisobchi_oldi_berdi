@@ -5307,26 +5307,44 @@ class _PinLockScreenState extends State<PinLockScreen>
     final bg = accent
         ? AppTokens.brandViolet.withValues(alpha: isDark ? 0.24 : 0.14)
         : (isDark
-            ? const Color(0xFF18132B)
+            ? const Color(0xFF17122A).withValues(alpha: 0.90)
             : Colors.white);
     final border = accent
-        ? AppTokens.brandViolet.withValues(alpha: 0.45)
-        : (isDark ? AppTokens.cardBorderDark : AppTokens.cardBorderLight);
+        ? AppTokens.brandViolet.withValues(alpha: 0.52)
+        : (isDark
+            ? Colors.white.withValues(alpha: 0.12)
+            : AppTokens.cardBorderLight);
 
     return TactileScaleTap(
       pressedScale: 0.90,
       haptic: false,
       enabled: onTap != null && !_submitting,
-      child: Material(
-        color: bg,
-        shape: CircleBorder(side: BorderSide(color: border)),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: (onTap != null && !_submitting) ? onTap : null,
-          child: SizedBox(
-            width: 72,
-            height: 72,
-            child: Center(child: child),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: accent
+                  ? AppTokens.brandViolet.withValues(alpha: isDark ? 0.28 : 0.14)
+                  : (isDark
+                      ? Colors.black.withValues(alpha: 0.30)
+                      : AppTokens.brandViolet.withValues(alpha: 0.06)),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Material(
+          color: bg,
+          shape: CircleBorder(side: BorderSide(color: border, width: 1.1)),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: (onTap != null && !_submitting) ? onTap : null,
+            child: SizedBox(
+              width: 72,
+              height: 72,
+              child: Center(child: child),
+            ),
           ),
         ),
       ),
@@ -5365,6 +5383,12 @@ class _PinLockScreenState extends State<PinLockScreen>
               ),
             ),
           ),
+          if (isDark)
+            const Positioned.fill(
+              child: IgnorePointer(
+                child: HisobchiBottomHorizonArc(),
+              ),
+            ),
           SafeArea(
             child: Center(
               child: SingleChildScrollView(
@@ -5383,39 +5407,8 @@ class _PinLockScreenState extends State<PinLockScreen>
                             icon: const Icon(Icons.close_rounded),
                           ),
                         ),
-                      Container(
-                        width: 74,
-                        height: 74,
-                        padding: const EdgeInsets.all(11),
-                        decoration: BoxDecoration(
-                          color: isDark ? AppTokens.cardDark : Colors.white,
-                          borderRadius: BorderRadius.circular(22),
-                          border: Border.all(
-                            color: AppTokens.brandViolet.withValues(alpha: 0.45),
-                            width: 1.4,
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: AppTokens.brandViolet
-                                  .withValues(alpha: isDark ? 0.35 : 0.18),
-                              blurRadius: 22,
-                            ),
-                          ],
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(13),
-                          child: Image.asset(
-                            'assets/app_icon.png',
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => const Icon(
-                              Icons.lock_rounded,
-                              color: AppTokens.brand,
-                              size: 32,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
+                      const Hisobchi3DEmblem(size: 68, showOrbitRings: true),
+                      const SizedBox(height: 10),
                       Text(
                         _titleText(),
                         textAlign: TextAlign.center,

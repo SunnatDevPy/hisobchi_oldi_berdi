@@ -980,6 +980,12 @@ class _LoginScreenState extends State<LoginScreen> with WidgetsBindingObserver {
               ),
             ),
           ),
+          if (isDark)
+            const Positioned.fill(
+              child: IgnorePointer(
+                child: HisobchiBottomHorizonArc(),
+              ),
+            ),
           SafeArea(
             child: Center(
               child: SingleChildScrollView(
@@ -991,11 +997,8 @@ class _LoginScreenState extends State<LoginScreen> with WidgetsBindingObserver {
                     children: [
                       Column(
                         children: [
-                          const Interactive3DFintechCube(
-                            size: 158,
-                            continuousSpin: false,
-                          ),
-                          const SizedBox(height: 8),
+                          const Hisobchi3DEmblem(size: 118),
+                          const SizedBox(height: 4),
                           Text(
                             'Hisobchi Mobil',
                             textAlign: TextAlign.center,
@@ -1018,8 +1021,28 @@ class _LoginScreenState extends State<LoginScreen> with WidgetsBindingObserver {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 20),
-                      Card(
+                      const SizedBox(height: 18),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: isDark
+                              ? const Color(0xFF130F21).withValues(alpha: 0.92)
+                              : Colors.white,
+                          borderRadius: BorderRadius.circular(22),
+                          border: Border.all(
+                            color: isDark
+                                ? const Color(0xFF2E2549)
+                                : AppTokens.cardBorderLight,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: isDark
+                                  ? Colors.black.withValues(alpha: 0.34)
+                                  : AppTokens.brandViolet.withValues(alpha: 0.06),
+                              blurRadius: 22,
+                              offset: const Offset(0, 8),
+                            ),
+                          ],
+                        ),
                         child: Padding(
                           padding: const EdgeInsets.all(18),
                           child: Column(
@@ -1140,24 +1163,47 @@ class _LoginScreenState extends State<LoginScreen> with WidgetsBindingObserver {
                               TactileScaleTap(
                                 pressedScale: 0.96,
                                 enabled: !_loading,
-                                child: FilledButton.icon(
-                                  style: FilledButton.styleFrom(
-                                    minimumSize: const Size(0, 50),
-                                    backgroundColor: AppTokens.brandViolet,
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(16),
+                                    gradient: const LinearGradient(
+                                      colors: [
+                                        Color(0xFF8B5CF6),
+                                        Color(0xFFA855F7),
+                                        Color(0xFFD946EF),
+                                      ],
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: AppTokens.brandViolet
+                                            .withValues(alpha: 0.42),
+                                        blurRadius: 18,
+                                        offset: const Offset(0, 6),
+                                      ),
+                                    ],
                                   ),
-                                  onPressed: _loading ? null : _submitLogin,
-                                  icon: _loading
-                                      ? const SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2.2,
-                                            color: Colors.white,
-                                          ),
-                                        )
-                                      : const Icon(Icons.login_rounded),
-                                  label: Text(
-                                    _loading ? 'Ulanmoqda...' : 'Ilovaga kirish',
+                                  child: FilledButton.icon(
+                                    style: FilledButton.styleFrom(
+                                      minimumSize: const Size(double.infinity, 50),
+                                      backgroundColor: Colors.transparent,
+                                      shadowColor: Colors.transparent,
+                                    ),
+                                    onPressed: _loading ? null : _submitLogin,
+                                    icon: _loading
+                                        ? const SizedBox(
+                                            width: 18,
+                                            height: 18,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2.2,
+                                              color: Colors.white,
+                                            ),
+                                          )
+                                        : const Icon(Icons.login_rounded),
+                                    label: Text(
+                                      _loading
+                                          ? 'Ulanmoqda...'
+                                          : 'Ilovaga kirish',
+                                    ),
                                   ),
                                 ),
                               ),
@@ -1166,7 +1212,18 @@ class _LoginScreenState extends State<LoginScreen> with WidgetsBindingObserver {
                         ),
                       ),
                       const SizedBox(height: 14),
-                      Card(
+                      Container(
+                        decoration: BoxDecoration(
+                          color: isDark
+                              ? const Color(0xFF130F21).withValues(alpha: 0.88)
+                              : Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: isDark
+                                ? const Color(0xFF2E2549)
+                                : AppTokens.cardBorderLight,
+                          ),
+                        ),
                         child: Padding(
                           padding: const EdgeInsets.all(15),
                           child: Column(
