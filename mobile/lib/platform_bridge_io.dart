@@ -136,6 +136,50 @@ Future<void> cancelVoiceRecording() async {
   } catch (_) {}
 }
 
+Future<bool> secureStorageWrite(String key, String value) async {
+  try {
+    final res = await _installerChannel.invokeMethod<bool>(
+      'secureWrite',
+      {'key': key, 'value': value},
+    );
+    return res == true;
+  } catch (_) {
+    return false;
+  }
+}
+
+Future<String?> secureStorageRead(String key) async {
+  try {
+    return await _installerChannel.invokeMethod<String>(
+      'secureRead',
+      {'key': key},
+    );
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<bool> secureStorageDelete(String key) async {
+  try {
+    final res = await _installerChannel.invokeMethod<bool>(
+      'secureDelete',
+      {'key': key},
+    );
+    return res == true;
+  } catch (_) {
+    return false;
+  }
+}
+
+Future<void> setScreenSecure(bool secure) async {
+  try {
+    await _installerChannel.invokeMethod<void>(
+      'setScreenSecure',
+      {'secure': secure},
+    );
+  } catch (_) {}
+}
+
 Future<void> showInAppApkUpdateDialog({
   required BuildContext context,
   required Uri downloadUri,

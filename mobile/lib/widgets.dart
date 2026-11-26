@@ -3,7 +3,9 @@ import 'dart:math' as math;
 import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'api_client.dart';
+import 'security.dart';
 import 'theme.dart';
 import 'widgets_3d.dart';
 
@@ -5162,6 +5164,15 @@ class _PinLockScreenState extends State<PinLockScreen>
   bool _bioBusy = false;
   bool _success = false;
   bool _submitting = false;
+  int _failCount = 0;
+  int _lockedUntilMs = 0;
+  int _remainingLockSecs = 0;
+  Timer? _lockTimer;
+
+  static const String _kPinFails = 'hisobchi_pin_fails';
+  static const String _kPinLockUntil = 'hisobchi_pin_lock_until';
+
+  bool get _isLockedOut => _remainingLockSecs > 0;
 
   @override
   void initState() {
@@ -5172,7 +5183,103 @@ class _PinLockScreenState extends State<PinLockScreen>
     );
     _step = widget.mode == PinScreenMode.setup ? 1 : 0;
     _bioChecked = widget.biometricEnabled;
+    _loadLockoutState();
     _initBiometric();
+  }
+
+  Future<void> _loadLockoutState() async {
+    if (widget.mode == PinScreenMode.setup) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final fails = prefs.getInt(_kPinFails) ?? 0;
+      final until = prefs.getInt(_kPinLockUntil) ?? 0;
+      if (!mounted) return;
+      _failCount = fails;
+      _lockedUntilMs = until;
+      _syncLockoutCountdown();
+    } catch (_) {}
+  }
+
+  void _syncLockoutCountdown() {
+    _lockTimer?.cancel();
+    _lockTimer = null;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final diffMs = _lockedUntilMs - nowMs;
+    if (diffMs <= 0) {
+      if (_remainingLockSecs != 0 && mounted) {
+        setState(() {
+          _remainingLockSecs = 0;
+          _error = null;
+        });
+      }
+      return;
+    }
+    final secs = (diffMs / 1000).ceil();
+    if (mounted) {
+      setState(() {
+        _remainingLockSecs = secs;
+        _error = "Juda ko'p xato urinish. $secs soniyadan keyin urinib ko'ring.";
+      });
+    }
+    _lockTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      final leftMs = _lockedUntilMs - DateTime.now().millisecondsSinceEpoch;
+      if (leftMs <= 0) {
+        t.cancel();
+        _lockTimer = null;
+        setState(() {
+          _remainingLockSecs = 0;
+          _lockedUntilMs = 0;
+          _error = null;
+        });
+      } else {
+        final left = (leftMs / 1000).ceil();
+        setState(() {
+          _remainingLockSecs = left;
+          _error = "Juda ko'p xato urinish. $left soniyadan keyin urinib ko'ring.";
+        });
+      }
+    });
+  }
+
+  Future<void> _recordFailedAttempt(String baseMessage) async {
+    _failCount += 1;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    var msg = baseMessage;
+    if (_failCount >= 10) {
+      _lockedUntilMs = nowMs + 5 * 60 * 1000;
+      msg = "10 marta xato PIN. 5 daqiqa kuting.";
+    } else if (_failCount >= 5) {
+      _lockedUntilMs = nowMs + 30 * 1000;
+      msg = "5 marta xato PIN. 30 soniya kuting.";
+    }
+    _triggerShake(msg);
+    if (_lockedUntilMs > nowMs) {
+      _syncLockoutCountdown();
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_kPinFails, _failCount);
+      if (_lockedUntilMs > nowMs) {
+        await prefs.setInt(_kPinLockUntil, _lockedUntilMs);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _resetLockout() async {
+    _lockTimer?.cancel();
+    _lockTimer = null;
+    _failCount = 0;
+    _lockedUntilMs = 0;
+    _remainingLockSecs = 0;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_kPinFails);
+      await prefs.remove(_kPinLockUntil);
+    } catch (_) {}
   }
 
   @override
@@ -5218,12 +5325,13 @@ class _PinLockScreenState extends State<PinLockScreen>
 
   @override
   void dispose() {
+    _lockTimer?.cancel();
     _shakeCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _triggerBiometric() async {
-    if (_bioBusy || _submitting || widget.onAuthenticateBiometric == null) {
+    if (_bioBusy || _submitting || _isLockedOut || widget.onAuthenticateBiometric == null) {
       return;
     }
     setState(() {
@@ -5235,6 +5343,8 @@ class _PinLockScreenState extends State<PinLockScreen>
       if (!mounted) return;
       if (ok) {
         HapticFeedback.mediumImpact();
+        await _resetLockout();
+        if (!mounted) return;
         setState(() {
           _entered = '••••';
           _success = true;
@@ -5262,7 +5372,7 @@ class _PinLockScreenState extends State<PinLockScreen>
   }
 
   Future<void> _onDigitTap(String d) async {
-    if (_submitting || _entered.length >= 4) return;
+    if (_submitting || _isLockedOut || _entered.length >= 4) return;
     HapticFeedback.selectionClick();
     setState(() {
       _error = null;
@@ -5274,7 +5384,7 @@ class _PinLockScreenState extends State<PinLockScreen>
   }
 
   void _onBackspace() {
-    if (_submitting || _entered.isEmpty) return;
+    if (_submitting || _isLockedOut || _entered.isEmpty) return;
     HapticFeedback.lightImpact();
     setState(() {
       _error = null;
@@ -5284,8 +5394,9 @@ class _PinLockScreenState extends State<PinLockScreen>
 
   Future<void> _handleFourDigits(String pin) async {
     if (widget.mode == PinScreenMode.unlock) {
-      if (pin == widget.expectedPin) {
+      if (AppPinHasher.verifyPin(pin, widget.expectedPin ?? '')) {
         HapticFeedback.mediumImpact();
+        unawaited(_resetLockout());
         setState(() {
           _success = true;
           _submitting = true;
@@ -5298,21 +5409,22 @@ class _PinLockScreenState extends State<PinLockScreen>
           }
         }
       } else {
-        _triggerShake("PIN kod noto'g'ri. Qaytadan urinib ko'ring.");
+        await _recordFailedAttempt("PIN kod noto'g'ri. Qaytadan urinib ko'ring.");
       }
       return;
     }
 
     if (widget.mode == PinScreenMode.change && _step == 0) {
-      if (pin == widget.expectedPin) {
+      if (AppPinHasher.verifyPin(pin, widget.expectedPin ?? '')) {
         HapticFeedback.lightImpact();
+        unawaited(_resetLockout());
         setState(() {
           _step = 1;
           _entered = '';
           _error = null;
         });
       } else {
-        _triggerShake("Joriy PIN kod noto'g'ri.");
+        await _recordFailedAttempt("Joriy PIN kod noto'g'ri.");
       }
       return;
     }
@@ -5395,7 +5507,7 @@ class _PinLockScreenState extends State<PinLockScreen>
     return TactileScaleTap(
       pressedScale: 0.90,
       haptic: false,
-      enabled: onTap != null && !_submitting,
+      enabled: onTap != null && !_submitting && !_isLockedOut,
       child: DecoratedBox(
         decoration: BoxDecoration(
           shape: BoxShape.circle,
@@ -5416,7 +5528,7 @@ class _PinLockScreenState extends State<PinLockScreen>
           shape: CircleBorder(side: BorderSide(color: border, width: 1.1)),
           child: InkWell(
             customBorder: const CircleBorder(),
-            onTap: (onTap != null && !_submitting) ? onTap : null,
+            onTap: (onTap != null && !_submitting && !_isLockedOut) ? onTap : null,
             child: SizedBox(
               width: 72,
               height: 72,

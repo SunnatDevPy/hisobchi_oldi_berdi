@@ -12,6 +12,7 @@ import 'api_client.dart';
 import 'custom_camera.dart';
 import 'offline_sync.dart';
 import 'platform_bridge.dart';
+import 'security.dart';
 import 'theme.dart';
 import 'version.dart';
 import 'widgets.dart';
@@ -389,13 +390,41 @@ class AppLockStorage {
   static const _kPin = 'hisobchi_pin_code';
   static const _kPinEnabled = 'hisobchi_pin_enabled';
   static const _kBioEnabled = 'hisobchi_bio_enabled';
+  static const _kPinFails = 'hisobchi_pin_fails';
+  static const _kPinLockUntil = 'hisobchi_pin_lock_until';
 
   static Future<({bool enabled, String? pin, bool bioEnabled})> load() async {
     final prefs = await SharedPreferences.getInstance();
     final enabled = prefs.getBool(_kPinEnabled) == true;
-    final pin = prefs.getString(_kPin);
     final bio = prefs.getBool(_kBioEnabled) == true;
-    if (!enabled || pin == null || pin.length != 4) {
+    if (!enabled) {
+      return (enabled: false, pin: null, bioEnabled: false);
+    }
+
+    var pin = await secureStorageRead(_kPin);
+    if (pin != null && !AppPinHasher.isHashed(pin) && pin.length == 4) {
+      pin = AppPinHasher.hashPin(pin);
+      await secureStorageWrite(_kPin, pin);
+    }
+
+    if (pin == null || pin.isEmpty) {
+      final legacyPin = prefs.getString(_kPin);
+      if (legacyPin != null && legacyPin.isNotEmpty) {
+        pin = AppPinHasher.isHashed(legacyPin)
+            ? legacyPin
+            : AppPinHasher.hashPin(legacyPin);
+        final storedInVault = await secureStorageWrite(_kPin, pin);
+        if (storedInVault) {
+          await prefs.remove(_kPin);
+        } else {
+          await prefs.setString(_kPin, pin);
+        }
+      }
+    } else {
+      await prefs.remove(_kPin);
+    }
+
+    if (pin == null || (!AppPinHasher.isHashed(pin) && pin.length != 4)) {
       return (enabled: false, pin: null, bioEnabled: false);
     }
     return (enabled: true, pin: pin, bioEnabled: bio);
@@ -403,9 +432,17 @@ class AppLockStorage {
 
   static Future<void> savePin(String pin, {required bool biometricEnabled}) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_kPin, pin);
+    final hashed = AppPinHasher.isHashed(pin) ? pin : AppPinHasher.hashPin(pin);
+    final storedInVault = await secureStorageWrite(_kPin, hashed);
+    if (storedInVault) {
+      await prefs.remove(_kPin);
+    } else {
+      await prefs.setString(_kPin, hashed);
+    }
     await prefs.setBool(_kPinEnabled, true);
     await prefs.setBool(_kBioEnabled, biometricEnabled);
+    await prefs.remove(_kPinFails);
+    await prefs.remove(_kPinLockUntil);
   }
 
   static Future<void> setBiometricEnabled(bool enabled) async {
@@ -414,10 +451,13 @@ class AppLockStorage {
   }
 
   static Future<void> clearPin() async {
+    await secureStorageDelete(_kPin);
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kPin);
     await prefs.setBool(_kPinEnabled, false);
     await prefs.setBool(_kBioEnabled, false);
+    await prefs.remove(_kPinFails);
+    await prefs.remove(_kPinLockUntil);
   }
 }
 
@@ -441,6 +481,7 @@ class _HisobchiAppState extends State<HisobchiApp> with WidgetsBindingObserver {
   bool _bioEnabled = false;
   String? _webAuthError;
   DateTime? _backgroundedAt;
+  bool? _lastScreenSecure;
 
   @override
   void initState() {
@@ -564,9 +605,18 @@ class _HisobchiAppState extends State<HisobchiApp> with WidgetsBindingObserver {
     syncTelegramChromeColors(isDark: _themeMode == ThemeMode.dark);
   }
 
+  void _syncWindowSecureFlag(bool secure) {
+    if (kIsWeb || widget.apiOverride != null || _lastScreenSecure == secure) {
+      return;
+    }
+    _lastScreenSecure = secure;
+    setScreenSecure(secure);
+  }
+
   @override
   Widget build(BuildContext context) {
     Widget home;
+    var protectScreen = false;
     if (_initializing) {
       home = const Scaffold(
         key: ValueKey('app_init'),
@@ -575,6 +625,7 @@ class _HisobchiAppState extends State<HisobchiApp> with WidgetsBindingObserver {
         ),
       );
     } else if (_api.isAuthenticated && _pinLocked && _savedPin != null) {
+      protectScreen = true;
       home = PinLockScreen(
         key: const ValueKey('pin_unlock'),
         mode: PinScreenMode.unlock,
@@ -600,15 +651,17 @@ class _HisobchiAppState extends State<HisobchiApp> with WidgetsBindingObserver {
         },
       );
     } else if (_api.isAuthenticated && _needsPinSetup) {
+      protectScreen = true;
       home = PinLockScreen(
         key: const ValueKey('pin_setup'),
         mode: PinScreenMode.setup,
         onCanUseBiometric: canUseBiometric,
         onCompleted: (pin, enableBio) async {
           await AppLockStorage.savePin(pin, biometricEnabled: enableBio);
+          final loaded = await AppLockStorage.load();
           if (!mounted) return;
           setState(() {
-            _savedPin = pin;
+            _savedPin = loaded.pin ?? AppPinHasher.hashPin(pin);
             _bioEnabled = enableBio;
             _needsPinSetup = false;
           });
@@ -648,12 +701,14 @@ class _HisobchiAppState extends State<HisobchiApp> with WidgetsBindingObserver {
         onRetry: _retryWebBootstrap,
       );
     } else {
+      protectScreen = true;
       home = LoginScreen(
         key: const ValueKey('login_screen'),
         api: _api,
         onLoggedIn: () => _playTransitionAndEnter(checkPinSetup: true),
       );
     }
+    _syncWindowSecureFlag(protectScreen);
 
     final isDark = _themeMode == ThemeMode.dark ||
         (_themeMode == ThemeMode.system &&
@@ -2462,6 +2517,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                     if (_isOfflineMode || _outboxCount > 0)
                       _buildOfflineStatusBanner(),
                     if (!kIsWeb &&
+                        !kIsPlayStoreBuild &&
                         _remoteVersion != null &&
                         _remoteVersion!.build > kAppBuildNumber)
                       Container(
@@ -5169,15 +5225,17 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                     ),
                   ),
                 if (!kIsWeb) ...[
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.tonalIcon(
-                      onPressed: widget.onCheckUpdate,
-                      icon: const Icon(Icons.system_update_rounded),
-                      label: const Text('Yangilanishni tekshirish'),
+                  if (!kIsPlayStoreBuild) ...[
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.tonalIcon(
+                        onPressed: widget.onCheckUpdate,
+                        icon: const Icon(Icons.system_update_rounded),
+                        label: const Text('Yangilanishni tekshirish'),
+                      ),
                     ),
-                  ),
+                  ],
                   const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,

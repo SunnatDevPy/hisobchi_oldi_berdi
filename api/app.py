@@ -23,7 +23,9 @@ mimetypes.add_type("font/ttf", ".ttf")
 
 from api.auth import (
     AuthenticatedUser,
+    check_rate_limit,
     consume_login_code,
+    extract_client_ip,
     get_current_user,
     issue_api_token,
     issue_webapp_token,
@@ -326,15 +328,40 @@ def create_api_app() -> FastAPI:
         version="1.0.0",
         docs_url=None,
         redoc_url=None,
+        openapi_url=None,
     )
+    public_url = (get_settings().API_PUBLIC_URL or "").strip().rstrip("/")
+    allowed_origins = [
+        "https://hisobchi.okaposai.uz",
+        "https://web.telegram.org",
+        "https://webk.telegram.org",
+        "https://webz.telegram.org",
+        "http://localhost:8088",
+        "http://127.0.0.1:8088",
+    ]
+    if public_url and public_url not in allowed_origins:
+        allowed_origins.append(public_url)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=allowed_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "Accept"],
     )
     app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+    @app.middleware("http")
+    async def _security_headers_middleware(request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault("Permissions-Policy", "geolocation=(), payment=(), usb=()")
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+        if not request.url.path.startswith("/webapp"):
+            response.headers.setdefault("X-Frame-Options", "DENY")
+        return response
 
     cached_bot_username: Optional[str] = None
 
@@ -456,7 +483,7 @@ def create_api_app() -> FastAPI:
 
     @app.post("/auth/login", response_model=LoginResponse)
     async def auth_login(payload: LoginRequest, request: Request) -> LoginResponse:
-        client_ip = request.client.host if request.client else "unknown"
+        client_ip = extract_client_ip(request)
         user_id = consume_login_code(payload.code, client_ip=client_ip)
         if user_id is None:
             raise HTTPException(
@@ -481,7 +508,11 @@ def create_api_app() -> FastAPI:
         )
 
     @app.post("/auth/telegram-webapp", response_model=LoginResponse)
-    async def auth_telegram_webapp(payload: TelegramWebAppAuthRequest) -> LoginResponse:
+    async def auth_telegram_webapp(
+        payload: TelegramWebAppAuthRequest,
+        request: Request,
+    ) -> LoginResponse:
+        check_rate_limit("webapp_auth", extract_client_ip(request), max_hits=20, window_seconds=300)
         tg_user = verify_telegram_webapp_init_data(
             payload.init_data, get_settings().BOT_TOKEN
         )
@@ -909,6 +940,7 @@ def create_api_app() -> FastAPI:
         user: AuthenticatedUser = Depends(require_write_user),
     ) -> dict:
         """Read supplier & total amount from a nakladnoy photo via Gemini Vision (same engine as bot)."""
+        check_rate_limit("ai_ops", str(user.user_id), max_hits=25, window_seconds=300)
         raw = await photo.read()
         if not raw:
             raise HTTPException(status_code=400, detail="Rasm bo'sh")
@@ -994,6 +1026,7 @@ def create_api_app() -> FastAPI:
         user: AuthenticatedUser = Depends(require_write_user),
     ) -> dict:
         """Parse spoken Uzbek voice clip or text command into cash/nakladnoy intent."""
+        check_rate_limit("ai_ops", str(user.user_id), max_hits=25, window_seconds=300)
         raw_audio: Optional[bytes] = None
         mime_type = "audio/mp4"
         if audio is not None:

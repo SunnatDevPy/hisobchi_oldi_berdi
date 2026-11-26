@@ -36,3 +36,10 @@ Thumbs.db
 dist/
 mobile/build/
 mobile/.dart_tool/
+
+# Android release signing keys & obfuscation symbol maps
+*.jks
+*.keystore
+mobile/android/key.properties
+mobile/android/app/upload-keystore.jks
+mobile/android/upload-keystore.jks

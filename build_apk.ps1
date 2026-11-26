@@ -64,11 +64,16 @@ Push-Location "$RootDir\mobile"
 try {
     Write-Host "=== 2. Kod tahlili (flutter analyze) ===" -ForegroundColor Cyan
     flutter analyze
+    if ($LASTEXITCODE -ne 0) { throw "flutter analyze xatolik bilan tugadi!" }
+
+    $SymbolsDir = "$DistDir\debug-symbols\v$NewVersion"
+    New-Item -ItemType Directory -Force -Path $SymbolsDir | Out-Null
 
     Write-Host "=== 3. Release APK yig'ilmoqda (v$NewVersion+$Build) ===" -ForegroundColor Cyan
-    flutter build apk --release --target-platform android-arm,android-arm64 --build-name=$NewVersion --build-number=$Build
+    flutter build apk --release --flavor direct --obfuscate --split-debug-info="$SymbolsDir" --target-platform android-arm,android-arm64 --build-name=$NewVersion --build-number=$Build
+    if ($LASTEXITCODE -ne 0) { throw "flutter build apk xatolik bilan tugadi!" }
 
-    $BuiltApk = "$RootDir\mobile\build\app\outputs\flutter-apk\app-release.apk"
+    $BuiltApk = "$RootDir\mobile\build\app\outputs\flutter-apk\app-direct-release.apk"
     $DistApk = "$DistDir\hisobchi.apk"
     $VersionedApk = "$DistDir\Hisobchi_v$NewVersion.apk"
 

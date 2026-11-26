@@ -25,11 +25,15 @@ from database.session import async_session_maker
 CODE_TTL_SECONDS = 300  # 5 minutes
 RATE_WINDOW_SECONDS = 300
 MAX_FAILED_ATTEMPTS = 8
+MAX_GLOBAL_FAILED_ATTEMPTS = 30
 
 # {8_digit_code: (user_id, expires_epoch)}
 _LOGIN_CODES: dict[str, tuple[int, float]] = {}
 # {client_ip: [fail_epoch, ...]}
 _FAILED_ATTEMPTS: dict[str, list[float]] = {}
+_GLOBAL_FAILED_ATTEMPTS: list[float] = []
+# {bucket: {key: [hit_epoch, ...]}}
+_RATE_LIMIT_BUCKETS: dict[str, dict[str, list[float]]] = {}
 
 
 @dataclass(slots=True)
@@ -58,6 +62,43 @@ def clear_auth_memory_state() -> None:
     """Clear in-memory one-time codes and rate-limit state (used in tests)."""
     _LOGIN_CODES.clear()
     _FAILED_ATTEMPTS.clear()
+    _GLOBAL_FAILED_ATTEMPTS.clear()
+    _RATE_LIMIT_BUCKETS.clear()
+
+
+def extract_client_ip(request: Request) -> str:
+    """Resolve client IP, trusting reverse-proxy headers only from loopback Nginx."""
+    peer_ip = request.client.host if request.client else "unknown"
+    if peer_ip in ("127.0.0.1", "::1", "::ffff:127.0.0.1"):
+        x_real = (request.headers.get("x-real-ip") or "").strip()
+        if x_real:
+            return x_real
+        xff = (request.headers.get("x-forwarded-for") or "").strip()
+        if xff:
+            first = xff.split(",")[0].strip()
+            if first:
+                return first
+    return peer_ip
+
+
+def check_rate_limit(
+    bucket: str,
+    key: str,
+    max_hits: int,
+    window_seconds: int = RATE_WINDOW_SECONDS,
+) -> None:
+    """Enforce a sliding-window per-key rate limit in memory."""
+    now_ts = time.time()
+    store = _RATE_LIMIT_BUCKETS.setdefault(bucket, {})
+    hits = [t for t in store.get(key, []) if now_ts - t < window_seconds]
+    if len(hits) >= max_hits:
+        store[key] = hits
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Juda ko'p so'rov yuborildi. Biroz kutib qayta urinib ko'ring.",
+        )
+    hits.append(now_ts)
+    store[key] = hits
 
 
 def create_login_code(user_id: int, ttl_seconds: int = CODE_TTL_SECONDS) -> str:
@@ -85,9 +126,17 @@ def format_login_code_display(code: str) -> str:
 
 
 def consume_login_code(raw_code: str, client_ip: str = "unknown") -> Optional[int]:
-    """Validate and consume a one-time 8-digit code; enforces per-IP brute-force rate limit."""
+    """Validate and consume a one-time 8-digit code; enforces per-IP and global brute-force rate limits."""
+    global _GLOBAL_FAILED_ATTEMPTS
     now_ts = time.time()
     _prune_expired_codes(now_ts)
+
+    _GLOBAL_FAILED_ATTEMPTS = [t for t in _GLOBAL_FAILED_ATTEMPTS if now_ts - t < RATE_WINDOW_SECONDS]
+    if len(_GLOBAL_FAILED_ATTEMPTS) >= MAX_GLOBAL_FAILED_ATTEMPTS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Xavfsizlik cheklovi: 5 daqiqadan keyin qayta urinib ko'ring.",
+        )
 
     attempts = [t for t in _FAILED_ATTEMPTS.get(client_ip, []) if now_ts - t < RATE_WINDOW_SECONDS]
     if len(attempts) >= MAX_FAILED_ATTEMPTS:
@@ -102,6 +151,7 @@ def consume_login_code(raw_code: str, client_ip: str = "unknown") -> Optional[in
     if entry is None:
         attempts.append(now_ts)
         _FAILED_ATTEMPTS[client_ip] = attempts
+        _GLOBAL_FAILED_ATTEMPTS.append(now_ts)
         return None
 
     user_id, expires_at = entry
@@ -109,6 +159,7 @@ def consume_login_code(raw_code: str, client_ip: str = "unknown") -> Optional[in
     if expires_at <= now_ts:
         attempts.append(now_ts)
         _FAILED_ATTEMPTS[client_ip] = attempts
+        _GLOBAL_FAILED_ATTEMPTS.append(now_ts)
         return None
 
     _FAILED_ATTEMPTS.pop(client_ip, None)
@@ -272,12 +323,29 @@ async def revoke_raw_token(db: AsyncSession, raw_token: str) -> bool:
     return True
 
 
-def _extract_bearer_token(authorization: Optional[str], query_token: Optional[str]) -> str:
+def _is_query_token_allowed_path(path: str) -> bool:
+    return (
+        path.startswith("/export/")
+        or path.endswith("/photo")
+        or path == "/suppliers/sverka-pdf"
+    )
+
+
+def _extract_bearer_token(
+    authorization: Optional[str],
+    query_token: Optional[str],
+    request_path: str = "",
+) -> str:
     if authorization:
         parts = authorization.strip().split(" ", 1)
         if len(parts) == 2 and parts[0].lower() == "bearer" and parts[1].strip():
             return parts[1].strip()
     if query_token and query_token.strip():
+        if not _is_query_token_allowed_path(request_path):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Query token faqat yuklab olish (export/rasm) yo'llarida ruxsat etilgan.",
+            )
         return query_token.strip()
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -291,7 +359,7 @@ async def get_current_user(
     token: Optional[str] = Query(default=None),
 ) -> AuthenticatedUser:
     """FastAPI dependency validating Bearer token and active RBAC user role."""
-    raw_token = _extract_bearer_token(authorization, token)
+    raw_token = _extract_bearer_token(authorization, token, request.url.path)
     th = _hash_token(raw_token)
     async with async_session_maker() as db:
         row = await db.scalar(

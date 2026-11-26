@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'offline_sync.dart';
+import 'platform_bridge.dart';
 
 class ApiException implements Exception {
   final String message;
@@ -302,13 +303,34 @@ class HisobchiApiClient {
     while (trimmed.endsWith('/')) {
       trimmed = trimmed.substring(0, trimmed.length - 1);
     }
+    final parsed = Uri.tryParse(trimmed);
+    if (parsed != null &&
+        parsed.scheme == 'http' &&
+        parsed.host != 'localhost' &&
+        parsed.host != '127.0.0.1' &&
+        parsed.host != '::1') {
+      trimmed = parsed.replace(scheme: 'https').toString();
+    }
     return trimmed;
   }
 
   Future<void> loadSavedSession() async {
     final prefs = await SharedPreferences.getInstance();
     baseUrl = normalizeBaseUrl(prefs.getString(_prefBaseUrl) ?? defaultBaseUrl);
-    accessToken = prefs.getString(_prefToken);
+    final vaultToken = await secureStorageRead(_prefToken);
+    if (vaultToken != null && vaultToken.isNotEmpty) {
+      accessToken = vaultToken;
+      await prefs.remove(_prefToken);
+    } else {
+      final legacyToken = prefs.getString(_prefToken);
+      accessToken = legacyToken;
+      if (legacyToken != null && legacyToken.isNotEmpty) {
+        final migrated = await secureStorageWrite(_prefToken, legacyToken);
+        if (migrated) {
+          await prefs.remove(_prefToken);
+        }
+      }
+    }
     role = prefs.getString(_prefRole) ?? 'admin';
     userId = prefs.getInt(_prefUserId);
   }
@@ -325,13 +347,19 @@ class HisobchiApiClient {
     userId = uid;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_prefBaseUrl, baseUrl);
-    await prefs.setString(_prefToken, token);
+    final storedInVault = await secureStorageWrite(_prefToken, token);
+    if (storedInVault) {
+      await prefs.remove(_prefToken);
+    } else {
+      await prefs.setString(_prefToken, token);
+    }
     await prefs.setString(_prefRole, userRole);
     await prefs.setInt(_prefUserId, uid);
   }
 
   Future<void> clearSession() async {
     accessToken = null;
+    await secureStorageDelete(_prefToken);
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_prefToken);
   }

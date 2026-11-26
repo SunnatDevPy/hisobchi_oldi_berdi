@@ -3357,3 +3357,76 @@ def test_cash_reconciliations_in_session_and_range_excel_and_bot(
     finally:
         clear_role_cache()
         get_settings.cache_clear()
+
+
+def test_api_security_hardening_headers_query_token_and_rate_limits(tmp_path: Path, monkeypatch):
+    import httpx
+    from api import app as api_app_mod
+    from api import auth as api_auth_mod
+    from api import deps as api_deps_mod
+    from bot.auth import clear_role_cache
+    from config import get_settings
+
+    monkeypatch.setenv("BOT_TOKEN", "test-token")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("ADMIN_IDS", "111")
+    get_settings.cache_clear()
+    api_auth_mod.clear_auth_memory_state()
+
+    async def scenario() -> None:
+        db_file = tmp_path / "test_security.db"
+        eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+        await init_db(engine_override=eng, session_maker_override=maker)
+        monkeypatch.setattr(api_auth_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_deps_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_app_mod, "async_session_maker", maker)
+        try:
+            app = api_app_mod.create_api_app()
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                # 1. OpenAPI schema & Swagger disabled + security headers present
+                r_openapi = await client.get("/openapi.json")
+                assert r_openapi.status_code == 404
+                assert r_openapi.headers.get("x-content-type-options") == "nosniff"
+                assert r_openapi.headers.get("x-frame-options") == "DENY"
+                assert "max-age=31536000" in (r_openapi.headers.get("strict-transport-security") or "")
+
+                # 2. Issue valid token
+                code = api_auth_mod.create_login_code(111)
+                r_login = await client.post("/auth/login", json={"code": code, "device_name": "SecTest"})
+                assert r_login.status_code == 200
+                token = r_login.json()["access_token"]
+
+                # 3. Query ?token= rejected on JSON endpoints, allowed on /export/
+                r_bad_query = await client.get(f"/status?token={token}")
+                assert r_bad_query.status_code == 401
+
+                r_good_header = await client.get("/status", headers={"Authorization": f"Bearer {token}"})
+                assert r_good_header.status_code == 200
+
+                r_export_query = await client.get(f"/export/session?token={token}")
+                assert r_export_query.status_code == 200
+
+                # 4. Global brute-force circuit breaker blocks distributed guessing after 30 failures
+                for i in range(30):
+                    r_fail = await client.post(
+                        "/auth/login",
+                        headers={"X-Real-IP": f"10.0.0.{i + 1}"},
+                        json={"code": "00000000"},
+                    )
+                    assert r_fail.status_code == 401
+                r_locked = await client.post(
+                    "/auth/login",
+                    headers={"X-Real-IP": "10.0.1.99"},
+                    json={"code": "00000000"},
+                )
+                assert r_locked.status_code == 429
+        finally:
+            await eng.dispose()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        api_auth_mod.clear_auth_memory_state()
+        clear_role_cache()
+        get_settings.cache_clear()

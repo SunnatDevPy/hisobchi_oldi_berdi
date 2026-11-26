@@ -2,6 +2,7 @@ package uz.hisobchi.hisobchi_app
 
 import android.Manifest
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaRecorder
@@ -9,6 +10,10 @@ import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
 import android.provider.Settings
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
+import android.view.WindowManager
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.app.ActivityCompat
@@ -19,16 +24,82 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.charset.StandardCharsets
+import java.security.KeyStore
 import java.util.concurrent.atomic.AtomicBoolean
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 
 class MainActivity : FlutterFragmentActivity() {
     private val channelName = "uz.hisobchi.hisobchi_app/installer"
+    private val vaultAlias = "hisobchi_vault_aes256"
+    private val vaultPrefsName = "hisobchi_secure_vault"
     private var pendingApkPath: String? = null
     private var pendingDocResult: MethodChannel.Result? = null
     private val pickDocRequestCode = 4201
     private val micPermRequestCode = 4202
     private var voiceRecorder: MediaRecorder? = null
     private var voiceFile: File? = null
+
+    private fun getOrCreateVaultKey(): SecretKey {
+        val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        val existing = ks.getEntry(vaultAlias, null) as? KeyStore.SecretKeyEntry
+        if (existing != null) {
+            return existing.secretKey
+        }
+        val keyGen = KeyGenerator.getInstance(
+            KeyProperties.KEY_ALGORITHM_AES,
+            "AndroidKeyStore",
+        )
+        val spec = KeyGenParameterSpec.Builder(
+            vaultAlias,
+            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+        )
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setKeySize(256)
+            .build()
+        keyGen.init(spec)
+        return keyGen.generateKey()
+    }
+
+    private fun vaultWrite(key: String, value: String) {
+        val secretKey = getOrCreateVaultKey()
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, secretKey)
+        val iv = cipher.iv
+        val encrypted = cipher.doFinal(value.toByteArray(StandardCharsets.UTF_8))
+        val encoded = Base64.encodeToString(iv, Base64.NO_WRAP) +
+            ":" +
+            Base64.encodeToString(encrypted, Base64.NO_WRAP)
+        getSharedPreferences(vaultPrefsName, Context.MODE_PRIVATE)
+            .edit()
+            .putString(key, encoded)
+            .apply()
+    }
+
+    private fun vaultRead(key: String): String? {
+        val raw = getSharedPreferences(vaultPrefsName, Context.MODE_PRIVATE)
+            .getString(key, null) ?: return null
+        val parts = raw.split(":", limit = 2)
+        if (parts.size != 2) return null
+        val iv = Base64.decode(parts[0], Base64.NO_WRAP)
+        val cipherBytes = Base64.decode(parts[1], Base64.NO_WRAP)
+        val secretKey = getOrCreateVaultKey()
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(128, iv))
+        val plain = cipher.doFinal(cipherBytes)
+        return String(plain, StandardCharsets.UTF_8)
+    }
+
+    private fun vaultDelete(key: String) {
+        getSharedPreferences(vaultPrefsName, Context.MODE_PRIVATE)
+            .edit()
+            .remove(key)
+            .apply()
+    }
 
     private fun releaseVoiceRecorder() {
         try {
@@ -48,6 +119,14 @@ class MainActivity : FlutterFragmentActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "installApk" -> {
+                        if (BuildConfig.IS_PLAY_STORE) {
+                            result.error(
+                                "UNSUPPORTED_FLAVOR",
+                                "Google Play versiyasi yangilanishlarni Play Market orqali oladi",
+                                null,
+                            )
+                            return@setMethodCallHandler
+                        }
                         val path = call.argument<String>("path")
                         if (path.isNullOrBlank()) {
                             result.error("INVALID_PATH", "APK fayl manzili bo'sh", null)
@@ -58,11 +137,17 @@ class MainActivity : FlutterFragmentActivity() {
                             result.error("NOT_FOUND", "APK fayl topilmadi: $path", null)
                             return@setMethodCallHandler
                         }
+                        val allowedRoot = cacheDir.canonicalPath
+                        val canonicalTarget = file.canonicalPath
+                        if (!canonicalTarget.startsWith(allowedRoot + File.separator)) {
+                            result.error("FORBIDDEN_PATH", "Ruxsat etilmagan fayl yo'li", null)
+                            return@setMethodCallHandler
+                        }
                         try {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
                                 !packageManager.canRequestPackageInstalls()
                             ) {
-                                pendingApkPath = path
+                                pendingApkPath = canonicalTarget
                                 val permIntent = Intent(
                                     Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                                     Uri.parse("package:$packageName")
@@ -78,6 +163,59 @@ class MainActivity : FlutterFragmentActivity() {
                         } catch (e: Exception) {
                             result.error("INSTALL_ERROR", e.localizedMessage ?: e.toString(), null)
                         }
+                    }
+                    "secureWrite" -> {
+                        val key = call.argument<String>("key")
+                        val value = call.argument<String>("value")
+                        if (key.isNullOrBlank() || value == null) {
+                            result.success(false)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            vaultWrite(key, value)
+                            result.success(true)
+                        } catch (_: Exception) {
+                            result.success(false)
+                        }
+                    }
+                    "secureRead" -> {
+                        val key = call.argument<String>("key")
+                        if (key.isNullOrBlank()) {
+                            result.success(null)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            result.success(vaultRead(key))
+                        } catch (_: Exception) {
+                            result.success(null)
+                        }
+                    }
+                    "secureDelete" -> {
+                        val key = call.argument<String>("key")
+                        if (!key.isNullOrBlank()) {
+                            try {
+                                vaultDelete(key)
+                            } catch (_: Exception) {
+                            }
+                        }
+                        result.success(true)
+                    }
+                    "setScreenSecure" -> {
+                        val secure = call.argument<Boolean>("secure") ?: false
+                        runOnUiThread {
+                            try {
+                                if (secure) {
+                                    window.setFlags(
+                                        WindowManager.LayoutParams.FLAG_SECURE,
+                                        WindowManager.LayoutParams.FLAG_SECURE,
+                                    )
+                                } else {
+                                    window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                                }
+                            } catch (_: Exception) {
+                            }
+                        }
+                        result.success(true)
                     }
                     "pickDocument" -> {
                         if (pendingDocResult != null) {
@@ -103,8 +241,14 @@ class MainActivity : FlutterFragmentActivity() {
                             result.error("INVALID_URL", "Havola bo'sh", null)
                             return@setMethodCallHandler
                         }
+                        val parsed = Uri.parse(url.trim())
+                        val scheme = parsed.scheme?.lowercase()
+                        if (scheme != "https" && scheme != "tg") {
+                            result.error("FORBIDDEN_SCHEME", "Faqat https:// yoki tg:// havolalar ruxsat etilgan", null)
+                            return@setMethodCallHandler
+                        }
                         try {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                            val intent = Intent(Intent.ACTION_VIEW, parsed).apply {
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             }
                             startActivity(intent)

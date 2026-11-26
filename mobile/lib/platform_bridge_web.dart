@@ -152,3 +152,11 @@ Future<void> showInAppApkUpdateDialog({
   required String version,
   required int sizeBytes,
 }) async {}
+
+Future<bool> secureStorageWrite(String key, String value) async => false;
+
+Future<String?> secureStorageRead(String key) async => null;
+
+Future<bool> secureStorageDelete(String key) async => true;
+
+Future<void> setScreenSecure(bool secure) async {}

@@ -7,6 +7,7 @@ import 'package:hisobchi_app/api_client.dart';
 import 'package:hisobchi_app/custom_camera.dart';
 import 'package:hisobchi_app/main.dart';
 import 'package:hisobchi_app/offline_sync.dart';
+import 'package:hisobchi_app/security.dart';
 import 'package:hisobchi_app/theme.dart';
 import 'package:hisobchi_app/widgets.dart';
 import 'package:hisobchi_app/widgets_3d.dart';
@@ -1141,5 +1142,66 @@ void main() {
     expect(padWithFab, greaterThan(padNoFab));
     expect(padNoFab, greaterThanOrEqualTo(160.0));
     expect(padWithFab, greaterThanOrEqualTo(228.0));
+  });
+
+  test('AppPinHasher computes FIPS SHA-256, salted hashes, and enforces HTTPS normalization', () {
+    // Known FIPS 180-4 SHA-256("abc") vector
+    final digest = AppPinHasher.sha256Bytes(utf8.encode('abc'));
+    final hex = digest.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    expect(hex, equals('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'));
+
+    final hashed1 = AppPinHasher.hashPin('2580');
+    final hashed2 = AppPinHasher.hashPin('2580');
+    expect(AppPinHasher.isHashed(hashed1), isTrue);
+    expect(hashed1, isNot(equals(hashed2))); // random salt
+    expect(AppPinHasher.verifyPin('2580', hashed1), isTrue);
+    expect(AppPinHasher.verifyPin('9999', hashed1), isFalse);
+    expect(AppPinHasher.verifyPin('2580', '2580'), isTrue); // legacy compatibility
+
+    expect(
+      HisobchiApiClient.normalizeBaseUrl('http://hisobchi.okaposai.uz/'),
+      equals('https://hisobchi.okaposai.uz'),
+    );
+    expect(
+      HisobchiApiClient.normalizeBaseUrl('http://127.0.0.1:8088'),
+      equals('http://127.0.0.1:8088'),
+    );
+  });
+
+  testWidgets('PinLockScreen locks keypad for 30s after 5 wrong PIN attempts',
+      (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final hashed = AppPinHasher.hashPin('1357');
+    var unlocked = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: PinLockScreen(
+          mode: PinScreenMode.unlock,
+          expectedPin: hashed,
+          onCompleted: (_, __) async => unlocked = true,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    Future<void> enterPin(String digits) async {
+      for (final ch in digits.split('')) {
+        await tester.tap(find.text(ch).first);
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      await tester.pump(const Duration(milliseconds: 120));
+    }
+
+    for (var i = 0; i < 5; i++) {
+      await enterPin('0000');
+    }
+    expect(unlocked, isFalse);
+    expect(find.textContaining('xato urinish'), findsOneWidget);
+
+    // Keypad is now locked out: entering correct PIN should NOT unlock during cooldown
+    await enterPin('1357');
+    expect(unlocked, isFalse);
   });
 }
