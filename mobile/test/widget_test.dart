@@ -856,4 +856,172 @@ void main() {
     await tester.tap(find.byType(HisobchiSplash));
     await tester.pump(const Duration(milliseconds: 50));
   });
+
+  testWidgets(
+      'FloatingGlassBottomNav renders 4 tabs, badges, and switches index on tap',
+      (WidgetTester tester) async {
+    var selected = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: StatefulBuilder(
+          builder: (context, setState) => Scaffold(
+            extendBody: true,
+            body: const SizedBox.expand(),
+            bottomNavigationBar: FloatingGlassBottomNav(
+              selectedIndex: selected,
+              onDestinationSelected: (i) => setState(() => selected = i),
+              destinations: const [
+                FloatingNavDestination(
+                  icon: Icons.space_dashboard_outlined,
+                  selectedIcon: Icons.space_dashboard_rounded,
+                  label: 'Dashboard',
+                ),
+                FloatingNavDestination(
+                  icon: Icons.receipt_long_outlined,
+                  selectedIcon: Icons.receipt_long_rounded,
+                  label: 'Amallar',
+                  badgeCount: 5,
+                ),
+                FloatingNavDestination(
+                  icon: Icons.storefront_outlined,
+                  selectedIcon: Icons.storefront_rounded,
+                  label: "Ta'minotchilar",
+                  badgeCount: 12,
+                ),
+                FloatingNavDestination(
+                  icon: Icons.assessment_outlined,
+                  selectedIcon: Icons.assessment_rounded,
+                  label: 'Smena',
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Dashboard'), findsOneWidget);
+    expect(find.text('Amallar'), findsOneWidget);
+    expect(find.text("Ta'minotchilar"), findsOneWidget);
+    expect(find.text('Smena'), findsOneWidget);
+    expect(find.text('5'), findsOneWidget);
+    expect(find.text('12'), findsOneWidget);
+
+    await tester.tap(find.text("Ta'minotchilar"));
+    await tester.pumpAndSettle();
+    expect(selected, equals(2));
+
+    await tester.tap(find.text('Smena'));
+    await tester.pumpAndSettle();
+    expect(selected, equals(3));
+  });
+
+  testWidgets(
+      'DashboardAnalyticsSection renders glowing distribution, neon KPI cards, and bar/line chart toggle',
+      (WidgetTester tester) async {
+    final summary = StatusSummary.fromJson({
+      'session_id': 10,
+      'report_date': '2026-11-26',
+      'session_status': 'open',
+      'opened_at': '2026-11-26 08:30',
+      'closed_at': '',
+      'opening_balance': 500000,
+      'main_cash_in': 2000000,
+      'kassa_debt_today': 0,
+      'kassa_repay_today': 0,
+      'expense_today': 50000,
+      'total_available_inflow': 2500000,
+      'total_nakladnoy_spent': 950000,
+      'total_card_spent': 300000,
+      'total_transfer_spent': 200000,
+      'total_debt_nakladnoy': 150000,
+      'expected_cash': 1500000,
+      'total_kassa_debt_outstanding': 0,
+      'all_unpaid_debt_count': 1,
+      'all_unpaid_debt_total': 150000,
+      'group_info': {'bound': true, 'chat_id': -1001, 'title': 'Guruh'},
+      'cash_transactions': [],
+      'nakladnoys': [
+        {
+          'id': 1,
+          'session_id': 10,
+          'display_num': '#1',
+          'supplier_name': 'Coca Cola',
+          'amount': 950000,
+          'payment_method': 'cash',
+          'is_debt': false,
+          'note': '',
+          'has_photo': false,
+          'in_group': true,
+          'created_at': '2026-11-26 10:00',
+          'time_hm': '10:00',
+        },
+        {
+          'id': 2,
+          'session_id': 10,
+          'display_num': '#2',
+          'supplier_name': 'Pepsi',
+          'amount': 300000,
+          'payment_method': 'card',
+          'is_debt': false,
+          'note': '',
+          'has_photo': false,
+          'in_group': true,
+          'created_at': '2026-11-26 11:00',
+          'time_hm': '11:00',
+        },
+      ],
+    });
+
+    final series = [
+      {'date': '2026-11-24', 'label': '24-noy', 'spent': 400000, 'cash_in': 600000, 'count': 2},
+      {'date': '2026-11-25', 'label': '25-noy', 'spent': 750000, 'cash_in': 1000000, 'count': 3},
+      {'date': '2026-11-26', 'label': '26-noy', 'spent': 950000, 'cash_in': 2000000, 'count': 2},
+    ];
+
+    String? tappedFilter;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: Scaffold(
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: DashboardAnalyticsSection(
+              summary: summary,
+              canWrite: true,
+              dailySeries: series,
+              onSelectPeriodKey: (_) {},
+              onPickCustomDateRange: () {},
+              onTapPaymentFilter: (mode) => tappedFilter = mode,
+              onOpenNakladnoyTab: () {},
+              onTapNakladnoy: (_) {},
+              onEditCashTx: (_) {},
+              onDeleteCashTx: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Xarajatlar taqsimoti'), findsOneWidget);
+    expect(find.text('Ustun'), findsOneWidget);
+    expect(find.text('Chiziq'), findsOneWidget);
+    expect(find.text("NAQD TO'LOV"), findsOneWidget);
+
+    // Toggle to smooth line chart mode and back without issues
+    await tester.tap(find.text('Chiziq'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ustun'));
+    await tester.pumpAndSettle();
+
+    // Tapping KPI card triggers payment filter callback
+    await tester.ensureVisible(find.text("NAQD TO'LOV"));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text("NAQD TO'LOV"));
+    await tester.pump();
+    expect(tappedFilter, equals('cash'));
+  });
 }

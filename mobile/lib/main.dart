@@ -2161,12 +2161,52 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     }
   }
 
+  Widget _buildAppBarCircleAction({
+    required String tooltip,
+    required VoidCallback onPressed,
+    required Widget icon,
+  }) {
+    final isDark = isDarkCtx(context);
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: Tooltip(
+        message: tooltip,
+        child: Material(
+          color: Colors.transparent,
+          shape: const CircleBorder(),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: onPressed,
+            child: Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: isDark
+                    ? const Color(0xFF1B1530).withValues(alpha: 0.85)
+                    : const Color(0xFFF3EEFC),
+                border: Border.all(
+                  color: isDark
+                      ? Colors.white.withValues(alpha: 0.12)
+                      : AppTokens.cardBorderLight,
+                ),
+              ),
+              alignment: Alignment.center,
+              child: icon,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final debtCount = _summary?.allUnpaidDebtCount ?? _allDebts.length;
     final nakCount = _summary?.nakladnoys.length ?? 0;
 
     return Scaffold(
+      extendBody: true,
       appBar: AppBar(
         title: Row(
           children: [
@@ -2211,12 +2251,12 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
         ),
         actions: [
           if (widget.api.canWrite)
-            IconButton(
+            _buildAppBarCircleAction(
               tooltip: 'AI Ovozli buyruq',
               onPressed: _openVoiceCommandSheet,
-              icon: const Icon(Icons.mic_rounded),
+              icon: const Icon(Icons.mic_rounded, size: 19),
             ),
-          IconButton(
+          _buildAppBarCircleAction(
             tooltip: _isOfflineMode
                 ? 'Oflayn rejim (sinxron kutilmoqda)'
                 : 'Jonli sinxronizatsiya faol — Yangilash',
@@ -2232,11 +2272,11 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                   turns: _refreshTurns,
                   duration: const Duration(milliseconds: 520),
                   curve: Curves.easeOutCubic,
-                  child: const Icon(Icons.refresh_rounded),
+                  child: const Icon(Icons.refresh_rounded, size: 19),
                 ),
                 Positioned(
-                  right: -1,
-                  top: -1,
+                  right: -2,
+                  top: -2,
                   child: Container(
                     width: 8,
                     height: 8,
@@ -2255,7 +2295,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
               ],
             ),
           ),
-          IconButton(
+          _buildAppBarCircleAction(
             tooltip: 'Mavzu (Kun/Tun)',
             onPressed: () {
               HapticFeedback.selectionClick();
@@ -2271,10 +2311,12 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                 isDarkCtx(context)
                     ? Icons.light_mode_rounded
                     : Icons.dark_mode_rounded,
+                size: 19,
                 key: ValueKey<bool>(isDarkCtx(context)),
               ),
             ),
           ),
+          const SizedBox(width: 6),
         ],
       ),
       // Compact animated "+" icon FAB (no "+ Nakladnoy" text label)
@@ -2300,80 +2342,33 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
               ),
             )
           : null,
-      bottomNavigationBar: SafeArea(
-        top: false,
-        maintainBottomViewPadding: true,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: isDarkCtx(context)
-                  ? const Color(0xFF151125).withValues(alpha: 0.96)
-                  : Colors.white.withValues(alpha: 0.98),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(
-                color: isDarkCtx(context)
-                    ? const Color(0xFF342954)
-                    : AppTokens.cardBorderLight,
-                width: 1.1,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: isDarkCtx(context)
-                      ? Colors.black.withValues(alpha: 0.48)
-                      : AppTokens.brandViolet.withValues(alpha: 0.08),
-                  blurRadius: 22,
-                  offset: const Offset(0, 8),
-                ),
-              ],
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(24),
-              child: NavigationBar(
-                selectedIndex: _tabIndex,
-                onDestinationSelected: _switchToTab,
-                destinations: [
-                  const NavigationDestination(
-                    icon: Icon(Icons.space_dashboard_outlined),
-                    selectedIcon: Icon(Icons.space_dashboard_rounded),
-                    label: 'Dashboard',
-                  ),
-                  NavigationDestination(
-                    icon: Badge(
-                      isLabelVisible: nakCount > 0,
-                      label: Text('$nakCount'),
-                      child: const Icon(Icons.receipt_long_outlined),
-                    ),
-                    selectedIcon: Badge(
-                      isLabelVisible: nakCount > 0,
-                      label: Text('$nakCount'),
-                      child: const Icon(Icons.receipt_long_rounded),
-                    ),
-                    label: 'Amallar',
-                  ),
-                  NavigationDestination(
-                    icon: Badge(
-                      isLabelVisible: debtCount > 0,
-                      label: Text('$debtCount'),
-                      child: const Icon(Icons.storefront_outlined),
-                    ),
-                    selectedIcon: Badge(
-                      isLabelVisible: debtCount > 0,
-                      label: Text('$debtCount'),
-                      child: const Icon(Icons.storefront_rounded),
-                    ),
-                    label: "Ta'minotchilar",
-                  ),
-                  const NavigationDestination(
-                    icon: Icon(Icons.assessment_outlined),
-                    selectedIcon: Icon(Icons.assessment_rounded),
-                    label: 'Smena',
-                  ),
-                ],
-              ),
-            ),
+      bottomNavigationBar: FloatingGlassBottomNav(
+        selectedIndex: _tabIndex,
+        onDestinationSelected: _switchToTab,
+        destinations: [
+          const FloatingNavDestination(
+            icon: Icons.space_dashboard_outlined,
+            selectedIcon: Icons.space_dashboard_rounded,
+            label: 'Dashboard',
           ),
-        ),
+          FloatingNavDestination(
+            icon: Icons.receipt_long_outlined,
+            selectedIcon: Icons.receipt_long_rounded,
+            label: 'Amallar',
+            badgeCount: nakCount,
+          ),
+          FloatingNavDestination(
+            icon: Icons.storefront_outlined,
+            selectedIcon: Icons.storefront_rounded,
+            label: "Ta'minotchilar",
+            badgeCount: debtCount,
+          ),
+          const FloatingNavDestination(
+            icon: Icons.assessment_outlined,
+            selectedIcon: Icons.assessment_rounded,
+            label: 'Smena',
+          ),
+        ],
       ),
       body: Stack(
         children: [
@@ -2829,7 +2824,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     return RefreshIndicator(
       onRefresh: _refreshAll,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 110),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 124),
         children: [
           _buildDashboardDateSwitcherBar(s, isViewingPast),
           const SizedBox(height: 10),
@@ -2891,38 +2886,24 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                 : null,
           ),
           const SizedBox(height: 12),
-          // Quick buttons for Stage 1 (History) & Stage 2 (Live Sverka & Stats)
+          // Frosted Glass Quick Action Pills (Sverka & Arxiv)
           Row(
             children: [
               Expanded(
-                child: OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(0, 44),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 11),
-                  ),
-                  onPressed: _openLiveSverkaSheet,
-                  icon: const Icon(Icons.query_stats_rounded, size: 18),
-                  label: const FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text('Sverka', maxLines: 1),
-                  ),
+                child: _buildDashboardQuickPill(
+                  icon: Icons.query_stats_rounded,
+                  label: 'Sverka',
+                  accent: AppTokens.brandSky,
+                  onTap: _openLiveSverkaSheet,
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 10),
               Expanded(
-                child: OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(0, 44),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 11),
-                  ),
-                  onPressed: _openHistorySessionsSheet,
-                  icon: const Icon(Icons.history_rounded, size: 18),
-                  label: const FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text('Arxiv', maxLines: 1),
-                  ),
+                child: _buildDashboardQuickPill(
+                  icon: Icons.history_rounded,
+                  label: 'Arxiv',
+                  accent: AppTokens.brandViolet,
+                  onTap: _openHistorySessionsSheet,
                 ),
               ),
             ],
@@ -2980,6 +2961,74 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     );
   }
 
+  Widget _buildDashboardQuickPill({
+    required IconData icon,
+    required String label,
+    required Color accent,
+    required VoidCallback onTap,
+  }) {
+    final isDark = isDarkCtx(context);
+    final (fg, bg, border) = AppTokens.semanticSurface(context, accent);
+    return TactileScaleTap(
+      pressedScale: 0.96,
+      child: Material(
+        color: isDark ? const Color(0xFF130F21) : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: isDark
+                    ? const Color(0xFF2E2549)
+                    : AppTokens.cardBorderLight,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: isDark
+                      ? Colors.black.withValues(alpha: 0.25)
+                      : accent.withValues(alpha: 0.06),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: bg,
+                    borderRadius: BorderRadius.circular(9),
+                    border: Border.all(color: border.withValues(alpha: 0.6)),
+                  ),
+                  child: Icon(icon, size: 16, color: fg),
+                ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w800,
+                      color: textPrimaryOf(context),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildDashboardDateSwitcherBar(
       StatusSummary activeSummary, bool isViewingPast) {
     final sessions = _historySessions;
@@ -2987,8 +3036,27 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     final curIdx = sessions.indexWhere((e) => e.id == currentId);
     final hasPrev = curIdx >= 0 && curIdx + 1 < sessions.length;
     final hasNext = curIdx > 0;
+    final isDark = isDarkCtx(context);
 
-    return Card(
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF130F21) : Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: isDark
+              ? AppTokens.brandViolet.withValues(alpha: 0.26)
+              : AppTokens.cardBorderLight,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: isDark
+                ? Colors.black.withValues(alpha: 0.26)
+                : AppTokens.brandViolet.withValues(alpha: 0.05),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
         child: Column(
@@ -3140,7 +3208,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     return RefreshIndicator(
       onRefresh: _refreshAll,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 110),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 124),
         children: [
           _buildDashboardDateSwitcherBar(s, isViewingPast),
           const SizedBox(height: 10),
@@ -3575,7 +3643,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     return RefreshIndicator(
       onRefresh: _refreshAll,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 110),
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 124),
         children: [
           _buildDebtSectionSwitcher(),
           const SizedBox(height: 12),
@@ -4145,7 +4213,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
         AppTokens.semanticSurface(context, diffBase);
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 48),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 124),
       children: [
         // 1. SMENA YOPISH CARD
         Card(
@@ -8244,7 +8312,7 @@ class _NasiyaLedgerViewState extends State<NasiyaLedgerView> {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 110),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 124),
         children: [
           Card(
             child: Padding(
@@ -9160,7 +9228,7 @@ class _SuppliersDirectoryViewState extends State<SuppliersDirectoryView> {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 110),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 124),
         children: [
           Container(
             padding: const EdgeInsets.all(16),
