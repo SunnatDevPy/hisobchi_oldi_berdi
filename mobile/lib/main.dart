@@ -1908,6 +1908,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     );
     final noteCtrl = TextEditingController(text: existing?.note ?? '');
 
+    var dialogPopped = false;
     final confirmed = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
@@ -1974,7 +1975,11 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                   ),
                   const SizedBox(height: 18),
                   FilledButton.icon(
-                    onPressed: () => Navigator.pop(ctx, true),
+                    onPressed: () {
+                      if (dialogPopped) return;
+                      dialogPopped = true;
+                      Navigator.pop(ctx, true);
+                    },
                     icon: const Icon(Icons.check_rounded),
                     label: Text(existing != null ? 'Yangilash' : 'Saqlash'),
                   ),
@@ -1992,6 +1997,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
         _showSnack('Summani to\'g\'ri kiriting', isError: true);
         return;
       }
+      final reqKey = existing == null ? generateIdempotencyKey('cash') : null;
       try {
         if (existing != null) {
           await widget.api.updateCash(
@@ -2005,6 +2011,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
             amount: val,
             sourceType: sourceType,
             note: noteCtrl.text,
+            idempotencyKey: reqKey,
           );
           _showSnack('✅ Saqlandi');
         }
@@ -2015,6 +2022,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
             amount: val,
             sourceType: sourceType,
             note: noteCtrl.text,
+            idempotencyKey: reqKey,
           );
           if (mounted) {
             setState(() {
@@ -2103,6 +2111,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
         item.amount.round().toString(),
       ),
     );
+    var popped = false;
     final chosen = await showModalBottomSheet<({String method, double amount})>(
       context: context,
       isScrollControlled: true,
@@ -2117,8 +2126,10 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
           final halfAmt = ((item.amount / 2) / 1000).round() * 1000.0;
 
           void submitWith(String m) {
+            if (popped) return;
             final v = parseUzsInput(amtCtrl.text);
             if (v == null || v <= 0 || v > item.amount + 0.01) return;
+            popped = true;
             Navigator.pop(ctx, (method: m, amount: v));
           }
 
@@ -2241,11 +2252,13 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
 
     if (chosen != null) {
       final isPart = chosen.amount < item.amount - 0.5;
+      final reqKey = generateIdempotencyKey('debt');
       try {
         await widget.api.payDebt(
           paymentId: item.id,
           paymentMethod: chosen.method,
           amount: isPart ? chosen.amount : null,
+          idempotencyKey: reqKey,
         );
         _showSnack(isPart
             ? "✅ ${formatUzs(chosen.amount)} to'landi (qoldiq: ${formatUzs(item.amount - chosen.amount)})"
@@ -2259,6 +2272,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
             supplierName: item.supplierName,
             amount: item.amount,
             partialAmount: isPart ? chosen.amount : null,
+            idempotencyKey: reqKey,
           );
           if (mounted) {
             setState(() {
@@ -2752,11 +2766,13 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
         intent == 'expense') {
       final src = intent == 'cash_in' ? 'main' : intent;
       if (amount != null && amount > 0) {
+        final reqKey = generateIdempotencyKey('voice_cash');
         try {
           await widget.api.addCash(
             amount: amount,
             sourceType: src,
             note: transcript,
+            idempotencyKey: reqKey,
           );
           _showSnack('✅ Saqlandi');
           await _refreshAll();
@@ -2766,6 +2782,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
               amount: amount,
               sourceType: src,
               note: transcript,
+              idempotencyKey: reqKey,
             );
             if (mounted) {
               setState(() {
@@ -5645,7 +5662,13 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
   bool _aiLoading = false;
   String? _aiBadgeText;
   bool _submitting = false;
+  bool _submitLock = false;
+  String? _pendingSubmitKey;
   String? _error;
+
+  void _invalidatePendingSubmitKey() {
+    _pendingSubmitKey = null;
+  }
 
   @override
   void initState() {
@@ -5670,6 +5693,9 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
     if (widget.initialNote != null && widget.initialNote!.trim().isNotEmpty) {
       _noteCtrl.text = widget.initialNote!.trim();
     }
+    _supCtrl.addListener(_invalidatePendingSubmitKey);
+    _amtCtrl.addListener(_invalidatePendingSubmitKey);
+    _noteCtrl.addListener(_invalidatePendingSubmitKey);
     _loadSuppliers();
     if (widget.initialPhoto != null) {
       _photoFile = widget.initialPhoto;
@@ -5833,114 +5859,125 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
   }
 
   Future<void> _submit() async {
-    final sup = _supCtrl.text.trim();
-    final amt = parseUzsInput(_amtCtrl.text);
-    if (sup.isEmpty) {
-      setState(() => _error = 'Postavshik nomini tanlang yoki yozing');
-      return;
-    }
-    if (amt == null || amt <= 0) {
-      setState(() => _error = 'Summani kiriting');
-      return;
-    }
-    final dups = _findTodayDuplicates();
-    if (dups.isNotEmpty) {
-      final dup = dups.first;
-      final proceed = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Row(
-            children: [
-              Icon(Icons.warning_amber_rounded,
-                  color: AppTokens.debtAmber, size: 26),
-              SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  '⚠️ Dublikat nakladnoy!',
-                  style: TextStyle(fontSize: 17.5, fontWeight: FontWeight.w900),
+    if (_submitLock || _submitting) return;
+    _submitLock = true;
+    try {
+      final sup = _supCtrl.text.trim();
+      final amt = parseUzsInput(_amtCtrl.text);
+      if (sup.isEmpty) {
+        setState(() => _error = 'Postavshik nomini tanlang yoki yozing');
+        return;
+      }
+      if (amt == null || amt <= 0) {
+        setState(() => _error = 'Summani kiriting');
+        return;
+      }
+      final dups = _findTodayDuplicates();
+      if (dups.isNotEmpty) {
+        final dup = dups.first;
+        final proceed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: const Row(
+              children: [
+                Icon(Icons.warning_amber_rounded,
+                    color: AppTokens.debtAmber, size: 26),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '⚠️ Dublikat nakladnoy!',
+                    style: TextStyle(fontSize: 17.5, fontWeight: FontWeight.w900),
+                  ),
                 ),
+              ],
+            ),
+            content: Text(
+              "Bugun soat ${dup.timeHm} da «${dup.supplierName}» uchun ${formatUzs(dup.amount, withCurrency: true)} allaqachon kiritilgan (${dup.displayNum}).\n\nBaribir yangi nakladnoy sifatida saqlansinmi?",
+              style: const TextStyle(fontSize: 14, height: 1.45),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Bekor qilish'),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppTokens.debtAmber,
+                  minimumSize: const Size(0, 42),
+                ),
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Ha, saqlash'),
               ),
             ],
           ),
-          content: Text(
-            "Bugun soat ${dup.timeHm} da «${dup.supplierName}» uchun ${formatUzs(dup.amount, withCurrency: true)} allaqachon kiritilgan (${dup.displayNum}).\n\nBaribir yangi nakladnoy sifatida saqlansinmi?",
-            style: const TextStyle(fontSize: 14, height: 1.45),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Bekor qilish'),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: AppTokens.debtAmber,
-                minimumSize: const Size(0, 42),
-              ),
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Ha, saqlash'),
-            ),
-          ],
-        ),
-      );
-      if (proceed != true || !mounted) return;
-    }
-    setState(() {
-      _submitting = true;
-      _error = null;
-    });
-    try {
-      final res = await widget.api.createNakladnoy(
-        supplierName: sup,
-        amount: amt,
-        paymentMode: _paymentMode,
-        note: _noteCtrl.text,
-        sendToGroup: _sendToGroup,
-        photoBytes: _photoFile?.bytes,
-        photoFilename: _photoFile?.filename ?? 'nakladnoy.jpg',
-        originalAmount: _originalAmount,
-      );
-      if (mounted) {
-        final grpMsg = res['group_message']?.toString() ?? '';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              grpMsg.isNotEmpty
-                  ? '✅ Saqlandi ($grpMsg)'
-                  : '✅ Nakladnoy saqlandi',
-            ),
-          ),
         );
-        Navigator.pop(context, true);
+        if (proceed != true || !mounted) return;
       }
-    } catch (e) {
-      if (isNetworkOfflineError(e)) {
-        await OfflineOutboxStore.enqueueNakladnoy(
+      final reqKey = _pendingSubmitKey ??= generateIdempotencyKey('nak');
+      setState(() {
+        _submitting = true;
+        _error = null;
+      });
+      try {
+        final res = await widget.api.createNakladnoy(
           supplierName: sup,
           amount: amt,
           paymentMode: _paymentMode,
           note: _noteCtrl.text,
           sendToGroup: _sendToGroup,
-          originalAmount: _originalAmount,
           photoBytes: _photoFile?.bytes,
           photoFilename: _photoFile?.filename ?? 'nakladnoy.jpg',
+          originalAmount: _originalAmount,
+          idempotencyKey: reqKey,
         );
+        _pendingSubmitKey = null;
         if (mounted) {
+          final grpMsg = res['group_message']?.toString() ?? '';
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
+            SnackBar(
               content: Text(
-                "📥 Oflayn saqlandi — internet kelganda avtomatik yuboriladi",
+                grpMsg.isNotEmpty
+                    ? '✅ Saqlandi ($grpMsg)'
+                    : '✅ Nakladnoy saqlandi',
               ),
             ),
           );
           Navigator.pop(context, true);
         }
-      } else if (mounted) {
-        setState(() => _error = e.toString());
+      } catch (e) {
+        if (isNetworkOfflineError(e)) {
+          await OfflineOutboxStore.enqueueNakladnoy(
+            supplierName: sup,
+            amount: amt,
+            paymentMode: _paymentMode,
+            note: _noteCtrl.text,
+            sendToGroup: _sendToGroup,
+            originalAmount: _originalAmount,
+            photoBytes: _photoFile?.bytes,
+            photoFilename: _photoFile?.filename ?? 'nakladnoy.jpg',
+            idempotencyKey: reqKey,
+          );
+          _pendingSubmitKey = null;
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  "📥 Oflayn saqlandi — internet kelganda avtomatik yuboriladi",
+                ),
+              ),
+            );
+            Navigator.pop(context, true);
+          }
+        } else if (mounted) {
+          setState(() => _error = e.toString());
+        }
+      } finally {
+        if (mounted) setState(() => _submitting = false);
       }
     } finally {
-      if (mounted) setState(() => _submitting = false);
+      _submitLock = false;
     }
   }
 
@@ -7744,10 +7781,15 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                         onPressed: _busy
                             ? null
                             : () async {
+                                if (_busy) return;
+                                final reqKey = generateIdempotencyKey('grp');
                                 setState(() => _busy = true);
                                 try {
                                   final msg = await widget.api
-                                      .sendNakladnoyToGroup(_cur.id);
+                                      .sendNakladnoyToGroup(
+                                    _cur.id,
+                                    idempotencyKey: reqKey,
+                                  );
                                   _changed = true;
                                   if (context.mounted) {
                                     showTopSlideNotification(
@@ -9271,6 +9313,7 @@ class _PrixodItogSheetState extends State<PrixodItogSheet> {
   bool _publishToGroup = false;
   bool _loading = true;
   bool _submitting = false;
+  final Set<int> _publishingIds = <int>{};
 
   @override
   void initState() {
@@ -9484,25 +9527,63 @@ class _PrixodItogSheetState extends State<PrixodItogSheet> {
                                   if (widget.api.canWrite) ...[
                                     const SizedBox(width: 12),
                                     Expanded(
-                                      child: FilledButton.tonalIcon(
-                                        onPressed: () async {
-                                          try {
-                                            final pub = await widget.api
-                                                .publishPrixod(
-                                                    (r['id'] as num).toInt());
-                                            widget.showSnack(
-                                              pub['message']?.toString() ??
-                                                  'Guruhga yuborildi!',
-                                            );
-                                            await _load();
-                                          } catch (e) {
-                                            widget.showSnack(e.toString(),
-                                                isError: true);
-                                          }
+                                      child: Builder(
+                                        builder: (context) {
+                                          final repId =
+                                              (r['id'] as num).toInt();
+                                          final isPublishing =
+                                              _publishingIds.contains(repId);
+                                          return FilledButton.tonalIcon(
+                                            onPressed: isPublishing
+                                                ? null
+                                                : () async {
+                                                    if (_publishingIds
+                                                        .contains(repId)) {
+                                                      return;
+                                                    }
+                                                    setState(() =>
+                                                        _publishingIds
+                                                            .add(repId));
+                                                    try {
+                                                      final pub = await widget
+                                                          .api
+                                                          .publishPrixod(repId);
+                                                      widget.showSnack(
+                                                        pub['message']
+                                                                ?.toString() ??
+                                                            'Guruhga yuborildi!',
+                                                      );
+                                                      await _load();
+                                                    } catch (e) {
+                                                      widget.showSnack(
+                                                          e.toString(),
+                                                          isError: true);
+                                                    } finally {
+                                                      if (mounted) {
+                                                        setState(() =>
+                                                            _publishingIds
+                                                                .remove(repId));
+                                                      }
+                                                    }
+                                                  },
+                                            icon: isPublishing
+                                                ? const SizedBox(
+                                                    width: 16,
+                                                    height: 16,
+                                                    child:
+                                                        CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                    ),
+                                                  )
+                                                : const Icon(Icons.send_rounded,
+                                                    size: 16),
+                                            label: Text(
+                                              isPublishing
+                                                  ? 'Yuborilmoqda...'
+                                                  : 'Guruhga',
+                                            ),
+                                          );
                                         },
-                                        icon: const Icon(Icons.send_rounded,
-                                            size: 16),
-                                        label: const Text('Guruhga'),
                                       ),
                                     ),
                                   ],

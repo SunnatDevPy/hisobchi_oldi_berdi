@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import html
 import io
+import json
 import mimetypes
 from typing import Optional
 
@@ -14,7 +15,8 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request,
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import desc, func, select
+from sqlalchemy.exc import IntegrityError
 
 mimetypes.add_type("application/wasm", ".wasm")
 mimetypes.add_type("application/javascript", ".mjs")
@@ -144,6 +146,7 @@ from database.crud import (
     update_nakladnoy,
 )
 from database.models import (
+    ApiIdempotencyRecord,
     CashReconciliation,
     CashTransaction,
     DailyCashSession,
@@ -346,7 +349,7 @@ def create_api_app() -> FastAPI:
         allow_origins=allowed_origins,
         allow_credentials=False,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "Accept"],
+        allow_headers=["Authorization", "Content-Type", "Accept", "X-Idempotency-Key"],
     )
     app.add_middleware(GZipMiddleware, minimum_size=1024)
 
@@ -364,6 +367,64 @@ def create_api_app() -> FastAPI:
         return response
 
     cached_bot_username: Optional[str] = None
+    idempotency_locks: dict[str, asyncio.Lock] = {}
+    user_create_locks: dict[int, asyncio.Lock] = {}
+    prixod_publish_locks: dict[int, asyncio.Lock] = {}
+
+    def _get_lock(pool: dict, key) -> asyncio.Lock:
+        lock = pool.get(key)
+        if lock is None:
+            if len(pool) > 2048:
+                pool.clear()
+            lock = asyncio.Lock()
+            pool[key] = lock
+        return lock
+
+    def _extract_idempotency_key(
+        request: Optional[Request],
+        form_key: Optional[str] = None,
+    ) -> Optional[str]:
+        raw = ""
+        if request is not None:
+            raw = (request.headers.get("x-idempotency-key") or "").strip()
+        if not raw and form_key:
+            raw = form_key.strip()
+        if not raw:
+            return None
+        return raw[:120]
+
+    async def _execute_idempotent(
+        scope: str,
+        user_id: int,
+        raw_key: Optional[str],
+        fn,
+    ) -> dict:
+        if not raw_key:
+            return await fn()
+        composite_key = f"{scope}:{int(user_id)}:{raw_key}"[:160]
+        async with _get_lock(idempotency_locks, composite_key):
+            async with async_session_maker() as db:
+                existing = await db.get(ApiIdempotencyRecord, composite_key)
+                if existing is not None:
+                    return json.loads(existing.response_json)
+            result = await fn()
+            payload_str = json.dumps(result, ensure_ascii=False)
+            async with async_session_maker() as db:
+                existing = await db.get(ApiIdempotencyRecord, composite_key)
+                if existing is None:
+                    db.add(
+                        ApiIdempotencyRecord(
+                            key=composite_key,
+                            endpoint=scope,
+                            user_id=int(user_id),
+                            response_json=payload_str,
+                        )
+                    )
+                    try:
+                        await db.commit()
+                    except IntegrityError:
+                        await db.rollback()
+            return result
 
     async def _resolve_bot_username() -> str:
         nonlocal cached_bot_username
@@ -616,16 +677,22 @@ def create_api_app() -> FastAPI:
     @app.post("/cash", response_model=CashTxOut)
     async def create_cash(
         payload: CashCreateRequest,
+        request: Request,
         user: AuthenticatedUser = Depends(require_write_user),
     ) -> CashTxOut:
-        async with async_session_maker() as db:
-            tx = await add_cash_transaction(
-                db,
-                amount=payload.amount,
-                source_type=payload.source_type,
-                note=payload.note,
-            )
-        return _serialize_cash_tx(tx)
+        async def _op() -> dict:
+            async with async_session_maker() as db:
+                tx = await add_cash_transaction(
+                    db,
+                    amount=payload.amount,
+                    source_type=payload.source_type,
+                    note=payload.note,
+                )
+            return _serialize_cash_tx(tx).model_dump()
+
+        idem_key = _extract_idempotency_key(request)
+        data = await _execute_idempotent("cash", user.user_id, idem_key, _op)
+        return CashTxOut.model_validate(data)
 
     @app.patch("/cash/{tx_id}", response_model=CashTxOut)
     async def edit_cash(
@@ -1079,12 +1146,14 @@ def create_api_app() -> FastAPI:
 
     @app.post("/nakladnoy")
     async def create_nakladnoy(
+        request: Request,
         supplier_name: str = Form(...),
         amount: float = Form(...),
         payment_mode: str = Form(default="cash"),  # cash | card | transfer | debt
         note: str = Form(default=""),
         send_to_group: bool = Form(default=True),
         original_amount: Optional[float] = Form(default=None),
+        client_request_id: Optional[str] = Form(default=None),
         photo: Optional[UploadFile] = File(default=None),
         user: AuthenticatedUser = Depends(require_write_user),
     ) -> dict:
@@ -1097,6 +1166,7 @@ def create_api_app() -> FastAPI:
         mode = (payment_mode or "cash").strip().lower()
         is_debt = mode == "debt"
         pm = "cash" if is_debt else normalize_payment_method(mode)
+        clean_note = note.strip()
 
         photo_bytes: Optional[bytes] = None
         if photo is not None:
@@ -1106,60 +1176,104 @@ def create_api_app() -> FastAPI:
                     raise HTTPException(status_code=400, detail="Rasm hajmi 15 MB dan oshmasligi kerak")
                 photo_bytes = raw
 
-        async with async_session_maker() as db:
-            canonical, _ = await resolve_supplier_name(db, clean_supplier)
-            r_mode = await get_app_setting(db, "round_mode", "floor_1000")
-            rounded_amt = round_nakladnoy_amount(float(amount), r_mode)
-            if round(rounded_amt) != round(amount):
-                eff_amt = rounded_amt
-                eff_orig: Optional[float] = (
-                    float(original_amount) if original_amount else float(amount)
-                )
-            else:
-                eff_amt = float(amount)
-                eff_orig = (
-                    float(original_amount)
-                    if original_amount and round(original_amount) != round(amount)
-                    else None
-                )
-            pending = await create_pending_nakladnoy(
-                db,
-                supplier_name=canonical,
-                amount=eff_amt,
-                note=note.strip() or None,
-                original_amount=eff_orig,
-            )
-            confirmed = await confirm_nakladnoy(
-                db,
-                payment_id=pending.id,
-                user_id=user.user_id,
-                is_debt=is_debt,
-                payment_method=pm,
-            )
-            if confirmed is None:
-                raise HTTPException(status_code=500, detail="Nakladnoy tasdiqlashda xatolik")
-            seq = await get_nakladnoy_session_seq(db, confirmed)
+        idem_key = _extract_idempotency_key(request, client_request_id)
 
-        if photo_bytes:
-            await asyncio.to_thread(save_local_photo, confirmed.id, photo_bytes)
-
-        grp_ok = False
-        grp_msg = "Faqat bazaga saqlandi"
-        if send_to_group:
-            grp_ok, grp_msg = await post_nakladnoy_to_telegram_group(
-                confirmed.id, photo_bytes=photo_bytes, force=False
-            )
-            if grp_ok:
+        async def _op() -> dict:
+            async with _get_lock(user_create_locks, int(user.user_id)):
                 async with async_session_maker() as db:
-                    refreshed = await get_nakladnoy(db, confirmed.id)
-                    if refreshed is not None:
-                        confirmed = refreshed
+                    canonical, _ = await resolve_supplier_name(db, clean_supplier)
+                    r_mode = await get_app_setting(db, "round_mode", "floor_1000")
+                    rounded_amt = round_nakladnoy_amount(float(amount), r_mode)
+                    if round(rounded_amt) != round(amount):
+                        eff_amt = rounded_amt
+                        eff_orig: Optional[float] = (
+                            float(original_amount) if original_amount else float(amount)
+                        )
+                    else:
+                        eff_amt = float(amount)
+                        eff_orig = (
+                            float(original_amount)
+                            if original_amount and round(original_amount) != round(amount)
+                            else None
+                        )
 
-        return {
-            "nakladnoy": _serialize_nakladnoy(confirmed, session_seq=seq),
-            "group_posted": grp_ok,
-            "group_message": grp_msg,
-        }
+                    # Rapid double-tap fallback guard for clients without X-Idempotency-Key
+                    if not idem_key:
+                        open_sess = await get_or_create_open_session(db)
+                        recent = await db.scalar(
+                            select(NakladnoyPayment)
+                            .where(
+                                NakladnoyPayment.session_id == open_sess.id,
+                                NakladnoyPayment.status == "confirmed",
+                            )
+                            .order_by(desc(NakladnoyPayment.id))
+                            .limit(1)
+                        )
+                        if recent is not None and recent.created_at is not None:
+                            created_naive = recent.created_at.replace(tzinfo=None)
+                            now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+                            age_sec = (now_naive - created_naive).total_seconds()
+                            if (
+                                -5 <= age_sec <= 12
+                                and recent.supplier_name == canonical
+                                and abs(float(recent.amount) - eff_amt) < 0.01
+                                and normalize_payment_method(recent.payment_method) == pm
+                                and bool(recent.is_debt) == is_debt
+                                and (recent.note or "").strip() == clean_note
+                            ):
+                                dup_seq = await get_nakladnoy_session_seq(db, recent)
+                                return {
+                                    "nakladnoy": _serialize_nakladnoy(
+                                        recent, session_seq=dup_seq
+                                    ).model_dump(),
+                                    "group_posted": bool(
+                                        recent.group_chat_id and recent.group_message_id
+                                    ),
+                                    "group_message": "Takroriy yuborish bloklandi",
+                                }
+
+                    pending = await create_pending_nakladnoy(
+                        db,
+                        supplier_name=canonical,
+                        amount=eff_amt,
+                        note=clean_note or None,
+                        original_amount=eff_orig,
+                    )
+                    confirmed = await confirm_nakladnoy(
+                        db,
+                        payment_id=pending.id,
+                        user_id=user.user_id,
+                        is_debt=is_debt,
+                        payment_method=pm,
+                    )
+                    if confirmed is None:
+                        raise HTTPException(
+                            status_code=500, detail="Nakladnoy tasdiqlashda xatolik"
+                        )
+                    seq = await get_nakladnoy_session_seq(db, confirmed)
+
+                if photo_bytes:
+                    await asyncio.to_thread(save_local_photo, confirmed.id, photo_bytes)
+
+                grp_ok = False
+                grp_msg = "Faqat bazaga saqlandi"
+                if send_to_group:
+                    grp_ok, grp_msg = await post_nakladnoy_to_telegram_group(
+                        confirmed.id, photo_bytes=photo_bytes, force=False
+                    )
+                    if grp_ok:
+                        async with async_session_maker() as db:
+                            refreshed = await get_nakladnoy(db, confirmed.id)
+                            if refreshed is not None:
+                                confirmed = refreshed
+
+                return {
+                    "nakladnoy": _serialize_nakladnoy(confirmed, session_seq=seq).model_dump(),
+                    "group_posted": grp_ok,
+                    "group_message": grp_msg,
+                }
+
+        return await _execute_idempotent("nakladnoy", user.user_id, idem_key, _op)
 
     @app.get("/nakladnoy")
     async def list_nakladnoys(
@@ -1317,41 +1431,54 @@ def create_api_app() -> FastAPI:
     async def pay_debt_nakladnoy(
         payment_id: int,
         payload: PaymentMethodRequest,
+        request: Request,
         user: AuthenticatedUser = Depends(require_write_user),
     ) -> NakladnoyOut:
-        async with async_session_maker() as db:
-            res = await mark_nakladnoy_as_paid(
-                db,
-                payment_id=payment_id,
-                user_id=user.user_id,
-                payment_method=payload.payment_method,
-                partial_amount=payload.amount,
-            )
-            if res is None:
-                raise HTTPException(status_code=404, detail="Nakladnoy topilmadi")
-            updated, _ = res
-            seq = await get_nakladnoy_session_seq(db, updated)
+        async def _op() -> dict:
+            async with async_session_maker() as db:
+                res = await mark_nakladnoy_as_paid(
+                    db,
+                    payment_id=payment_id,
+                    user_id=user.user_id,
+                    payment_method=payload.payment_method,
+                    partial_amount=payload.amount,
+                )
+                if res is None:
+                    raise HTTPException(status_code=404, detail="Nakladnoy topilmadi")
+                updated, _ = res
+                seq = await get_nakladnoy_session_seq(db, updated)
 
-        tag = "💸 [QISMAN TO'LANDI]" if updated.is_debt else "✅ [QARZ TO'LANDI]"
-        sync_existing_group_message(updated, tag=tag)
-        return _serialize_nakladnoy(updated, session_seq=seq)
+            tag = "💸 [QISMAN TO'LANDI]" if updated.is_debt else "✅ [QARZ TO'LANDI]"
+            sync_existing_group_message(updated, tag=tag)
+            return _serialize_nakladnoy(updated, session_seq=seq).model_dump()
+
+        idem_key = _extract_idempotency_key(request)
+        data = await _execute_idempotent("pay_debt", user.user_id, idem_key, _op)
+        return NakladnoyOut.model_validate(data)
 
     @app.post("/nakladnoy/{payment_id}/group")
     async def send_nakladnoy_to_group_endpoint(
         payment_id: int,
+        request: Request,
         user: AuthenticatedUser = Depends(require_write_user),
     ) -> dict:
-        ok, msg = await post_nakladnoy_to_telegram_group(payment_id, force=True)
-        if not ok:
-            raise HTTPException(status_code=400, detail=msg)
-        async with async_session_maker() as db:
-            updated = await get_nakladnoy(db, payment_id)
-            seq = await get_nakladnoy_session_seq(db, updated) if updated else None
-        return {
-            "ok": True,
-            "message": msg,
-            "nakladnoy": _serialize_nakladnoy(updated, session_seq=seq) if updated else None,
-        }
+        async def _op() -> dict:
+            ok, msg = await post_nakladnoy_to_telegram_group(payment_id, force=True)
+            if not ok:
+                raise HTTPException(status_code=400, detail=msg)
+            async with async_session_maker() as db:
+                updated = await get_nakladnoy(db, payment_id)
+                seq = await get_nakladnoy_session_seq(db, updated) if updated else None
+            return {
+                "ok": True,
+                "message": msg,
+                "nakladnoy": _serialize_nakladnoy(updated, session_seq=seq).model_dump()
+                if updated
+                else None,
+            }
+
+        idem_key = _extract_idempotency_key(request)
+        return await _execute_idempotent("send_group", user.user_id, idem_key, _op)
 
     @app.delete("/nakladnoy/{payment_id}")
     async def remove_nakladnoy(
@@ -2041,46 +2168,47 @@ def create_api_app() -> FastAPI:
         }
 
     async def _publish_prixod_to_group(report_id: int):
-        bot = get_bot()
-        async with async_session_maker() as db:
-            rep = await get_prixod_report(db, report_id)
-            if rep is None:
-                raise HTTPException(status_code=404, detail="Prixod hisoboti topilmadi")
-            grp = await get_group_config(db, "prixod")
-        if grp is None or not grp.chat_id:
-            return False, "Prixod guruhi bog'lanmagan (/set_prixod_group)", rep
-        if bot is None:
-            return False, "Telegram bot ulanmagan", rep
-        try:
-            text_html = f"<pre>{html.escape(rep.formatted_text)}</pre>"
-            if rep.group_chat_id and rep.group_message_id:
-                await bot.edit_message_text(
-                    chat_id=rep.group_chat_id,
-                    message_id=rep.group_message_id,
-                    text=text_html,
-                    parse_mode="HTML",
-                )
-                msg_id = rep.group_message_id
-                chat_id = rep.group_chat_id
-            else:
-                sent = await bot.send_message(
-                    chat_id=grp.chat_id,
-                    text=text_html,
-                    parse_mode="HTML",
-                )
-                msg_id = sent.message_id
-                chat_id = grp.chat_id
+        async with _get_lock(prixod_publish_locks, int(report_id)):
+            bot = get_bot()
             async with async_session_maker() as db:
-                updated = await mark_prixod_published(
-                    db,
-                    report_id=rep.id,
-                    formatted_text=rep.formatted_text,
-                    group_chat_id=chat_id,
-                    group_message_id=msg_id,
-                )
-            return True, f"Prixod guruhiga yuborildi ({grp.title or grp.chat_id})", updated or rep
-        except Exception as exc:
-            return False, f"Guruhga yuborishda xatolik: {exc}", rep
+                rep = await get_prixod_report(db, report_id)
+                if rep is None:
+                    raise HTTPException(status_code=404, detail="Prixod hisoboti topilmadi")
+                grp = await get_group_config(db, "prixod")
+            if grp is None or not grp.chat_id:
+                return False, "Prixod guruhi bog'lanmagan (/set_prixod_group)", rep
+            if bot is None:
+                return False, "Telegram bot ulanmagan", rep
+            try:
+                text_html = f"<pre>{html.escape(rep.formatted_text)}</pre>"
+                if rep.group_chat_id and rep.group_message_id:
+                    await bot.edit_message_text(
+                        chat_id=rep.group_chat_id,
+                        message_id=rep.group_message_id,
+                        text=text_html,
+                        parse_mode="HTML",
+                    )
+                    msg_id = rep.group_message_id
+                    chat_id = rep.group_chat_id
+                else:
+                    sent = await bot.send_message(
+                        chat_id=grp.chat_id,
+                        text=text_html,
+                        parse_mode="HTML",
+                    )
+                    msg_id = sent.message_id
+                    chat_id = grp.chat_id
+                async with async_session_maker() as db:
+                    updated = await mark_prixod_published(
+                        db,
+                        report_id=rep.id,
+                        formatted_text=rep.formatted_text,
+                        group_chat_id=chat_id,
+                        group_message_id=msg_id,
+                    )
+                return True, f"Prixod guruhiga yuborildi ({grp.title or grp.chat_id})", updated or rep
+            except Exception as exc:
+                return False, f"Guruhga yuborishda xatolik: {exc}", rep
 
     @app.post("/prixod/{report_id}/publish")
     async def publish_prixod_endpoint(

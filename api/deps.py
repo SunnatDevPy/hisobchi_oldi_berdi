@@ -34,6 +34,18 @@ APK_PHOTOS_DIR = Path("data/apk_photos")
 APK_BINARY_PATH = Path("data/hisobchi.apk")
 APK_VERSION_PATH = Path("data/apk_version.json")
 _ACTIVE_BOT: Optional[Bot] = None
+_GROUP_POST_LOCKS: dict[int, asyncio.Lock] = {}
+
+
+def _get_group_post_lock(payment_id: int) -> asyncio.Lock:
+    pid = int(payment_id)
+    lock = _GROUP_POST_LOCKS.get(pid)
+    if lock is None:
+        if len(_GROUP_POST_LOCKS) > 2048:
+            _GROUP_POST_LOCKS.clear()
+        lock = asyncio.Lock()
+        _GROUP_POST_LOCKS[pid] = lock
+    return lock
 
 
 def get_apk_version_metadata() -> dict:
@@ -108,9 +120,24 @@ async def post_nakladnoy_to_telegram_group(
 ) -> tuple[bool, str]:
     """Send a confirmed nakladnoy from APK to the bound Telegram Nakladnoy group.
 
-    Stores ``group_chat_id``, ``group_message_id``, and (when a photo was sent) Telegram's
-    ``photo_file_id`` so future edits sync captions seamlessly.
+    Serializes concurrent sends for the same ``payment_id`` so the second call sees
+    ``group_chat_id``/``group_message_id`` and edits instead of posting a duplicate.
     """
+    async with _get_group_post_lock(payment_id):
+        return await _post_nakladnoy_to_telegram_group_locked(
+            payment_id=payment_id,
+            photo_bytes=photo_bytes,
+            force=force,
+            replace_photo=replace_photo,
+        )
+
+
+async def _post_nakladnoy_to_telegram_group_locked(
+    payment_id: int,
+    photo_bytes: Optional[bytes] = None,
+    force: bool = False,
+    replace_photo: bool = False,
+) -> tuple[bool, str]:
     bot = get_bot()
     async with async_session_maker() as db:
         payment = await get_nakladnoy(db, payment_id)

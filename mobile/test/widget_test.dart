@@ -1204,4 +1204,101 @@ void main() {
     await enterPin('1357');
     expect(unlocked, isFalse);
   });
+
+  test('OfflineOutboxStore deduplicates enqueue and forwards X-Idempotency-Key headers',
+      () async {
+    SharedPreferences.setMockInitialValues({});
+    await OfflineOutboxStore.clearAll();
+
+    final cashKey = generateIdempotencyKey('cash');
+    final nakKey = generateIdempotencyKey('nak');
+    final debtKey = generateIdempotencyKey('debt');
+    expect(cashKey, isNot(equals(generateIdempotencyKey('cash'))));
+
+    // Repeated enqueue with identical idempotency key must stay deduplicated
+    expect(
+      await OfflineOutboxStore.enqueueCash(
+        amount: 250000,
+        sourceType: 'main',
+        idempotencyKey: cashKey,
+      ),
+      equals(1),
+    );
+    expect(
+      await OfflineOutboxStore.enqueueCash(
+        amount: 250000,
+        sourceType: 'main',
+        idempotencyKey: cashKey,
+      ),
+      equals(1),
+    );
+    expect(
+      await OfflineOutboxStore.enqueueNakladnoy(
+        supplierName: 'OMBOR',
+        amount: 150000,
+        paymentMode: 'cash',
+        idempotencyKey: nakKey,
+      ),
+      equals(2),
+    );
+    expect(
+      await OfflineOutboxStore.enqueuePayDebt(
+        paymentId: 12,
+        paymentMethod: 'cash',
+        idempotencyKey: debtKey,
+      ),
+      equals(3),
+    );
+
+    final seenKeys = <String, String?>{};
+    final mockHttp = MockClient((req) async {
+      seenKeys[req.url.path] = req.headers['X-Idempotency-Key'];
+      if (req.url.path == '/cash') {
+        return http.Response(
+          jsonEncode({
+            'id': 1,
+            'session_id': 1,
+            'amount': 250000,
+            'source_type': 'main',
+            'note': '',
+            'created_at': '2026-11-26 12:00',
+            'time_hm': '12:00',
+          }),
+          200,
+        );
+      }
+      if (req.url.path == '/nakladnoy') {
+        return http.Response(jsonEncode({'ok': true}), 200);
+      }
+      return http.Response(
+        jsonEncode({
+          'id': 12,
+          'session_id': 1,
+          'display_num': '#12',
+          'supplier_name': 'OMBOR',
+          'amount': 100000,
+          'payment_method': 'cash',
+          'is_debt': false,
+          'note': '',
+          'has_photo': false,
+          'in_group': false,
+          'created_at': '2026-11-26 12:00',
+          'time_hm': '12:00',
+        }),
+        200,
+      );
+    });
+
+    final api = HisobchiApiClient(
+      baseUrl: 'https://hisobchi.okaposai.uz',
+      accessToken: 'tok',
+      httpClient: mockHttp,
+    );
+    final res = await OfflineOutboxStore.flushAll(api);
+    expect(res.sent, equals(3));
+    expect(res.remaining, equals(0));
+    expect(seenKeys['/cash'], equals(cashKey));
+    expect(seenKeys['/nakladnoy'], equals(nakKey));
+    expect(seenKeys['/nakladnoy/12/paid'], equals(debtKey));
+  });
 }

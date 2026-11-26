@@ -303,3 +303,17 @@ class ApiToken(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
+
+class ApiIdempotencyRecord(Base):
+    """Cached responses for idempotent mutating REST calls (prevents duplicate sends on retries)."""
+
+    __tablename__ = "api_idempotency_records"
+
+    key: Mapped[str] = mapped_column(String(160), primary_key=True)
+    endpoint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    response_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+

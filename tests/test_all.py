@@ -3430,3 +3430,133 @@ def test_api_security_hardening_headers_query_token_and_rate_limits(tmp_path: Pa
         api_auth_mod.clear_auth_memory_state()
         clear_role_cache()
         get_settings.cache_clear()
+
+
+def test_idempotent_requests_and_group_post_dedup(tmp_path: Path, monkeypatch):
+    from types import SimpleNamespace
+    import httpx
+    from api import app as api_app_mod
+    from api import auth as api_auth_mod
+    from api import deps as api_deps_mod
+    from bot.auth import clear_role_cache
+    from config import get_settings
+    from database.crud import get_or_create_open_session, set_group_config
+
+    monkeypatch.setenv("BOT_TOKEN", "test-token")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("ADMIN_IDS", "111")
+    get_settings.cache_clear()
+    api_auth_mod.clear_auth_memory_state()
+    monkeypatch.setattr(api_deps_mod, "APK_PHOTOS_DIR", tmp_path / "apk_photos")
+
+    class SlowDedupBot:
+        def __init__(self) -> None:
+            self.sent_count = 0
+            self.edit_count = 0
+
+        async def send_message(self, chat_id: int, text: str, **kwargs):
+            await asyncio.sleep(0.05)
+            self.sent_count += 1
+            return SimpleNamespace(message_id=500 + self.sent_count, photo=None)
+
+        async def edit_message_text(self, chat_id: int, message_id: int, text: str, **kwargs):
+            self.edit_count += 1
+
+    async def scenario() -> None:
+        db_file = tmp_path / "test_idem.db"
+        eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+        await init_db(engine_override=eng, session_maker_override=maker)
+        monkeypatch.setattr(api_auth_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_deps_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_app_mod, "async_session_maker", maker)
+
+        fake_bot = SlowDedupBot()
+        api_deps_mod.set_bot(fake_bot)
+        try:
+            async with maker() as db:
+                await set_group_config(db, "nakladnoy", -100999111, "Dedup Group")
+                await get_or_create_open_session(db, report_date="2026-11-26")
+
+            app = api_app_mod.create_api_app()
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                code = api_auth_mod.create_login_code(111)
+                r_login = await client.post("/auth/login", json={"code": code, "device_name": "DedupDev"})
+                token = r_login.json()["access_token"]
+                headers = {"Authorization": f"Bearer {token}"}
+
+                # 1. Concurrent + sequential POST /nakladnoy with same X-Idempotency-Key -> 1 row, 1 Telegram message
+                idem_headers = {**headers, "X-Idempotency-Key": "nak_offline_retry_001"}
+                form_data = {
+                    "supplier_name": "OMBOR",
+                    "amount": "450000",
+                    "payment_mode": "cash",
+                    "note": "Flaky wifi retry",
+                    "send_to_group": "true",
+                }
+                r1, r2 = await asyncio.gather(
+                    client.post("/nakladnoy", headers=idem_headers, data=form_data),
+                    client.post("/nakladnoy", headers=idem_headers, data=form_data),
+                )
+                assert r1.status_code == 200 and r2.status_code == 200
+                assert r1.json()["nakladnoy"]["id"] == r2.json()["nakladnoy"]["id"]
+                assert fake_bot.sent_count == 1
+                pid = r1.json()["nakladnoy"]["id"]
+
+                # 2. Rapid duplicate POST /nakladnoy WITHOUT idempotency key within 12s -> blocked & reused
+                r_no_key_1 = await client.post(
+                    "/nakladnoy",
+                    headers=headers,
+                    data={
+                        "supplier_name": "QASSOB",
+                        "amount": "200000",
+                        "payment_mode": "cash",
+                        "send_to_group": "true",
+                    },
+                )
+                r_no_key_2 = await client.post(
+                    "/nakladnoy",
+                    headers=headers,
+                    data={
+                        "supplier_name": "QASSOB",
+                        "amount": "200000",
+                        "payment_mode": "cash",
+                        "send_to_group": "true",
+                    },
+                )
+                assert r_no_key_1.status_code == 200 and r_no_key_2.status_code == 200
+                assert r_no_key_1.json()["nakladnoy"]["id"] == r_no_key_2.json()["nakladnoy"]["id"]
+                assert fake_bot.sent_count == 2
+
+                # 3. Concurrent post_nakladnoy_to_telegram_group -> second call edits rather than sending duplicate
+                await asyncio.gather(
+                    api_deps_mod.post_nakladnoy_to_telegram_group(pid, force=True),
+                    api_deps_mod.post_nakladnoy_to_telegram_group(pid, force=True),
+                )
+                assert fake_bot.sent_count == 2
+                assert fake_bot.edit_count >= 2
+
+                # 4. Duplicate POST /cash with same X-Idempotency-Key -> same tx id
+                cash_headers = {**headers, "X-Idempotency-Key": "cash_retry_001"}
+                c1 = await client.post(
+                    "/cash",
+                    headers=cash_headers,
+                    json={"amount": 1000000, "source_type": "main", "note": "Kassa"},
+                )
+                c2 = await client.post(
+                    "/cash",
+                    headers=cash_headers,
+                    json={"amount": 1000000, "source_type": "main", "note": "Kassa"},
+                )
+                assert c1.status_code == 200 and c2.status_code == 200
+                assert c1.json()["id"] == c2.json()["id"]
+        finally:
+            api_deps_mod.set_bot(None)
+            await eng.dispose()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        api_auth_mod.clear_auth_memory_state()
+        clear_role_cache()
+        get_settings.cache_clear()

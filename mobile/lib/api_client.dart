@@ -370,7 +370,10 @@ class HisobchiApiClient {
     return u.replace(queryParameters: query);
   }
 
-  Map<String, String> _headers({bool jsonBody = true}) {
+  Map<String, String> _headers({
+    bool jsonBody = true,
+    String? idempotencyKey,
+  }) {
     final h = <String, String>{
       'Accept': 'application/json',
     };
@@ -379,6 +382,9 @@ class HisobchiApiClient {
     }
     if (accessToken != null && accessToken!.isNotEmpty) {
       h['Authorization'] = 'Bearer $accessToken';
+    }
+    if (idempotencyKey != null && idempotencyKey.trim().isNotEmpty) {
+      h['X-Idempotency-Key'] = idempotencyKey.trim();
     }
     return h;
   }
@@ -520,11 +526,12 @@ class HisobchiApiClient {
     required double amount,
     required String sourceType,
     String note = '',
+    String? idempotencyKey,
   }) async {
     final res = await _http
         .post(
           _uri('/cash'),
-          headers: _headers(),
+          headers: _headers(idempotencyKey: idempotencyKey),
           body: jsonEncode({
             'amount': amount,
             'source_type': sourceType,
@@ -617,10 +624,16 @@ class HisobchiApiClient {
     Uint8List? photoBytes,
     String photoFilename = 'nakladnoy.jpg',
     double? originalAmount,
+    String? idempotencyKey,
   }) async {
     final req = http.MultipartRequest('POST', _uri('/nakladnoy'));
     if (accessToken != null) {
       req.headers['Authorization'] = 'Bearer $accessToken';
+    }
+    if (idempotencyKey != null && idempotencyKey.trim().isNotEmpty) {
+      final cleanKey = idempotencyKey.trim();
+      req.headers['X-Idempotency-Key'] = cleanKey;
+      req.fields['client_request_id'] = cleanKey;
     }
     req.fields['supplier_name'] = supplierName.trim();
     req.fields['amount'] = amount.toStringAsFixed(0);
@@ -693,11 +706,12 @@ class HisobchiApiClient {
     required int paymentId,
     required String paymentMethod, // cash | card | transfer
     double? amount,
+    String? idempotencyKey,
   }) async {
     final res = await _http
         .post(
           _uri('/nakladnoy/$paymentId/paid'),
-          headers: _headers(),
+          headers: _headers(idempotencyKey: idempotencyKey),
           body: jsonEncode({
             'payment_method': paymentMethod,
             if (amount != null && amount > 0) 'amount': amount,
@@ -707,9 +721,15 @@ class HisobchiApiClient {
     return NakladnoyItem.fromJson(_decodeJson(res));
   }
 
-  Future<String> sendNakladnoyToGroup(int paymentId) async {
+  Future<String> sendNakladnoyToGroup(
+    int paymentId, {
+    String? idempotencyKey,
+  }) async {
     final res = await _http
-        .post(_uri('/nakladnoy/$paymentId/group'), headers: _headers())
+        .post(
+          _uri('/nakladnoy/$paymentId/group'),
+          headers: _headers(idempotencyKey: idempotencyKey),
+        )
         .timeout(const Duration(seconds: 20));
     final data = _decodeJson(res);
     return (data['message'] ?? 'Guruhga yuborildi').toString();

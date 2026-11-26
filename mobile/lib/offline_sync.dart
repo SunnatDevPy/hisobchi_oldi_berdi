@@ -1,9 +1,22 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_client.dart';
+
+final math.Random _idemRng = math.Random.secure();
+
+/// Generates a collision-free idempotency key for at-most-once REST mutations.
+String generateIdempotencyKey([String prefix = 'req']) {
+  final ts = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+  final sb = StringBuffer();
+  for (var i = 0; i < 8; i++) {
+    sb.write(_idemRng.nextInt(256).toRadixString(16).padLeft(2, '0'));
+  }
+  return '${prefix}_${ts}_${sb.toString()}';
+}
 
 /// Pure check for whether a newly polled revision token indicates remote changes.
 bool shouldTriggerRemoteSync(String? lastRev, String nextRev) {
@@ -93,9 +106,6 @@ class OfflineOutboxStore {
   static const String _storageKey = 'hisobchi_offline_outbox_v1';
   static bool _flushing = false;
 
-  static String _makeId() =>
-      '${DateTime.now().microsecondsSinceEpoch}_${DateTime.now().hashCode.abs() % 9999}';
-
   static Future<List<OfflineOutboxItem>> loadAll() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -142,11 +152,18 @@ class OfflineOutboxStore {
     required double amount,
     required String sourceType,
     String note = '',
+    String? idempotencyKey,
   }) async {
+    final itemId = (idempotencyKey != null && idempotencyKey.trim().isNotEmpty)
+        ? idempotencyKey.trim()
+        : generateIdempotencyKey('cash');
     final items = await loadAll();
+    if (items.any((e) => e.id == itemId)) {
+      return items.length;
+    }
     items.add(
       OfflineOutboxItem(
-        id: _makeId(),
+        id: itemId,
         type: 'cash',
         createdAtIso: DateTime.now().toIso8601String(),
         payload: {
@@ -169,8 +186,15 @@ class OfflineOutboxStore {
     double? originalAmount,
     Uint8List? photoBytes,
     String photoFilename = 'nakladnoy.jpg',
+    String? idempotencyKey,
   }) async {
+    final itemId = (idempotencyKey != null && idempotencyKey.trim().isNotEmpty)
+        ? idempotencyKey.trim()
+        : generateIdempotencyKey('nak');
     final items = await loadAll();
+    if (items.any((e) => e.id == itemId)) {
+      return items.length;
+    }
     String? photoB64;
     if (photoBytes != null &&
         photoBytes.isNotEmpty &&
@@ -179,7 +203,7 @@ class OfflineOutboxStore {
     }
     items.add(
       OfflineOutboxItem(
-        id: _makeId(),
+        id: itemId,
         type: 'nakladnoy',
         createdAtIso: DateTime.now().toIso8601String(),
         payload: {
@@ -204,11 +228,18 @@ class OfflineOutboxStore {
     String supplierName = '',
     double amount = 0,
     double? partialAmount,
+    String? idempotencyKey,
   }) async {
+    final itemId = (idempotencyKey != null && idempotencyKey.trim().isNotEmpty)
+        ? idempotencyKey.trim()
+        : generateIdempotencyKey('debt');
     final items = await loadAll();
+    if (items.any((e) => e.id == itemId)) {
+      return items.length;
+    }
     items.add(
       OfflineOutboxItem(
-        id: _makeId(),
+        id: itemId,
         type: 'pay_debt',
         createdAtIso: DateTime.now().toIso8601String(),
         payload: {
@@ -281,6 +312,7 @@ class OfflineOutboxStore {
           amount: (p['amount'] as num).toDouble(),
           sourceType: (p['source_type'] ?? 'main').toString(),
           note: (p['note'] ?? '').toString(),
+          idempotencyKey: item.id,
         );
         break;
       case 'nakladnoy':
@@ -300,6 +332,7 @@ class OfflineOutboxStore {
           originalAmount: (p['original_amount'] as num?)?.toDouble(),
           photoBytes: bytes,
           photoFilename: (p['photo_filename'] ?? 'nakladnoy.jpg').toString(),
+          idempotencyKey: item.id,
         );
         break;
       case 'pay_debt':
@@ -307,6 +340,7 @@ class OfflineOutboxStore {
           paymentId: (p['payment_id'] as num).toInt(),
           paymentMethod: (p['payment_method'] ?? 'cash').toString(),
           amount: (p['partial_amount'] as num?)?.toDouble(),
+          idempotencyKey: item.id,
         );
         break;
       default:
