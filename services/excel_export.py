@@ -301,6 +301,16 @@ def build_session_excel(summary: SessionSummary) -> bytes:
                 round(getattr(summary, "total_debt_nakladnoy", sum(n.amount for n in debt_items))),
             )
         )
+    recs = list(getattr(summary, "reconciliations", []) or [])
+    if recs:
+        interim_cnt = sum(1 for r in recs if getattr(r, "kind", "interim") != "closing")
+        closing_cnt = len(recs) - interim_cnt
+        stat_rows.append(
+            (
+                "Saqlangan kassa sverkalari",
+                f"{len(recs)} ta ({interim_cnt} oraliq, {closing_cnt} asosiy)",
+            )
+        )
 
     next_r = _kv_block(
         ws_sum,
@@ -435,7 +445,76 @@ def build_session_excel(summary: SessionSummary) -> bytes:
         ws_nc.column_dimensions["A"].width = 7
         _finish(ws_nc, "A4", 8, 3, last_nc, landscape=True)
 
+    # Optional Sheet 6: Kassa sverkalari (Oraliq & Asosiy)
+    _add_reconciliations_sheet(
+        wb,
+        f"KASSA SVERKALARI — {summary.session.report_date}",
+        [(r, summary.session.report_date) for r in recs],
+        include_date=False,
+    )
+
     return _to_bytes(wb)
+
+
+def _add_reconciliations_sheet(
+    wb: Workbook,
+    title: str,
+    rec_rows: Sequence[Tuple[Any, str]],
+    *,
+    include_date: bool,
+) -> None:
+    """Append 'Kassa sverkalari' sheet when interim or closing cash reconciliations exist."""
+    if not rec_rows:
+        return
+    ws_rec = wb.create_sheet("Kassa sverkalari")
+    if include_date:
+        headers = ["#", "Sana", "Vaqt", "Turi", "Kutilgan kassa", "Sanalgan pul", "Farq", "Izoh"]
+        money_cols = (5, 6, 7)
+        diff_col = 7
+    else:
+        headers = ["#", "Turi", "Vaqt", "Kutilgan kassa", "Sanalgan pul", "Farq", "Izoh"]
+        money_cols = (4, 5, 6)
+        diff_col = 6
+    ncols = len(headers)
+    _title(ws_rec, title, ncols)
+    _header(ws_rec, 3, headers)
+    for i, (rec, r_date) in enumerate(rec_rows, start=1):
+        r = 3 + i
+        zebra = i % 2 == 0
+        kind_lbl = (
+            "Asosiy (kun yopish)"
+            if getattr(rec, "kind", "interim") == "closing"
+            else "Oraliq (vaqtinchalik)"
+        )
+        diff_val = round(float(getattr(rec, "difference", 0.0) or 0.0))
+        note_val = (getattr(rec, "note", "") or "").strip()
+        if include_date:
+            tm = format_local_dt(rec.created_at, "%H:%M") if getattr(rec, "created_at", None) else ""
+            row_vals = [
+                i,
+                r_date,
+                tm,
+                kind_lbl,
+                round(float(rec.expected_cash)),
+                round(float(rec.counted_cash)),
+                diff_val,
+                note_val,
+            ]
+        else:
+            row_vals = [
+                i,
+                kind_lbl,
+                _ts(getattr(rec, "created_at", None)),
+                round(float(rec.expected_cash)),
+                round(float(rec.counted_cash)),
+                diff_val,
+                note_val,
+            ]
+        _body_row(ws_rec, r, row_vals, money_cols=money_cols, zebra=zebra)
+        ws_rec.cell(row=r, column=diff_col).fill = GOOD_FILL if diff_val == 0 else BAD_FILL
+    _autowidth(ws_rec, skip_rows=2)
+    ws_rec.column_dimensions["A"].width = 7
+    _finish(ws_rec, "A4", ncols, 3, 3 + len(rec_rows), landscape=True)
 
 
 def build_range_excel(date_from: str, date_to: str, data: dict) -> bytes:
@@ -577,6 +656,14 @@ def build_range_excel(date_from: str, date_to: str, data: dict) -> bytes:
     _autowidth(ws_s, skip_rows=2)
     ws_s.column_dimensions["A"].width = 7
     _finish(ws_s, "A4", 4, 3, last_s, landscape=True)
+
+    rec_rows: Sequence[Tuple[Any, str]] = data.get("reconciliations", [])
+    _add_reconciliations_sheet(
+        wb,
+        f"KASSA SVERKALARI ({date_from} — {date_to})",
+        rec_rows,
+        include_date=True,
+    )
 
     return _to_bytes(wb)
 

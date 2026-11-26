@@ -254,6 +254,16 @@ async def cb_more_kassa_debt(cb: CallbackQuery, state: FSMContext) -> None:
     await handle_kassa_debt_button(cb.message, state, actor_id=cb.from_user.id)
 
 
+@router.callback_query(F.data == "more:kassa_sverka")
+async def cb_more_kassa_sverka(cb: CallbackQuery) -> None:
+    if await deny_if_unauthorized(cb, ("admin", "kassir", "viewer")):
+        return
+    from bot.handlers.wallet_nakladnoy import handle_kassa_sverka_view
+
+    await cb.answer()
+    await handle_kassa_sverka_view(cb.message, actor_id=cb.from_user.id, edit=True)
+
+
 @router.callback_query(F.data == "more:prixod")
 async def cb_more_prixod(cb: CallbackQuery, state: FSMContext) -> None:
     if await deny_if_unauthorized(cb, ("admin", "kassir")):

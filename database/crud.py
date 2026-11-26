@@ -90,6 +90,7 @@ class SessionSummary:
     total_card_spent: float = 0.0
     total_transfer_spent: float = 0.0
     expense_today: float = 0.0
+    reconciliations: List[CashReconciliation] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +477,16 @@ async def compute_session_summary(
         )
     ).one()
 
+    recs = list(
+        (
+            await db.scalars(
+                select(CashReconciliation)
+                .where(CashReconciliation.session_id == session_id)
+                .order_by(CashReconciliation.created_at, CashReconciliation.id)
+            )
+        ).all()
+    )
+
     return SessionSummary(
         session=sess,
         opening_balance=opening,
@@ -496,6 +507,7 @@ async def compute_session_summary(
         total_card_spent=total_card_spent,
         total_transfer_spent=total_transfer_spent,
         expense_today=expense_today,
+        reconciliations=recs,
     )
 
 
@@ -1815,6 +1827,26 @@ async def get_range_report_data(
             cash_rows.append((tx, eff_date))
             active_sess_ids.add(int(sess.id))
 
+    cand_recs = list(
+        (
+            await db.execute(
+                select(CashReconciliation, DailyCashSession)
+                .join(DailyCashSession, DailyCashSession.id == CashReconciliation.session_id)
+                .where(
+                    DailyCashSession.report_date >= lower_bound,
+                    DailyCashSession.report_date <= date_to,
+                )
+                .order_by(CashReconciliation.created_at, CashReconciliation.id)
+            )
+        ).all()
+    )
+    rec_rows: List[Tuple[CashReconciliation, str]] = []
+    for rec, sess in cand_recs:
+        eff_date = effective_tx_local_date(rec.created_at, sess)
+        if date_from <= eff_date <= date_to:
+            rec_rows.append((rec, eff_date))
+            active_sess_ids.add(int(sess.id))
+
     sessions = [
         s
         for s in cand_sessions
@@ -1826,6 +1858,7 @@ async def get_range_report_data(
         "sessions": sessions,
         "nakladnoys": nak_rows,
         "cash_txs": cash_rows,
+        "reconciliations": rec_rows,
         "kassa_stats": kassa_stats,
     }
 

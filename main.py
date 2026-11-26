@@ -48,6 +48,7 @@ async def _register_bot_commands(bot: Bot) -> None:
         BotCommand(command="cancel", description="Amalni bekor qilish"),
         BotCommand(command="nasiya", description="Postavshiklarga nasiya (qarz)"),
         BotCommand(command="sverka", description="Oylik postavshiklar sverkasi"),
+        BotCommand(command="kassa_sverka", description="Oraliq va asosiy kassa sverkalari"),
         BotCommand(command="stats", description="Haftalik / oylik statistika"),
         BotCommand(command="audit", description="O'zgarishlar va AI sarfi"),
         BotCommand(command="roles", description="Foydalanuvchi rollari"),

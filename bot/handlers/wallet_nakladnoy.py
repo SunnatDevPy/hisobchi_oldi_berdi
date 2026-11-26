@@ -10,6 +10,7 @@ import re
 from typing import Optional
 
 from aiogram import F, Router
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
@@ -27,6 +28,7 @@ from bot.keyboards import (
     edit_items_list_kb,
     edit_supplier_pick_kb,
     kassa_debt_actions_kb,
+    kassa_sverka_kb,
     main_menu_keyboard,
     nakladnoy_confirm_kb,
     nakladnoy_quick_amount_kb,
@@ -41,6 +43,7 @@ from database.crud import (
     close_cash_session,
     compute_session_summary,
     confirm_nakladnoy,
+    create_cash_reconciliation,
     create_pending_nakladnoy,
     delete_cash_transaction,
     delete_nakladnoy,
@@ -55,6 +58,7 @@ from database.crud import (
     get_nakladnoy_session_seq,
     get_or_create_open_session,
     get_recent_amounts_for_supplier,
+    list_cash_reconciliations,
     list_unpaid_debt_nakladnoys,
     mark_nakladnoy_as_debt,
     mark_nakladnoy_as_paid,
@@ -2761,6 +2765,199 @@ async def cb_close_day_confirm(cb: CallbackQuery) -> None:
         f"➡️ Ertangi kunga <b>{format_uzs(counted)} so'm</b> qoldiq o'tdi. Nakladnoylar ro'yxati <b>0</b> dan boshlanadi.",
     )
     await cb.answer("✅ Kun yopildi!")
+
+
+@router.callback_query(F.data.startswith("close_day:interim:"))
+async def cb_close_day_interim(cb: CallbackQuery) -> None:
+    if await deny_if_unauthorized(cb, ("admin", "kassir")):
+        return
+    parts = cb.data.split(":")
+    sess_id = int(parts[2])
+    counted = float(parts[3])
+
+    async with async_session_maker() as db:
+        rec, report_date = await create_cash_reconciliation(
+            db,
+            counted_cash=counted,
+            kind="interim",
+            session_id=sess_id,
+            user_id=cb.from_user.id,
+        )
+
+    diff = float(rec.difference)
+    diff_line = (
+        "✅ Farq yo'q (0 so'm)"
+        if abs(diff) < 1
+        else (
+            f"⚠️ Kamomad: {format_uzs(diff)} so'm"
+            if diff < 0
+            else f"➕ Ortiqcha: +{format_uzs(diff)} so'm"
+        )
+    )
+    time_hm = format_local_dt(rec.created_at, "%H:%M")
+
+    await _safe_edit_text(
+        cb.message,
+        f"⚖️ <b>ORALIQ SVERKA SAQLANDI ({report_date} • {time_hm})</b>\n"
+        "===============================\n"
+        f"💰 Kutilgan kassa: <b>{format_uzs(rec.expected_cash)} so'm</b>\n"
+        f"🖐 Sanalgan pul: <b>{format_uzs(rec.counted_cash)} so'm</b>\n"
+        f"⚖️ {diff_line}\n"
+        "===============================\n"
+        "<i>ℹ️ Vaqtinchalik tarixga saqlandi — qo'ldagi kassa puli va smena o'zgarmadi.</i>",
+    )
+    await cb.answer("💾 Oraliq sverka saqlandi!")
+
+
+def render_kassa_sverka_text(
+    rows: list[tuple],
+    expected_cash: float,
+    report_date: str,
+) -> str:
+    lines = [
+        f"⚖️ <b>KASSA SVERKALARI ({report_date})</b>",
+        f"💰 Hozirgi kutilgan kassa: <b>{format_uzs(expected_cash)} so'm</b>",
+        "===============================",
+    ]
+    if not rows:
+        lines.append("<i>Hozircha saqlangan kassa sverkasi yo'q.</i>")
+    else:
+        for rec, r_date in rows[:10]:
+            is_closing = getattr(rec, "kind", "interim") == "closing"
+            badge = "🟣 Asosiy (kun yopish)" if is_closing else "🔵 Oraliq (vaqtinchalik)"
+            ts = format_local_dt(rec.created_at, "%H:%M")
+            diff = float(rec.difference)
+            if abs(diff) < 1:
+                diff_lbl = "✅ 0 so'm"
+            elif diff > 0:
+                diff_lbl = f"➕ +{format_uzs(diff)} so'm"
+            else:
+                diff_lbl = f"⚠️ {format_uzs(diff)} so'm"
+            note_txt = f" • <i>{html.escape(rec.note)}</i>" if getattr(rec, "note", "") else ""
+            lines.append(
+                f"{badge} — <b>{r_date} {ts}</b>\n"
+                f"   Sanalgan: <b>{format_uzs(rec.counted_cash)}</b> | "
+                f"Kutilgan: {format_uzs(rec.expected_cash)} | {diff_lbl}{note_txt}"
+            )
+    return "\n".join(lines)
+
+
+async def handle_kassa_sverka_view(
+    target_msg: Message, actor_id: Optional[int], edit: bool = False
+) -> None:
+    async with async_session_maker() as db:
+        summary = await compute_session_summary(db)
+        rows = await list_cash_reconciliations(db, limit=12)
+    text = render_kassa_sverka_text(
+        rows,
+        expected_cash=summary.expected_cash,
+        report_date=summary.session.report_date,
+    )
+    kb = kassa_sverka_kb(can_write=can_write_role(actor_id))
+    if edit:
+        await _safe_edit_text(target_msg, text, reply_markup=kb)
+    else:
+        await target_msg.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.message(Command("kassa_sverka"), F.chat.type == "private")
+async def cmd_kassa_sverka(message: Message) -> None:
+    if await deny_if_unauthorized(message, ("admin", "kassir", "viewer")):
+        return
+    await handle_kassa_sverka_view(message, actor_id=message.from_user.id, edit=False)
+
+
+@router.callback_query(F.data == "kassa_sverka:new")
+async def cb_kassa_sverka_new(cb: CallbackQuery, state: FSMContext) -> None:
+    if await deny_if_unauthorized(cb, ("admin", "kassir")):
+        return
+    async with async_session_maker() as db:
+        summary = await compute_session_summary(db)
+    await state.set_state(WalletStates.waiting_interim_sverka_cash)
+    await state.update_data(session_id=summary.session.id)
+    await cb.message.answer(
+        f"⚖️ <b>ORALIQ SVERKA (Vaqtinchalik)</b>\n"
+        f"💰 Hozirgi kutilgan kassa: <b>{format_uzs(summary.expected_cash)} so'm</b>\n\n"
+        "🖐 Qo'lingizdagi pulni sanab kiriting (masalan: <code>1 480 000</code> yoki <code>1 480 000 tushlik</code>).\n"
+        "<i>Eslatma: qo'ldagi kassa puli va smena o'zgarmaydi.</i>",
+        parse_mode="HTML",
+        reply_markup=cancel_reply_keyboard(),
+    )
+    await cb.answer()
+
+
+@router.message(WalletStates.waiting_interim_sverka_cash, F.chat.type == "private")
+async def process_interim_sverka_cash(message: Message, state: FSMContext) -> None:
+    if await deny_if_unauthorized(message, ("admin", "kassir")):
+        return
+    counted: Optional[float] = None
+    note = ""
+    if message.voice or message.audio:
+        try:
+            audio_bytes, mime = await _download_voice_bytes(message)
+        except VoiceTooLongError:
+            await message.answer(f"⚠️ Ovozli xabar {MAX_VOICE_SECONDS} soniyadan oshmasligi kerak.")
+            return
+        parsed = await parse_voice_or_text(audio_bytes=audio_bytes, mime_type=mime)
+        await maybe_warn_ai_limit(message.bot)
+        counted = parsed.get("amount")
+        note = str(parsed.get("note") or "").strip()
+    elif message.text:
+        txt = message.text.strip()
+        if txt == "0":
+            counted = 0.0
+        else:
+            m = re.match(r"^([\d\s.,]+)(?:\s+(.*))?$", txt)
+            if m:
+                amt_part = m.group(1).strip()
+                counted = 0.0 if amt_part == "0" else parse_uzbek_amount(amt_part)
+                note = (m.group(2) or "").strip()
+            else:
+                counted = parse_uzbek_amount(txt)
+
+    if counted is None or counted < 0:
+        await message.answer(
+            "⚠️ Summani tushunmadim. Raqam bilan yozing (masalan: <code>1 500 000</code>):",
+            parse_mode="HTML",
+        )
+        return
+
+    data = await state.get_data()
+    session_id = data.get("session_id")
+    async with async_session_maker() as db:
+        rec, report_date = await create_cash_reconciliation(
+            db,
+            counted_cash=counted,
+            kind="interim",
+            note=note,
+            session_id=session_id,
+            user_id=message.from_user.id,
+        )
+
+    await state.clear()
+    diff = float(rec.difference)
+    diff_line = (
+        "✅ <b>Farq yo'q (0 so'm)</b>"
+        if abs(diff) < 1
+        else (
+            f"⚠️ <b>Kamomad: {format_uzs(diff)} so'm</b>"
+            if diff < 0
+            else f"➕ <b>Ortiqcha: +{format_uzs(diff)} so'm</b>"
+        )
+    )
+    time_hm = format_local_dt(rec.created_at, "%H:%M")
+    note_line = f"\n📝 Izoh: {html.escape(rec.note)}" if rec.note else ""
+    await message.answer(
+        f"⚖️ <b>ORALIQ SVERKA SAQLANDI ({report_date} • {time_hm})</b>\n"
+        "===============================\n"
+        f"💰 Kutilgan kassa: <b>{format_uzs(rec.expected_cash)} so'm</b>\n"
+        f"🖐 Sanalgan pul: <b>{format_uzs(rec.counted_cash)} so'm</b>\n"
+        f"⚖️ {diff_line}{note_line}\n"
+        "===============================\n"
+        "<i>ℹ️ Qo'ldagi naqd pul o'zgarmadi, smena ochiq qoldi.</i>",
+        parse_mode="HTML",
+        reply_markup=main_menu_keyboard(),
+    )
 
 
 # ---------------------------------------------------------------------------

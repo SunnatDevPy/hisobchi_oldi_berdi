@@ -14,6 +14,7 @@ class WalletStates(StatesGroup):
     waiting_edit_nakladnoy_supplier = State()
     waiting_edit_cash_amount = State()
     waiting_counted_cash = State()
+    waiting_interim_sverka_cash = State()
     waiting_excel_date_range = State()
 
 

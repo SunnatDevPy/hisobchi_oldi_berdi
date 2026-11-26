@@ -109,6 +109,14 @@ def more_menu_kb(role: str = ROLE_ADMIN, show_webapp: bool = False) -> InlineKey
                 InlineKeyboardButton(text="📥 Excel hisobotlar", callback_data="export:menu"),
             ]
         )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="⚖️ Kassa sverka (Oraliq / Asosiy)",
+                callback_data="more:kassa_sverka",
+            )
+        ]
+    )
     if role == ROLE_ADMIN:
         rows.append(
             [
@@ -739,6 +747,12 @@ def close_day_confirm_kb(session_id: int, counted: float) -> InlineKeyboardMarku
             ],
             [
                 InlineKeyboardButton(
+                    text="💾 Oraliq sverka saqlash (yopmasdan)",
+                    callback_data=f"close_day:interim:{session_id}:{counted_int}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text="🔄 Qayta sanab kiritish",
                     callback_data="close_day:recount",
                 ),
@@ -749,6 +763,27 @@ def close_day_confirm_kb(session_id: int, counted: float) -> InlineKeyboardMarku
             ],
         ]
     )
+
+
+def kassa_sverka_kb(can_write: bool = True) -> InlineKeyboardMarkup:
+    """Inline keyboard for viewing/creating interim and closing cash reconciliations."""
+    rows: list[list[InlineKeyboardButton]] = []
+    if can_write:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="➕ Yangi oraliq sverka",
+                    callback_data="kassa_sverka:new",
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(text="🔄 Yangilash", callback_data="more:kassa_sverka"),
+            InlineKeyboardButton(text="🔙 Yopish", callback_data="menu:dismiss"),
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def settings_menu_kb() -> InlineKeyboardMarkup:

@@ -3234,3 +3234,126 @@ def test_interim_and_closing_cash_reconciliation_api_and_sync(
     finally:
         clear_role_cache()
         get_settings.cache_clear()
+
+
+def test_cash_reconciliations_in_session_and_range_excel_and_bot(
+    tmp_path: Path, monkeypatch
+):
+    import io
+    from types import SimpleNamespace
+    from openpyxl import load_workbook
+    from bot.auth import clear_role_cache
+    from bot.handlers import wallet_nakladnoy as wallet_mod
+    from bot.keyboards import close_day_confirm_kb, more_menu_kb
+    from config import get_settings
+    from database.crud import create_cash_reconciliation, get_range_report_data
+    from services.excel_export import build_range_excel, build_session_excel
+
+    monkeypatch.setenv("BOT_TOKEN", "987654:TEST_BOT_SVERKA_2")
+    monkeypatch.setenv("ADMIN_IDS", "111")
+    get_settings.cache_clear()
+    clear_role_cache()
+
+    # Check inline keyboards expose interim sverka actions
+    confirm_cbs = [
+        b.callback_data
+        for row in close_day_confirm_kb(5, 700_000).inline_keyboard
+        for b in row
+    ]
+    assert "close_day:confirm:5:700000" in confirm_cbs
+    assert "close_day:interim:5:700000" in confirm_cbs
+    more_cbs = [b.callback_data for row in more_menu_kb("admin").inline_keyboard for b in row]
+    assert "more:kassa_sverka" in more_cbs
+
+    async def scenario() -> None:
+        db_file = tmp_path / "excel_bot_sverka.db"
+        eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+        monkeypatch.setattr(wallet_mod, "async_session_maker", maker)
+        try:
+            await init_db(engine_override=eng, session_maker_override=maker)
+            async with maker() as db:
+                sess = await get_or_create_open_session(db, report_date="2026-11-26")
+                await add_cash_transaction(db, 1_000_000, source_type="main", session_id=sess.id)
+
+            # 1. Telegram cb_close_day_interim saves interim without closing session
+            edited_msgs: list[str] = []
+            answered: list[str] = []
+            user = SimpleNamespace(id=111, full_name="Admin")
+            chat = SimpleNamespace(id=111, type="private")
+
+            class FakeMsg:
+                def __init__(self) -> None:
+                    self.chat = chat
+                    self.from_user = user
+
+                async def edit_text(self, text: str, **kwargs) -> None:
+                    edited_msgs.append(text)
+
+                async def answer(self, text: str, **kwargs) -> None:
+                    edited_msgs.append(text)
+
+            class FakeCb:
+                def __init__(self, data: str) -> None:
+                    self.data = data
+                    self.from_user = user
+                    self.message = FakeMsg()
+
+                async def answer(self, text: str = "", **kwargs) -> None:
+                    answered.append(text)
+
+            await wallet_mod.cb_close_day_interim(FakeCb(f"close_day:interim:{sess.id}:980000"))
+            assert any("ORALIQ SVERKA SAQLANDI" in m for m in edited_msgs)
+            assert any("Oraliq sverka saqlandi" in a for a in answered)
+
+            async with maker() as db:
+                summary_open = await compute_session_summary(db, sess.id)
+                assert summary_open.session.status == "open"
+                assert summary_open.expected_cash == 1_000_000.0
+                assert len(summary_open.reconciliations) == 1
+                assert summary_open.reconciliations[0].kind == "interim"
+                assert summary_open.reconciliations[0].difference == -20_000.0
+
+                # Close day -> persists closing reconciliation too
+                closed_sum = await close_cash_session(
+                    db, sess.id, 1_005_000.0, note="Kechki", user_id=111
+                )
+                assert len(closed_sum.reconciliations) == 2
+
+                # 2. Session Excel contains Kassa sverkalari sheet + Xulosa count
+                wb_sess = load_workbook(io.BytesIO(build_session_excel(closed_sum)))
+                assert "Kassa sverkalari" in wb_sess.sheetnames
+                ws_rec = wb_sess["Kassa sverkalari"]
+                assert ws_rec.cell(4, 2).value == "Oraliq (vaqtinchalik)"
+                assert ws_rec.cell(4, 6).value == -20_000
+                assert ws_rec.cell(5, 2).value == "Asosiy (kun yopish)"
+                assert ws_rec.cell(5, 6).value == 5_000
+                xulosa_vals = [
+                    wb_sess["Xulosa"].cell(r, 1).value
+                    for r in range(1, wb_sess["Xulosa"].max_row + 1)
+                ]
+                assert "Saqlangan kassa sverkalari" in xulosa_vals
+
+                # 3. Range Excel contains Kassa sverkalari sheet with Date column
+                range_data = await get_range_report_data(db, "2026-11-26", "2026-11-26")
+                assert len(range_data["reconciliations"]) == 2
+                wb_rng = load_workbook(
+                    io.BytesIO(build_range_excel("2026-11-26", "2026-11-26", range_data))
+                )
+                assert "Kassa sverkalari" in wb_rng.sheetnames
+                ws_rng_rec = wb_rng["Kassa sverkalari"]
+                assert ws_rng_rec.cell(4, 2).value == "2026-11-26"
+                assert ws_rng_rec.cell(4, 4).value == "Oraliq (vaqtinchalik)"
+                assert ws_rng_rec.cell(5, 4).value == "Asosiy (kun yopish)"
+
+            # 4. /kassa_sverka command renders both saved sverkas
+            edited_msgs.clear()
+            await wallet_mod.cmd_kassa_sverka(FakeMsg())
+            assert any("KASSA SVERKALARI" in m and "Oraliq" in m and "Asosiy" in m for m in edited_msgs)
+        finally:
+            await eng.dispose()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        clear_role_cache()
+        get_settings.cache_clear()
