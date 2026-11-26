@@ -249,6 +249,7 @@ def build_session_excel(summary: SessionSummary) -> bytes:
             ("Holati", "Yopilgan" if summary.session.status == "closed" else "Ochiq"),
             ("Kechadan qoldiq", round(summary.opening_balance)),
             ("Pul oldim (kirim)", round(summary.main_cash_in)),
+            ("Pul oldimdan qaytarilgan", round(getattr(summary, "main_return_today", 0.0) or 0.0)),
             ("Kassadan olingan (bugun)", round(summary.kassa_debt_today)),
             ("Kassaga qaytarilgan (bugun)", round(summary.kassa_repay_today)),
             ("Jami kirim (qo'ldagi)", round(summary.total_available_inflow)),
@@ -365,6 +366,7 @@ def build_session_excel(summary: SessionSummary) -> bytes:
     _header(ws2, 3, ["#", "Turi", "Summa", "Izoh", "Vaqt"])
     type_labels = {
         "main": "Pul oldim",
+        "main_return": "Pul oldim qaytarish",
         "kassa_debt": "Kassadan qarz",
         "kassa_repay": "Kassaga qaytarish",
         "expense": "Xarajat",
@@ -527,6 +529,7 @@ def build_range_excel(date_from: str, date_to: str, data: dict) -> bytes:
 
     total_spent = sum(float(n.amount) for n, _ in nak_rows)
     total_main_in = sum(float(t.amount) for t, _ in cash_rows if t.source_type == "main")
+    total_main_return = sum(float(t.amount) for t, _ in cash_rows if t.source_type == "main_return")
     total_kassa_debt = sum(float(t.amount) for t, _ in cash_rows if t.source_type == "kassa_debt")
     total_kassa_repay = sum(float(t.amount) for t, _ in cash_rows if t.source_type == "kassa_repay")
     total_expense = sum(float(t.amount) for t, _ in cash_rows if t.source_type == "expense")
@@ -543,6 +546,7 @@ def build_range_excel(date_from: str, date_to: str, data: dict) -> bytes:
             ("Smena kunlari soni", len(sessions)),
             ("Nakladnoylar soni", len(nak_rows)),
             ("Pul oldim (kirim)", round(total_main_in)),
+            ("Pul oldimdan qaytarilgan (davr)", round(total_main_return)),
             ("Kassadan qarz (davr)", round(total_kassa_debt)),
             ("Kassaga qaytarilgan (davr)", round(total_kassa_repay)),
             ("Jami nakladnoy rasxod", round(total_spent)),
@@ -617,6 +621,7 @@ def build_range_excel(date_from: str, date_to: str, data: dict) -> bytes:
     _header(ws_c, 3, ["#", "Sana", "Turi", "Summa", "Izoh", "Vaqt"])
     type_labels = {
         "main": "Pul oldim",
+        "main_return": "Pul oldim qaytarish",
         "kassa_debt": "Kassadan qarz",
         "kassa_repay": "Kassaga qaytarish",
         "expense": "Xarajat",

@@ -3550,6 +3550,36 @@ def test_idempotent_requests_and_group_post_dedup(tmp_path: Path, monkeypatch):
                 )
                 assert c1.status_code == 200 and c2.status_code == 200
                 assert c1.json()["id"] == c2.json()["id"]
+
+                # 5. Rapid duplicate POST /cash WITHOUT X-Idempotency-Key -> 30M stays 30M (never 60M)
+                r_no_idem_1 = await client.post(
+                    "/cash",
+                    headers=headers,
+                    json={"amount": 30_000_000, "source_type": "main", "note": "Seyfdan 30M"},
+                )
+                r_no_idem_2 = await client.post(
+                    "/cash",
+                    headers=headers,
+                    json={"amount": 30_000_000, "source_type": "main", "note": "Seyfdan 30M"},
+                )
+                assert r_no_idem_1.status_code == 200 and r_no_idem_2.status_code == 200
+                assert r_no_idem_1.json()["id"] == r_no_idem_2.json()["id"]
+
+                # 6. Returning part of Pul oldim (main_return = 10M) reduces expected_cash without touching kassa_debt
+                r_ret = await client.post(
+                    "/cash",
+                    headers=headers,
+                    json={"amount": 10_000_000, "source_type": "main_return", "note": "Ortiqcha qaytdi"},
+                )
+                assert r_ret.status_code == 200
+                assert r_ret.json()["source_type"] == "main_return"
+
+                r_st_after = await client.get("/status", headers=headers)
+                assert r_st_after.status_code == 200
+                st_after = r_st_after.json()
+                assert st_after["main_cash_in"] == 31_000_000.0
+                assert st_after["main_return_today"] == 10_000_000.0
+                assert st_after["total_kassa_debt_outstanding"] == 0.0
         finally:
             api_deps_mod.set_bot(None)
             await eng.dispose()
@@ -3560,3 +3590,41 @@ def test_idempotent_requests_and_group_post_dedup(tmp_path: Path, monkeypatch):
         api_auth_mod.clear_auth_memory_state()
         clear_role_cache()
         get_settings.cache_clear()
+
+
+def test_main_return_accounting_excel_and_status(tmp_path: Path) -> None:
+    """Pul oldimni qaytarish reduces inflow & expected_cash cleanly across DB, Excel and Bot text."""
+    from io import BytesIO
+    from openpyxl import load_workbook
+    from bot.handlers.wallet_nakladnoy import render_status_text
+
+    async def scenario() -> None:
+        db_file = tmp_path / "test_main_return.db"
+        eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+        await init_db(engine_override=eng, session_maker_override=maker)
+        try:
+            async with maker() as db:
+                await get_or_create_open_session(db, report_date="2026-11-26")
+                await add_cash_transaction(db, amount=30_000_000, source_type="main", note="Pul oldim")
+                await add_cash_transaction(db, amount=10_000_000, source_type="main_return", note="Ortiqchasi")
+                summary = await compute_session_summary(db)
+
+                assert summary.main_cash_in == 30_000_000.0
+                assert summary.main_return_today == 10_000_000.0
+                assert summary.total_available_inflow == 20_000_000.0
+                assert summary.expected_cash == 20_000_000.0
+                assert summary.total_kassa_debt_outstanding == 0.0
+
+                status_txt = render_status_text(summary)
+                assert "Pul oldimdan qaytarilgan" in status_txt
+                assert "-10 000 000" in status_txt
+
+                xlsx_bytes = build_session_excel(summary)
+                wb = load_workbook(BytesIO(xlsx_bytes), data_only=True)
+                ws_kirim = wb["Kirim va Qarzlar"]
+                types_col = [ws_kirim.cell(row=r, column=2).value for r in range(4, 7)]
+                assert "Pul oldim qaytarish" in types_col
+        finally:
+            await eng.dispose()
+
+    asyncio.run(scenario())

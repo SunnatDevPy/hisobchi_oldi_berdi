@@ -51,7 +51,10 @@ class CashTxOut(BaseModel):
 
 class CashCreateRequest(BaseModel):
     amount: float = Field(..., gt=0)
-    source_type: str = Field(default="main", pattern="^(main|kassa_debt|kassa_repay|expense)$")
+    source_type: str = Field(
+        default="main",
+        pattern="^(main|main_return|kassa_debt|kassa_repay|expense)$",
+    )
     note: str = Field(default="", max_length=500)
 
 
@@ -101,6 +104,7 @@ class StatusSummaryResponse(BaseModel):
     closed_at: str = ""
     opening_balance: float
     main_cash_in: float
+    main_return_today: float = 0.0
     kassa_debt_today: float
     kassa_repay_today: float
     expense_today: float = 0.0

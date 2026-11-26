@@ -104,17 +104,29 @@ def render_status_text(summary: SessionSummary) -> str:
         "===============================",
         f"⏮ Kechadan qoldiq: <b>{format_uzs(summary.opening_balance)}</b>",
         f"➕ Olingan pul: <b>{format_uzs(summary.main_cash_in)}</b>",
+    ]
+    if getattr(summary, "main_return_today", 0.0) > 0:
+        lines.append(
+            f"↩️ Pul oldimdan qaytarilgan: <b>-{format_uzs(summary.main_return_today)}</b>"
+        )
+    lines.extend([
         f"🏦 Kassadan olingan: <b>{format_uzs(summary.kassa_debt_today)}</b>",
         f"↩️ Kassaga berilgan (qaytarilgan): <b>{format_uzs(summary.kassa_repay_today)}</b>",
         f"💵 Jami kirim (Qo'ldagi jami): <b>{format_uzs(summary.total_available_inflow)}</b>",
-    ]
+    ])
     if summary.expense_today > 0:
         lines.append(f"💸 Boshqa xarajatlar: <b>-{format_uzs(summary.expense_today)}</b>")
     if summary.cash_transactions:
-        t_icons = {"main": "➕", "kassa_debt": "🏦", "kassa_repay": "↩️", "expense": "💸"}
+        t_icons = {
+            "main": "➕",
+            "main_return": "↩️",
+            "kassa_debt": "🏦",
+            "kassa_repay": "↩️",
+            "expense": "💸",
+        }
         for tx in summary.cash_transactions:
             tm = format_local_dt(tx.created_at, "%H:%M")
-            sign = "-" if tx.source_type in ("kassa_repay", "expense") else ""
+            sign = "-" if tx.source_type in ("main_return", "kassa_repay", "expense") else ""
             note_sfx = f" <i>({html.escape(tx.note[:28])})</i>" if tx.note else ""
             lines.append(
                 f"  • <code>{tm}</code> {t_icons.get(tx.source_type, '💵')} {sign}{format_uzs(tx.amount)}{note_sfx}"
@@ -2521,6 +2533,7 @@ async def cb_cash_tx_view(cb: CallbackQuery) -> None:
         return
     labels = {
         "main": "Pul oldim",
+        "main_return": "Pul oldim qaytarish",
         "kassa_debt": "Kassadan qarz",
         "kassa_repay": "Kassaga qaytarish",
         "expense": "Xarajat",
@@ -2634,7 +2647,7 @@ async def handle_close_day_start(
         f"🏁 <b>KUNNI YAKUNLASH ({summary.session.report_date})</b>\n"
         "===============================\n"
         f"⏮ Qanchadan boshlangan (Kechadan): <b>{format_uzs(summary.opening_balance)}</b>\n"
-        f"➕ Bugungi kirimlar (Kassa qarzi bn): <b>{format_uzs(summary.main_cash_in + summary.kassa_debt_today - summary.kassa_repay_today)}</b>\n"
+        f"➕ Bugungi kirimlar (Kassa qarzi bn): <b>{format_uzs(summary.main_cash_in - getattr(summary, 'main_return_today', 0.0) + summary.kassa_debt_today - summary.kassa_repay_today)}</b>\n"
         f"💵 Jami summa: <b>{format_uzs(summary.total_available_inflow)}</b>\n"
         f"➖ Umumiy rasxod ({len(summary.confirmed_nakladnoys)} ta nakladnoy): <b>{format_uzs(summary.total_nakladnoy_spent)}</b>\n"
         f"💰 <b>Qo'lda qolishi kerak: {format_uzs(summary.expected_cash)} so'm</b>\n"

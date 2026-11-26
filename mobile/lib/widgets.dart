@@ -587,11 +587,17 @@ class HeroBalanceCard extends StatelessWidget {
                             ),
                             const SizedBox(width: 6),
                             Expanded(
-                              child: _HeroSubStat(
-                                label: 'Pul oldim',
-                                numericValue: summary.mainCashIn,
-                                prefix: '+',
-                                animSeed: animSeed,
+                              child: Builder(
+                                builder: (_) {
+                                  final netMainIn = summary.mainCashIn -
+                                      summary.mainReturnToday;
+                                  return _HeroSubStat(
+                                    label: 'Pul oldim',
+                                    numericValue: netMainIn.abs(),
+                                    prefix: netMainIn < 0 ? '−' : '+',
+                                    animSeed: animSeed,
+                                  );
+                                },
                               ),
                             ),
                             const SizedBox(width: 6),
@@ -1249,7 +1255,9 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
 
     for (final tx in summary.cashTransactions) {
       final spec = _txTypeSpec(context, tx.sourceType);
-      final isOut = tx.sourceType == 'kassa_repay' || tx.sourceType == 'expense';
+      final isOut = tx.sourceType == 'kassa_repay' ||
+          tx.sourceType == 'expense' ||
+          tx.sourceType == 'main_return';
       events.add(
         _TimelineEvent(
           kind: isOut ? 'out' : 'in',
@@ -1520,6 +1528,18 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
           badge: 'Kassa qarz',
           sign: '+',
           icon: Icons.account_balance_rounded,
+          fg: fg,
+          bg: bg,
+          border: border,
+        );
+      case 'main_return':
+        final (fg, bg, border) =
+            AppTokens.semanticSurface(context, AppTokens.brandViolet);
+        return (
+          title: 'Pul oldim qaytarish',
+          badge: 'Qaytarish',
+          sign: '−',
+          icon: Icons.undo_rounded,
           fg: fg,
           bg: bg,
           border: border,

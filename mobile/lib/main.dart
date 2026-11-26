@@ -1882,9 +1882,12 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     String sourceType, {
     CashTxItem? existing,
     double? presetAmount,
+    bool returnPickerMode = false,
   }) async {
     final titles = {
       'main': existing != null ? 'Kirimni tahrirlash' : 'Pul oldim',
+      'main_return':
+          existing != null ? 'Qaytarishni tahrirlash' : 'Pul oldimni qaytarish',
       'expense': existing != null ? 'Xarajatni tahrirlash' : 'Xarajat kiritish',
       'kassa_debt': existing != null
           ? 'Kassa qarzini tahrirlash'
@@ -1895,6 +1898,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     };
     final icons = {
       'main': Icons.add_card_rounded,
+      'main_return': Icons.undo_rounded,
       'expense': Icons.trending_down_rounded,
       'kassa_debt': Icons.account_balance_rounded,
       'kassa_repay': Icons.assignment_return_rounded,
@@ -1908,86 +1912,170 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     );
     final noteCtrl = TextEditingController(text: existing?.note ?? '');
 
+    var activeSource = sourceType;
+    final showMainPairToggle = existing == null &&
+        !returnPickerMode &&
+        (sourceType == 'main' || sourceType == 'main_return');
+    final showReturnPairToggle = existing == null &&
+        (returnPickerMode ||
+            (sourceType == 'kassa_repay' && (_summary?.mainCashIn ?? 0) > 0));
+
     var dialogPopped = false;
     final confirmed = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (ctx) => SafeArea(
-        top: false,
-        maintainBottomViewPadding: true,
-        child: Padding(
-          padding: EdgeInsets.only(
-            left: 20,
-            right: 20,
-            top: 4,
-            bottom: sheetBottomPadding(ctx),
-          ),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: sheetMaxHeight(ctx, fraction: 0.90),
-            ),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheetState) {
+          final (retFg, retBg, retBorder) =
+              AppTokens.semanticSurface(ctx, AppTokens.brandViolet);
+          return SafeArea(
+            top: false,
+            maintainBottomViewPadding: true,
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 4,
+                bottom: sheetBottomPadding(ctx),
+              ),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: sheetMaxHeight(ctx, fraction: 0.90),
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Icon(icons[sourceType] ?? Icons.payments_rounded,
-                          color: AppTokens.brand),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          titles[sourceType] ?? 'Kassa amali',
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w800,
+                      Row(
+                        children: [
+                          Icon(icons[activeSource] ?? Icons.payments_rounded,
+                              color: activeSource == 'main_return'
+                                  ? AppTokens.brandViolet
+                                  : AppTokens.brand),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              titles[activeSource] ?? 'Kassa amali',
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (showMainPairToggle) ...[
+                        const SizedBox(height: 12),
+                        SegmentedButton<String>(
+                          segments: const [
+                            ButtonSegment<String>(
+                              value: 'main',
+                              label: Text('Pul oldim'),
+                              icon: Icon(Icons.add_card_rounded, size: 17),
+                            ),
+                            ButtonSegment<String>(
+                              value: 'main_return',
+                              label: Text('Qaytarish'),
+                              icon: Icon(Icons.undo_rounded, size: 17),
+                            ),
+                          ],
+                          selected: {activeSource},
+                          onSelectionChanged: (sel) {
+                            setSheetState(() => activeSource = sel.first);
+                          },
+                        ),
+                      ] else if (showReturnPairToggle) ...[
+                        const SizedBox(height: 12),
+                        SegmentedButton<String>(
+                          segments: const [
+                            ButtonSegment<String>(
+                              value: 'main_return',
+                              label: Text('Pul oldimdan'),
+                              icon: Icon(Icons.undo_rounded, size: 17),
+                            ),
+                            ButtonSegment<String>(
+                              value: 'kassa_repay',
+                              label: Text('Kassa qarzidan'),
+                              icon: Icon(Icons.assignment_return_rounded,
+                                  size: 17),
+                            ),
+                          ],
+                          selected: {activeSource},
+                          onSelectionChanged: (sel) {
+                            setSheetState(() => activeSource = sel.first);
+                          },
+                        ),
+                      ],
+                      if (activeSource == 'main_return' && _summary != null) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: retBg,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: retBorder),
+                          ),
+                          child: Text(
+                            _summary!.mainReturnToday > 0
+                                ? "Bugun olingan: ${formatUzs(_summary!.mainCashIn)} so'm • Qaytarilgan: ${formatUzs(_summary!.mainReturnToday)} so'm"
+                                : "Bugun olingan: ${formatUzs(_summary!.mainCashIn)} so'm (qo'ldagi puldan ayriladi)",
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: retFg,
+                            ),
                           ),
                         ),
+                      ],
+                      const SizedBox(height: 14),
+                      TextField(
+                        controller: amtCtrl,
+                        autofocus: true,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: const [UzsAmountInputFormatter()],
+                        style: const TextStyle(
+                          fontSize: 21,
+                          fontWeight: FontWeight.w900,
+                          fontFeatures: AppTokens.tabularNums,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: 'Summa',
+                          hintText: '5 000 000',
+                          prefixIcon: Icon(Icons.payments_outlined),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: noteCtrl,
+                        decoration: InputDecoration(
+                          labelText: activeSource == 'main_return'
+                              ? 'Izoh (masalan: ortiqcha pul qaytarildi)'
+                              : 'Izoh',
+                          prefixIcon: const Icon(Icons.notes_rounded),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      FilledButton.icon(
+                        onPressed: () {
+                          if (dialogPopped) return;
+                          dialogPopped = true;
+                          Navigator.pop(ctx, true);
+                        },
+                        icon: const Icon(Icons.check_rounded),
+                        label: Text(existing != null ? 'Yangilash' : 'Saqlash'),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 14),
-                  TextField(
-                    controller: amtCtrl,
-                    autofocus: true,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: const [UzsAmountInputFormatter()],
-                    style: const TextStyle(
-                      fontSize: 21,
-                      fontWeight: FontWeight.w900,
-                      fontFeatures: AppTokens.tabularNums,
-                    ),
-                    decoration: const InputDecoration(
-                      labelText: 'Summa',
-                      hintText: '5 000 000',
-                      prefixIcon: Icon(Icons.payments_outlined),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: noteCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Izoh',
-                      prefixIcon: Icon(Icons.notes_rounded),
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  FilledButton.icon(
-                    onPressed: () {
-                      if (dialogPopped) return;
-                      dialogPopped = true;
-                      Navigator.pop(ctx, true);
-                    },
-                    icon: const Icon(Icons.check_rounded),
-                    label: Text(existing != null ? 'Yangilash' : 'Saqlash'),
-                  ),
-                ],
+                ),
               ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
 
@@ -1998,6 +2086,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
         return;
       }
       final reqKey = existing == null ? generateIdempotencyKey('cash') : null;
+      var savedOnline = false;
       try {
         if (existing != null) {
           await widget.api.updateCash(
@@ -2005,24 +2094,26 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
             amount: val,
             note: noteCtrl.text,
           );
+          savedOnline = true;
           _showSnack('✅ Yangilandi');
         } else {
           await widget.api.addCash(
             amount: val,
-            sourceType: sourceType,
+            sourceType: activeSource,
             note: noteCtrl.text,
             idempotencyKey: reqKey,
           );
+          savedOnline = true;
           _showSnack('✅ Saqlandi');
         }
-        await _refreshAll();
       } catch (e) {
         if (existing == null && isNetworkOfflineError(e)) {
           final cnt = await OfflineOutboxStore.enqueueCash(
             amount: val,
-            sourceType: sourceType,
+            sourceType: activeSource,
             note: noteCtrl.text,
             idempotencyKey: reqKey,
+            uncertain: isUncertainNetworkError(e),
           );
           if (mounted) {
             setState(() {
@@ -2034,6 +2125,11 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
         } else {
           _showSnack(e.toString(), isError: true);
         }
+      }
+      if (savedOnline) {
+        try {
+          await _refreshAll();
+        } catch (_) {}
       }
     }
   }
@@ -2253,6 +2349,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     if (chosen != null) {
       final isPart = chosen.amount < item.amount - 0.5;
       final reqKey = generateIdempotencyKey('debt');
+      var savedOnline = false;
       try {
         await widget.api.payDebt(
           paymentId: item.id,
@@ -2260,10 +2357,10 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
           amount: isPart ? chosen.amount : null,
           idempotencyKey: reqKey,
         );
+        savedOnline = true;
         _showSnack(isPart
             ? "✅ ${formatUzs(chosen.amount)} to'landi (qoldiq: ${formatUzs(item.amount - chosen.amount)})"
             : "✅ Qarz to'liq yopildi");
-        await _refreshAll();
       } catch (e) {
         if (isNetworkOfflineError(e)) {
           final cnt = await OfflineOutboxStore.enqueuePayDebt(
@@ -2273,6 +2370,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
             amount: item.amount,
             partialAmount: isPart ? chosen.amount : null,
             idempotencyKey: reqKey,
+            uncertain: isUncertainNetworkError(e),
           );
           if (mounted) {
             setState(() {
@@ -2284,6 +2382,11 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
         } else {
           _showSnack(e.toString(), isError: true);
         }
+      }
+      if (savedOnline) {
+        try {
+          await _refreshAll();
+        } catch (_) {}
       }
     }
   }
@@ -2767,6 +2870,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
       final src = intent == 'cash_in' ? 'main' : intent;
       if (amount != null && amount > 0) {
         final reqKey = generateIdempotencyKey('voice_cash');
+        var savedOnline = false;
         try {
           await widget.api.addCash(
             amount: amount,
@@ -2774,8 +2878,8 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
             note: transcript,
             idempotencyKey: reqKey,
           );
+          savedOnline = true;
           _showSnack('✅ Saqlandi');
-          await _refreshAll();
         } catch (e) {
           if (isNetworkOfflineError(e)) {
             final cnt = await OfflineOutboxStore.enqueueCash(
@@ -2783,6 +2887,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
               sourceType: src,
               note: transcript,
               idempotencyKey: reqKey,
+              uncertain: isUncertainNetworkError(e),
             );
             if (mounted) {
               setState(() {
@@ -2794,6 +2899,11 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
           } else {
             _showSnack(e.toString(), isError: true);
           }
+        }
+        if (savedOnline) {
+          try {
+            await _refreshAll();
+          } catch (_) {}
         }
       } else {
         await _openCashDialog(src);
@@ -3018,7 +3128,12 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                 ? () => _openCashDialog('kassa_debt')
                 : null,
             onKassaRepay: (!isViewingPast && widget.api.canWrite)
-                ? () => _openCashDialog('kassa_repay')
+                ? () => _openCashDialog(
+                      s.totalKassaDebtOutstanding <= 0
+                          ? 'main_return'
+                          : 'kassa_repay',
+                      returnPickerMode: true,
+                    )
                 : null,
           ),
           const SizedBox(height: 14),
@@ -5958,6 +6073,7 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
             photoBytes: _photoFile?.bytes,
             photoFilename: _photoFile?.filename ?? 'nakladnoy.jpg',
             idempotencyKey: reqKey,
+            uncertain: isUncertainNetworkError(e),
           );
           _pendingSubmitKey = null;
           if (mounted) {
@@ -8319,6 +8435,7 @@ class _GlobalHistorySearchSheetState extends State<GlobalHistorySearchSheet> {
   }
 
   String _cashSourceTitle(String src) {
+    if (src == 'main_return') return '↩️ Pul oldim qaytarish';
     if (src == 'kassa_debt') return '🏦 Kassadan qarz';
     if (src == 'kassa_repay') return '↩️ Kassaga qaytarish';
     if (src == 'expense') return '💸 Xarajat';

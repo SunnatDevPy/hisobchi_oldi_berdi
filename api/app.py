@@ -657,6 +657,7 @@ def create_api_app() -> FastAPI:
             ),
             opening_balance=float(summary.opening_balance),
             main_cash_in=float(summary.main_cash_in),
+            main_return_today=float(getattr(summary, "main_return_today", 0.0)),
             kassa_debt_today=float(summary.kassa_debt_today),
             kassa_repay_today=float(summary.kassa_repay_today),
             expense_today=float(summary.expense_today),
@@ -680,17 +681,43 @@ def create_api_app() -> FastAPI:
         request: Request,
         user: AuthenticatedUser = Depends(require_write_user),
     ) -> CashTxOut:
-        async def _op() -> dict:
-            async with async_session_maker() as db:
-                tx = await add_cash_transaction(
-                    db,
-                    amount=payload.amount,
-                    source_type=payload.source_type,
-                    note=payload.note,
-                )
-            return _serialize_cash_tx(tx).model_dump()
-
         idem_key = _extract_idempotency_key(request)
+
+        async def _op() -> dict:
+            async with _get_lock(user_create_locks, int(user.user_id)):
+                async with async_session_maker() as db:
+                    # Rapid double-tap / retry fallback guard when X-Idempotency-Key is absent
+                    if not idem_key:
+                        open_sess = await get_or_create_open_session(db)
+                        recent = await db.scalar(
+                            select(CashTransaction)
+                            .where(
+                                CashTransaction.session_id == open_sess.id,
+                                CashTransaction.is_deleted.is_(False),
+                            )
+                            .order_by(desc(CashTransaction.id))
+                            .limit(1)
+                        )
+                        if recent is not None and recent.created_at is not None:
+                            created_naive = recent.created_at.replace(tzinfo=None)
+                            now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+                            age_sec = (now_naive - created_naive).total_seconds()
+                            if (
+                                0 <= age_sec <= 30.0
+                                and recent.source_type == payload.source_type
+                                and abs(float(recent.amount) - float(payload.amount)) < 0.5
+                                and (recent.note or "").strip() == (payload.note or "").strip()
+                            ):
+                                return _serialize_cash_tx(recent).model_dump()
+
+                    tx = await add_cash_transaction(
+                        db,
+                        amount=payload.amount,
+                        source_type=payload.source_type,
+                        note=payload.note,
+                    )
+                    return _serialize_cash_tx(tx).model_dump()
+
         data = await _execute_idempotent("cash", user.user_id, idem_key, _op)
         return CashTxOut.model_validate(data)
 
@@ -1798,6 +1825,7 @@ def create_api_app() -> FastAPI:
             ),
             opening_balance=float(summary.opening_balance),
             main_cash_in=float(summary.main_cash_in),
+            main_return_today=float(getattr(summary, "main_return_today", 0.0)),
             kassa_debt_today=float(summary.kassa_debt_today),
             kassa_repay_today=float(summary.kassa_repay_today),
             expense_today=float(summary.expense_today),
@@ -1853,6 +1881,7 @@ def create_api_app() -> FastAPI:
         ]
         src_labels = {
             "main": "pul oldim kirim",
+            "main_return": "pul oldim qaytarish qaytardim",
             "kassa_debt": "kassadan qarz oldim",
             "kassa_repay": "kassaga qaytardim qaytarish",
             "expense": "xarajat chiqim rasxod",

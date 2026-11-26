@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -1300,5 +1301,158 @@ void main() {
     expect(seenKeys['/cash'], equals(cashKey));
     expect(seenKeys['/nakladnoy'], equals(nakKey));
     expect(seenKeys['/nakladnoy/12/paid'], equals(debtKey));
+  });
+
+  test(
+      'StatusSummary parses main_return_today and uncertain outbox skips duplicate server entries',
+      () async {
+    SharedPreferences.setMockInitialValues({});
+    await OfflineOutboxStore.clearAll();
+
+    expect(
+      isUncertainNetworkError(TimeoutException('timed out after 25s')),
+      isTrue,
+    );
+    expect(
+      isUncertainNetworkError(Exception('Connection reset by peer')),
+      isTrue,
+    );
+    expect(
+      isUncertainNetworkError(
+          Exception('SocketException: Failed host lookup: hisobchi')),
+      isFalse,
+    );
+    expect(
+      isUncertainNetworkError(const ApiException('Bad request', statusCode: 400)),
+      isFalse,
+    );
+
+    final parsedWithReturn = StatusSummary.fromJson({
+      'session_id': 7,
+      'report_date': '2026-11-26',
+      'session_status': 'open',
+      'opening_balance': 0,
+      'main_cash_in': 30000000,
+      'main_return_today': 10000000,
+      'kassa_debt_today': 0,
+      'kassa_repay_today': 0,
+      'expense_today': 0,
+      'total_available_inflow': 20000000,
+      'total_nakladnoy_spent': 0,
+      'total_card_spent': 0,
+      'total_transfer_spent': 0,
+      'total_debt_nakladnoy': 0,
+      'expected_cash': 20000000,
+      'total_kassa_debt_outstanding': 0,
+      'all_unpaid_debt_count': 0,
+      'all_unpaid_debt_total': 0,
+      'group_info': {'bound': false},
+      'cash_transactions': [],
+      'nakladnoys': [],
+    });
+    expect(parsedWithReturn.mainReturnToday, equals(10000000.0));
+
+    // Rapid content dedup within 30s even with different keys
+    await OfflineOutboxStore.enqueueCash(
+      amount: 30000000,
+      sourceType: 'main',
+      note: 'Seyf',
+      idempotencyKey: 'k1',
+      uncertain: true,
+    );
+    final countAfterRapid = await OfflineOutboxStore.enqueueCash(
+      amount: 30000000,
+      sourceType: 'main',
+      note: 'Seyf',
+      idempotencyKey: 'k2',
+      uncertain: true,
+    );
+    expect(countAfterRapid, equals(1));
+
+    // Now simulate server already holding that 30 000 000 tx -> flush must check /status and skip POST /cash
+    final now = DateTime.now();
+    String two(int n) => n.toString().padLeft(2, '0');
+    final serverCreated =
+        '${now.year}-${two(now.month)}-${two(now.day)} ${two(now.hour)}:${two(now.minute)}';
+    var cashPostCalls = 0;
+    final statusMock = MockClient((req) async {
+      if (req.url.path == '/status') {
+        return http.Response(
+          jsonEncode({
+            'session_id': 7,
+            'report_date': '2026-11-26',
+            'session_status': 'open',
+            'opening_balance': 0,
+            'main_cash_in': 30000000,
+            'main_return_today': 0,
+            'kassa_debt_today': 0,
+            'kassa_repay_today': 0,
+            'expense_today': 0,
+            'total_available_inflow': 30000000,
+            'total_nakladnoy_spent': 0,
+            'total_card_spent': 0,
+            'total_transfer_spent': 0,
+            'total_debt_nakladnoy': 0,
+            'expected_cash': 30000000,
+            'total_kassa_debt_outstanding': 0,
+            'all_unpaid_debt_count': 0,
+            'all_unpaid_debt_total': 0,
+            'group_info': {'bound': false},
+            'cash_transactions': [
+              {
+                'id': 99,
+                'session_id': 7,
+                'amount': 30000000,
+                'source_type': 'main',
+                'note': 'Seyf',
+                'created_at': serverCreated,
+                'time_hm': '${two(now.hour)}:${two(now.minute)}',
+              },
+            ],
+            'nakladnoys': [],
+          }),
+          200,
+        );
+      }
+      if (req.url.path == '/cash') {
+        cashPostCalls++;
+        return http.Response(
+          jsonEncode({
+            'id': 100,
+            'session_id': 7,
+            'amount': 30000000,
+            'source_type': 'main',
+            'note': 'Seyf',
+            'created_at': serverCreated,
+            'time_hm': '${two(now.hour)}:${two(now.minute)}',
+          }),
+          200,
+        );
+      }
+      return http.Response('{}', 404);
+    });
+
+    final apiPresent = HisobchiApiClient(
+      baseUrl: 'https://hisobchi.okaposai.uz',
+      accessToken: 'tok',
+      httpClient: statusMock,
+    );
+    final resPresent = await OfflineOutboxStore.flushAll(apiPresent);
+    expect(resPresent.remaining, equals(0));
+    expect(resPresent.sent, equals(1));
+    expect(cashPostCalls, equals(0));
+
+    // If server does NOT have a matching entry, uncertain item IS sent once
+    await OfflineOutboxStore.enqueueCash(
+      amount: 10000000,
+      sourceType: 'main_return',
+      note: 'Qaytdi',
+      idempotencyKey: 'k_ret',
+      uncertain: true,
+    );
+    final resMissing = await OfflineOutboxStore.flushAll(apiPresent);
+    expect(resMissing.remaining, equals(0));
+    expect(resMissing.sent, equals(1));
+    expect(cashPostCalls, equals(1));
   });
 }

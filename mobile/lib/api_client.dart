@@ -41,7 +41,7 @@ class CashTxItem {
   final int id;
   final int sessionId;
   final double amount;
-  final String sourceType; // main | kassa_debt | kassa_repay
+  final String sourceType; // main | main_return | kassa_debt | kassa_repay | expense
   final String note;
   final String createdAt;
   final String timeHm;
@@ -169,6 +169,7 @@ class StatusSummary {
   final String closedAt;
   final double openingBalance;
   final double mainCashIn;
+  final double mainReturnToday;
   final double kassaDebtToday;
   final double kassaRepayToday;
   final double expenseToday;
@@ -200,6 +201,7 @@ class StatusSummary {
     this.closedAt = '',
     required this.openingBalance,
     required this.mainCashIn,
+    this.mainReturnToday = 0.0,
     required this.kassaDebtToday,
     required this.kassaRepayToday,
     this.expenseToday = 0.0,
@@ -225,6 +227,7 @@ class StatusSummary {
         closedAt: (j['closed_at'] ?? '').toString(),
         openingBalance: (j['opening_balance'] as num).toDouble(),
         mainCashIn: (j['main_cash_in'] as num).toDouble(),
+        mainReturnToday: ((j['main_return_today'] as num?) ?? 0).toDouble(),
         kassaDebtToday: (j['kassa_debt_today'] as num).toDouble(),
         kassaRepayToday: (j['kassa_repay_today'] as num).toDouble(),
         expenseToday: ((j['expense_today'] as num?) ?? 0).toDouble(),
@@ -538,7 +541,7 @@ class HisobchiApiClient {
             'note': note,
           }),
         )
-        .timeout(const Duration(seconds: 12));
+        .timeout(const Duration(seconds: 25));
     return CashTxItem.fromJson(_decodeJson(res));
   }
 
@@ -717,7 +720,7 @@ class HisobchiApiClient {
             if (amount != null && amount > 0) 'amount': amount,
           }),
         )
-        .timeout(const Duration(seconds: 12));
+        .timeout(const Duration(seconds: 25));
     return NakladnoyItem.fromJson(_decodeJson(res));
   }
 

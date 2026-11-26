@@ -90,6 +90,7 @@ class SessionSummary:
     total_card_spent: float = 0.0
     total_transfer_spent: float = 0.0
     expense_today: float = 0.0
+    main_return_today: float = 0.0
     reconciliations: List[CashReconciliation] = field(default_factory=list)
 
 
@@ -375,10 +376,11 @@ async def _sync_session_expected_cash(db: AsyncSession, session_id: int) -> None
     )
     opening = float(sess.opening_balance or 0.0)
     main_in = float(tx_sums.get("main") or 0.0)
+    main_return = float(tx_sums.get("main_return") or 0.0)
     kassa_debt = float(tx_sums.get("kassa_debt") or 0.0)
     kassa_repay = float(tx_sums.get("kassa_repay") or 0.0)
     expense_out = float(tx_sums.get("expense") or 0.0)
-    expected_cash = opening + main_in + kassa_debt - kassa_repay - expense_out - cash_spent
+    expected_cash = opening + main_in - main_return + kassa_debt - kassa_repay - expense_out - cash_spent
 
     if abs(float(sess.expected_cash or 0.0) - expected_cash) > 0.001:
         sess.expected_cash = expected_cash
@@ -439,10 +441,11 @@ async def compute_session_summary(
 
     opening = float(sess.opening_balance or 0.0)
     main_in = sum(t.amount for t in txs if t.source_type == "main")
+    main_return_today = sum(t.amount for t in txs if t.source_type == "main_return")
     kassa_debt_today = sum(t.amount for t in txs if t.source_type == "kassa_debt")
     kassa_repay_today = sum(t.amount for t in txs if t.source_type == "kassa_repay")
     expense_today = sum(t.amount for t in txs if t.source_type == "expense")
-    total_available_inflow = opening + main_in + kassa_debt_today - kassa_repay_today
+    total_available_inflow = opening + main_in - main_return_today + kassa_debt_today - kassa_repay_today
     total_nakladnoy_spent = sum(n.amount for n in nakladnoys)
     total_card_spent = sum(
         n.amount
@@ -507,6 +510,7 @@ async def compute_session_summary(
         total_card_spent=total_card_spent,
         total_transfer_spent=total_transfer_spent,
         expense_today=expense_today,
+        main_return_today=main_return_today,
         reconciliations=recs,
     )
 
@@ -1895,6 +1899,8 @@ async def get_period_statistics(db: AsyncSession, date_from: str, date_to: str) 
     for tx, r_date in cash_rows:
         if tx.source_type == "main":
             by_day_cash_in[r_date] = by_day_cash_in.get(r_date, 0.0) + float(tx.amount)
+        elif tx.source_type == "main_return":
+            by_day_cash_in[r_date] = by_day_cash_in.get(r_date, 0.0) - float(tx.amount)
         elif tx.source_type == "expense":
             expense_spent += float(tx.amount)
             by_day[r_date] = by_day.get(r_date, 0.0) + float(tx.amount)
@@ -1914,6 +1920,8 @@ async def get_period_statistics(db: AsyncSession, date_from: str, date_to: str) 
             hr = int(hr_str) if hr_str.isdigit() else 12
             if tx.source_type == "main":
                 by_hour_cash_in[hr] = by_hour_cash_in.get(hr, 0.0) + float(tx.amount)
+            elif tx.source_type == "main_return":
+                by_hour_cash_in[hr] = by_hour_cash_in.get(hr, 0.0) - float(tx.amount)
             elif tx.source_type == "expense":
                 by_hour_spent[hr] = by_hour_spent.get(hr, 0.0) + float(tx.amount)
 
@@ -1940,7 +1948,7 @@ async def get_period_statistics(db: AsyncSession, date_from: str, date_to: str) 
                 "label": f"{h:02d}:00–{h:02d}:59",
                 "full_date": date_from,
                 "spent": float(by_hour_spent.get(h, 0.0)),
-                "cash_in": float(by_hour_cash_in.get(h, 0.0)),
+                "cash_in": round(max(0.0, float(by_hour_cash_in.get(h, 0.0))), 2),
                 "count": int(by_hour_count.get(h, 0)),
             }
             for h in range(start_hr, end_hr + 1)
@@ -1962,7 +1970,7 @@ async def get_period_statistics(db: AsyncSession, date_from: str, date_to: str) 
             {
                 "date": d,
                 "spent": float(by_day.get(d, 0.0)),
-                "cash_in": float(by_day_cash_in.get(d, 0.0)),
+                "cash_in": round(max(0.0, float(by_day_cash_in.get(d, 0.0))), 2),
                 "count": int(by_day_count.get(d, 0)),
             }
             for d in all_day_keys
@@ -1995,7 +2003,11 @@ async def get_period_statistics(db: AsyncSession, date_from: str, date_to: str) 
         "active_days": active_days,
         "avg_daily_spend": avg_daily,
         "avg_payment": avg_payment,
-        "total_cash_in": sum(float(t.amount) for t, _ in cash_rows if t.source_type == "main"),
+        "total_cash_in": (
+            sum(float(t.amount) for t, _ in cash_rows if t.source_type == "main")
+            - sum(float(t.amount) for t, _ in cash_rows if t.source_type == "main_return")
+        ),
+        "main_returned": sum(float(t.amount) for t, _ in cash_rows if t.source_type == "main_return"),
         "kassa_borrowed": sum(float(t.amount) for t, _ in cash_rows if t.source_type == "kassa_debt"),
         "kassa_repaid": sum(float(t.amount) for t, _ in cash_rows if t.source_type == "kassa_repay"),
         "top_suppliers": top_suppliers,

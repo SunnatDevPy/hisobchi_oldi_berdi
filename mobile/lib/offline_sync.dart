@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
@@ -42,6 +43,67 @@ bool isNetworkOfflineError(Object error) {
       error is! ArgumentError;
 }
 
+/// Returns true when the error could mean the request ALREADY reached the server
+/// before the response dropped (timeout, connection reset, EOF), vs pre-connect offline.
+bool isUncertainNetworkError(Object error) {
+  if (!isNetworkOfflineError(error)) return false;
+  if (error is TimeoutException) return true;
+  final msg = error.toString().toLowerCase();
+  if (msg.contains('failed host lookup') ||
+      msg.contains('network is unreachable') ||
+      msg.contains('no address associated with hostname')) {
+    return false;
+  }
+  return msg.contains('timeoutexception') ||
+      msg.contains('timed out') ||
+      msg.contains('connection closed') ||
+      msg.contains('connection reset') ||
+      msg.contains('broken pipe') ||
+      msg.contains('software caused connection abort') ||
+      msg.contains('eof') ||
+      msg.contains('handshake') ||
+      msg.contains('clientexception');
+}
+
+/// Checks if an uncertain queued outbox item already exists on the live server status
+/// so offline->online flush never duplicates an already-saved cash or nakladnoy entry.
+bool matchesExistingServerItem(OfflineOutboxItem item, StatusSummary status) {
+  final p = item.payload;
+  final itemDt = DateTime.tryParse(item.createdAtIso);
+  if (item.type == 'cash') {
+    final src = (p['source_type'] ?? 'main').toString();
+    final amt = (p['amount'] as num?)?.toDouble();
+    if (amt == null) return false;
+    final note = (p['note'] ?? '').toString().trim();
+    for (final tx in status.cashTransactions) {
+      if (tx.sourceType != src) continue;
+      if ((tx.amount - amt).abs() >= 0.5) continue;
+      if (tx.note.trim() != note) continue;
+      final txDt = DateTime.tryParse(tx.createdAt.replaceFirst(' ', 'T'));
+      if (itemDt == null || txDt == null) continue;
+      if (txDt.difference(itemDt).inSeconds.abs() <= 300) {
+        return true;
+      }
+    }
+  } else if (item.type == 'nakladnoy') {
+    final sup = (p['supplier_name'] ?? '').toString().trim().toLowerCase();
+    final amt = (p['amount'] as num?)?.toDouble();
+    if (sup.isEmpty || amt == null) return false;
+    final note = (p['note'] ?? '').toString().trim();
+    for (final n in status.nakladnoys) {
+      if (n.supplierName.trim().toLowerCase() != sup) continue;
+      if ((n.amount - amt).abs() >= 0.5) continue;
+      if (n.note.trim() != note) continue;
+      final nDt = DateTime.tryParse(n.createdAt.replaceFirst(' ', 'T'));
+      if (itemDt == null || nDt == null) continue;
+      if (nDt.difference(itemDt).inSeconds.abs() <= 300) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 class OfflineCacheStore {
   static const String slotStatus = 'status';
   static const String slotDebts = 'debts';
@@ -78,12 +140,14 @@ class OfflineOutboxItem {
   final String type; // cash | nakladnoy | pay_debt
   final String createdAtIso;
   final Map<String, dynamic> payload;
+  final bool uncertain;
 
   const OfflineOutboxItem({
     required this.id,
     required this.type,
     required this.createdAtIso,
     required this.payload,
+    this.uncertain = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -91,6 +155,7 @@ class OfflineOutboxItem {
         'type': type,
         'created_at': createdAtIso,
         'payload': payload,
+        if (uncertain) 'uncertain': true,
       };
 
   factory OfflineOutboxItem.fromJson(Map<String, dynamic> j) =>
@@ -99,6 +164,7 @@ class OfflineOutboxItem {
         type: (j['type'] ?? '').toString(),
         createdAtIso: (j['created_at'] ?? '').toString(),
         payload: Map<String, dynamic>.from((j['payload'] as Map?) ?? const {}),
+        uncertain: j['uncertain'] == true,
       );
 }
 
@@ -153,6 +219,7 @@ class OfflineOutboxStore {
     required String sourceType,
     String note = '',
     String? idempotencyKey,
+    bool uncertain = false,
   }) async {
     final itemId = (idempotencyKey != null && idempotencyKey.trim().isNotEmpty)
         ? idempotencyKey.trim()
@@ -161,16 +228,32 @@ class OfflineOutboxStore {
     if (items.any((e) => e.id == itemId)) {
       return items.length;
     }
+    final now = DateTime.now();
+    final trimmedNote = note.trim();
+    final hasRapidDup = items.any((e) {
+      if (e.type != 'cash') return false;
+      final ep = e.payload;
+      final prevAmt = (ep['amount'] as num?)?.toDouble();
+      if (prevAmt == null || (prevAmt - amount).abs() >= 0.5) return false;
+      if ((ep['source_type'] ?? 'main').toString() != sourceType) return false;
+      if ((ep['note'] ?? '').toString().trim() != trimmedNote) return false;
+      final dt = DateTime.tryParse(e.createdAtIso);
+      return dt != null && now.difference(dt).inSeconds.abs() <= 30;
+    });
+    if (hasRapidDup) {
+      return items.length;
+    }
     items.add(
       OfflineOutboxItem(
         id: itemId,
         type: 'cash',
-        createdAtIso: DateTime.now().toIso8601String(),
+        createdAtIso: now.toIso8601String(),
         payload: {
           'amount': amount,
           'source_type': sourceType,
           'note': note,
         },
+        uncertain: uncertain,
       ),
     );
     await _saveAll(items);
@@ -187,12 +270,35 @@ class OfflineOutboxStore {
     Uint8List? photoBytes,
     String photoFilename = 'nakladnoy.jpg',
     String? idempotencyKey,
+    bool uncertain = false,
   }) async {
     final itemId = (idempotencyKey != null && idempotencyKey.trim().isNotEmpty)
         ? idempotencyKey.trim()
         : generateIdempotencyKey('nak');
     final items = await loadAll();
     if (items.any((e) => e.id == itemId)) {
+      return items.length;
+    }
+    final now = DateTime.now();
+    final lowSup = supplierName.trim().toLowerCase();
+    final trimmedNote = note.trim();
+    final hasRapidDup = items.any((e) {
+      if (e.type != 'nakladnoy') return false;
+      final ep = e.payload;
+      final prevAmt = (ep['amount'] as num?)?.toDouble();
+      if (prevAmt == null || (prevAmt - amount).abs() >= 0.5) return false;
+      if ((ep['supplier_name'] ?? '').toString().trim().toLowerCase() !=
+          lowSup) {
+        return false;
+      }
+      if ((ep['payment_mode'] ?? 'cash').toString() != paymentMode) {
+        return false;
+      }
+      if ((ep['note'] ?? '').toString().trim() != trimmedNote) return false;
+      final dt = DateTime.tryParse(e.createdAtIso);
+      return dt != null && now.difference(dt).inSeconds.abs() <= 30;
+    });
+    if (hasRapidDup) {
       return items.length;
     }
     String? photoB64;
@@ -205,7 +311,7 @@ class OfflineOutboxStore {
       OfflineOutboxItem(
         id: itemId,
         type: 'nakladnoy',
-        createdAtIso: DateTime.now().toIso8601String(),
+        createdAtIso: now.toIso8601String(),
         payload: {
           'supplier_name': supplierName,
           'amount': amount,
@@ -216,6 +322,7 @@ class OfflineOutboxStore {
           if (photoB64 != null) 'photo_b64': photoB64,
           'photo_filename': photoFilename,
         },
+        uncertain: uncertain,
       ),
     );
     await _saveAll(items);
@@ -229,6 +336,7 @@ class OfflineOutboxStore {
     double amount = 0,
     double? partialAmount,
     String? idempotencyKey,
+    bool uncertain = false,
   }) async {
     final itemId = (idempotencyKey != null && idempotencyKey.trim().isNotEmpty)
         ? idempotencyKey.trim()
@@ -249,6 +357,7 @@ class OfflineOutboxStore {
           'amount': amount,
           if (partialAmount != null) 'partial_amount': partialAmount,
         },
+        uncertain: uncertain,
       ),
     );
     await _saveAll(items);
@@ -271,9 +380,24 @@ class OfflineOutboxStore {
         return (sent: 0, remaining: 0, dropped: 0);
       }
       final remaining = List<OfflineOutboxItem>.from(queue);
+      StatusSummary? cachedStatus;
       for (final item in queue) {
         try {
+          if (item.uncertain &&
+              (item.type == 'cash' || item.type == 'nakladnoy')) {
+            cachedStatus ??= await api.getStatus();
+            if (api.lastFetchUsedOfflineCache) {
+              break;
+            }
+            if (matchesExistingServerItem(item, cachedStatus)) {
+              remaining.removeWhere((e) => e.id == item.id);
+              sent++;
+              await _saveAll(remaining);
+              continue;
+            }
+          }
           await _executeSingle(api, item);
+          cachedStatus = null;
           remaining.removeWhere((e) => e.id == item.id);
           sent++;
           await _saveAll(remaining);
