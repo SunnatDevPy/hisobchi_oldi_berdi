@@ -181,7 +181,7 @@
         radial-gradient(ellipse at 50% 106%, rgba(139, 47, 224, 0.36) 0%, transparent 56%),
         #05030F;
       color: #F8FAFC;
-      transition: opacity 0.32s ease;
+      transition: opacity 0.34s ease, transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
     }
     #hisobchi-splash::after {
       content: '';
@@ -197,13 +197,25 @@
     }
     #hisobchi-splash .logo-wrap {
       position: relative;
-      width: 132px;
-      height: 132px;
+      width: 148px;
+      height: 148px;
       display: flex;
       align-items: center;
       justify-content: center;
       perspective: 520px;
       animation: hbreathe 2.6s ease-in-out infinite;
+    }
+    #hisobchi-splash .ripple {
+      position: absolute;
+      inset: 6px;
+      border-radius: 50%;
+      border: 1.5px solid rgba(192, 132, 252, 0.55);
+      pointer-events: none;
+      animation: hripple 2.4s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+    }
+    #hisobchi-splash .ripple.r2 {
+      animation-delay: 1.2s;
+      border-color: rgba(244, 114, 182, 0.45);
     }
     #hisobchi-splash .squircle-3d {
       width: 112px;
@@ -242,7 +254,11 @@
       font-size: 24px;
       font-weight: 900;
       letter-spacing: -0.4px;
-      color: #FFFFFF;
+      background: linear-gradient(90deg, #E9D5FF 0%, #FFFFFF 35%, #F9A8D4 55%, #FFFFFF 75%, #E9D5FF 100%);
+      background-size: 200% auto;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: hshimmer 2.4s linear infinite;
     }
     #hisobchi-splash .sub {
       margin-top: 6px;
@@ -274,6 +290,14 @@
       0%, 100% { transform: translateY(0px) scale(0.98); }
       50% { transform: translateY(-4px) scale(1.03); }
     }
+    @keyframes hripple {
+      0% { transform: scale(0.75); opacity: 0.65; }
+      100% { transform: scale(1.55); opacity: 0; }
+    }
+    @keyframes hshimmer {
+      0% { background-position: 200% center; }
+      100% { background-position: -200% center; }
+    }
     @keyframes hslide {
       from { transform: translateX(0); }
       to { transform: translateX(88px); }
@@ -283,6 +307,8 @@
 <body>
   <div id="hisobchi-splash">
     <div class="logo-wrap">
+      <div class="ripple"></div>
+      <div class="ripple r2"></div>
       <div class="squircle-3d">
         <div class="squircle-cavity">
           <svg class="starburst" viewBox="-50 -50 100 100" xmlns="http://www.w3.org/2000/svg">
@@ -312,10 +338,11 @@
     window.addEventListener('flutter-first-frame', function () {
       var el = document.getElementById('hisobchi-splash');
       if (el) {
+        el.style.transform = 'scale(1.14)';
         el.style.opacity = '0';
         setTimeout(function () {
           if (el.parentNode) el.parentNode.removeChild(el);
-        }, 250);
+        }, 320);
       }
     });
   </script>

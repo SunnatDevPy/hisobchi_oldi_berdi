@@ -208,6 +208,8 @@ class _HisobchiSplashState extends State<HisobchiSplash>
 
   Timer? _exitTriggerTimer;
   Timer? _finishTimer;
+  Timer? _stage1Timer;
+  Timer? _stage2Timer;
   StreamSubscription<AccelerometerEvent>? _accelSub;
 
   double _targetGyroX = 0.0;
@@ -217,6 +219,7 @@ class _HisobchiSplashState extends State<HisobchiSplash>
   double _touchTiltX = 0.0;
   double _touchTiltY = 0.0;
   double _tapPulseBoost = 0.0;
+  late String _activeSubtitle = widget.subtitle;
 
   @override
   void initState() {
@@ -225,6 +228,20 @@ class _HisobchiSplashState extends State<HisobchiSplash>
     try {
       HapticFeedback.selectionClick();
     } catch (_) {}
+
+    if (widget.subtitle == 'Ilova tayyorlanmoqda...') {
+      _stage1Timer = Timer(const Duration(milliseconds: 950), () {
+        if (mounted) {
+          setState(
+              () => _activeSubtitle = 'Kassa va sinxronizatsiya ulanmoqda...');
+        }
+      });
+      _stage2Timer = Timer(const Duration(milliseconds: 1950), () {
+        if (mounted) {
+          setState(() => _activeSubtitle = 'Hisobchi tayyor!');
+        }
+      });
+    }
 
     if (!kIsWeb) {
       try {
@@ -256,6 +273,8 @@ class _HisobchiSplashState extends State<HisobchiSplash>
   void dispose() {
     _exitTriggerTimer?.cancel();
     _finishTimer?.cancel();
+    _stage1Timer?.cancel();
+    _stage2Timer?.cancel();
     _accelSub?.cancel();
     _spin.dispose();
     _orbit.dispose();
@@ -326,13 +345,29 @@ class _HisobchiSplashState extends State<HisobchiSplash>
                       const SizedBox(height: 36),
                       _buildShimmerTitle(),
                       const SizedBox(height: 10),
-                      Text(
-                        widget.subtitle,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.58),
-                          fontSize: 15,
-                          fontWeight: FontWeight.w500,
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 280),
+                        switchInCurve: Curves.easeOutCubic,
+                        switchOutCurve: Curves.easeInCubic,
+                        transitionBuilder: (child, anim) => FadeTransition(
+                          opacity: anim,
+                          child: SlideTransition(
+                            position: Tween<Offset>(
+                              begin: const Offset(0, 0.25),
+                              end: Offset.zero,
+                            ).animate(anim),
+                            child: child,
+                          ),
+                        ),
+                        child: Text(
+                          _activeSubtitle,
+                          key: ValueKey<String>(_activeSubtitle),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.62),
+                            fontSize: 15,
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 28),
@@ -427,6 +462,10 @@ class _HisobchiSplashState extends State<HisobchiSplash>
             return Stack(
               alignment: Alignment.center,
               children: [
+                CustomPaint(
+                  size: const Size(300, 300),
+                  painter: _RippleRingsPainter(_orbit),
+                ),
                 Transform.translate(
                   offset: Offset(-totalTiltY * 18, totalTiltX * 18),
                   child: Container(
@@ -477,10 +516,11 @@ class _HisobchiSplashState extends State<HisobchiSplash>
   Widget _buildBar() {
     return SizedBox(
       width: 230,
-      height: 5,
+      height: 6,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(10),
         child: Stack(
+          alignment: Alignment.centerLeft,
           children: [
             Container(color: Colors.white.withValues(alpha: 0.08)),
             AnimatedBuilder(
@@ -490,8 +530,9 @@ class _HisobchiSplashState extends State<HisobchiSplash>
                 return Align(
                   alignment: Alignment(-1 + 2 * t, 0),
                   child: FractionallySizedBox(
-                    widthFactor: 0.38,
+                    widthFactor: 0.40,
                     child: Container(
+                      height: 6,
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(10),
                         gradient: const LinearGradient(
@@ -504,10 +545,29 @@ class _HisobchiSplashState extends State<HisobchiSplash>
                         boxShadow: [
                           BoxShadow(
                             color: const Color(0xFFA855F7)
-                                .withValues(alpha: 0.7),
-                            blurRadius: 10,
+                                .withValues(alpha: 0.72),
+                            blurRadius: 11,
                           ),
                         ],
+                      ),
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: Container(
+                          width: 6,
+                          height: 6,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white,
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFFFF9BE5)
+                                    .withValues(alpha: 0.9),
+                                blurRadius: 8,
+                                spreadRadius: 1,
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -569,22 +629,28 @@ Widget _buildGlossyTile({
             ),
           ),
 
-        // Front glossy glass-bezel face
+        // Front glossy glass-bezel face with subtle sweeping liquid highlight
         Container(
           width: size,
           height: size,
           decoration: BoxDecoration(
             borderRadius: outerRadius,
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
+            gradient: LinearGradient(
+              begin: Alignment(
+                -1.0 + 0.45 * math.sin(shimmerPhase * 2 * math.pi),
+                -1.0,
+              ),
+              end: Alignment(
+                1.0,
+                1.0 + 0.35 * math.cos(shimmerPhase * 2 * math.pi),
+              ),
+              colors: const [
                 Color(0xFFE0A8FF),
                 Color(0xFFA855F7),
                 Color(0xFF5B21B6),
                 Color(0xFFC026D3),
               ],
-              stops: [0.0, 0.35, 0.75, 1.0],
+              stops: const [0.0, 0.35, 0.75, 1.0],
             ),
             border: Border.all(
               color: Colors.white.withValues(alpha: 0.35),
@@ -1036,6 +1102,41 @@ class _BokehParticlesPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _BokehParticlesPainter old) => false;
+}
+
+/// Ikonka ortidan tashqariga silliq tarqaluvchi kosmik energiya to'lqinlari.
+class _RippleRingsPainter extends CustomPainter {
+  _RippleRingsPainter(this.anim) : super(repaint: anim);
+  final Animation<double> anim;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = size.center(Offset.zero);
+    final minR = size.width * 0.24;
+    final maxR = size.width * 0.49;
+
+    for (var i = 0; i < 3; i++) {
+      final k = ((anim.value * 3.0) + i / 3.0) % 1.0;
+      final r = minR + (maxR - minR) * k;
+      final fade = (1.0 - k);
+      final alpha = (0.28 * fade * fade).clamp(0.0, 0.30);
+      if (alpha <= 0.005) continue;
+      final color = i.isEven
+          ? const Color(0xFFB44CFF)
+          : const Color(0xFFEC4899);
+      canvas.drawCircle(
+        c,
+        r,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.6
+          ..color = color.withValues(alpha: alpha),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _RippleRingsPainter old) => false;
 }
 
 /// Ikonka atrofidagi qiya orbita halqalari va nuqtalar.

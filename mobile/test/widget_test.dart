@@ -1089,4 +1089,26 @@ void main() {
     await tester.tap(find.byType(Hisobchi3DEmblem));
     await tester.pumpAndSettle();
   });
+
+  testWidgets(
+      'HisobchiSplash advances dynamic boot stages cleanly without leaking timers',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: const HisobchiSplash(),
+      ),
+    );
+
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('Ilova tayyorlanmoqda...'), findsOneWidget);
+
+    await tester.pump(const Duration(milliseconds: 950));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Kassa va sinxronizatsiya ulanmoqda...'), findsOneWidget);
+
+    await tester.pump(const Duration(milliseconds: 1000));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Hisobchi tayyor!'), findsOneWidget);
+  });
 }

@@ -3424,6 +3424,7 @@ class NakladnoyListCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = isDarkCtx(context);
     final (badgeText, badgeIcon, baseColor) = _badgeSpec();
     final (fg, bg, border) = AppTokens.semanticSurface(context, baseColor);
     final (grpFg, _, _) =
@@ -3432,186 +3433,244 @@ class NakladnoyListCard extends StatelessWidget {
     return TactileScaleTap(
       pressedScale: 0.985,
       haptic: false,
-      child: Card(
-        child: InkWell(
-        borderRadius: BorderRadius.circular(AppTokens.radius),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+      child: Container(
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF130F21) : Colors.white,
+          borderRadius: BorderRadius.circular(AppTokens.radius),
+          border: Border.all(
+            color: item.isDebt
+                ? border.withValues(alpha: 0.72)
+                : (isDark
+                    ? const Color(0xFF2D2448)
+                    : AppTokens.cardBorderLight),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: isDark
+                  ? Colors.black.withValues(alpha: 0.24)
+                  : baseColor.withValues(alpha: 0.05),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(AppTokens.radius),
+          child: Stack(
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: bg,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: border),
+              Positioned(
+                left: 0,
+                top: 10,
+                bottom: 10,
+                width: 3.5,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: const BorderRadius.horizontal(
+                        right: Radius.circular(4)),
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [baseColor, fg],
                     ),
-                    child: Text(
-                      item.displayNum,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w900,
-                        fontFeatures: AppTokens.tabularNums,
-                        color: fg,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 11),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          item.supplierName,
-                          style: TextStyle(
-                            fontSize: 15.5,
-                            fontWeight: FontWeight.w800,
-                            color: textPrimaryOf(context),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 3,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.schedule_rounded,
-                                    size: 12.5,
-                                    color: textSecondaryOf(context)),
-                                const SizedBox(width: 3),
-                                Text(
-                                  item.reportDate != null
-                                      ? '${item.reportDate} • ${item.timeHm}'
-                                      : item.timeHm,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: textSecondaryOf(context),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  item.inGroup
-                                      ? Icons.cloud_done_rounded
-                                      : Icons.storage_rounded,
-                                  size: 13.5,
-                                  color: item.inGroup
-                                      ? grpFg
-                                      : textSecondaryOf(context),
-                                ),
-                                const SizedBox(width: 3),
-                                Text(
-                                  item.inGroup ? 'Guruhda' : 'Bazada',
-                                  style: TextStyle(
-                                    fontSize: 11.5,
-                                    fontWeight: FontWeight.w700,
-                                    color: item.inGroup
-                                        ? grpFg
-                                        : textSecondaryOf(context),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            if (item.hasPhoto)
-                              Icon(Icons.image_rounded, size: 14, color: fg),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        formatUzs(item.amount, withCurrency: true),
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w900,
-                          fontFeatures: AppTokens.tabularNums,
-                          color: item.isDebt ? fg : textPrimaryOf(context),
-                        ),
-                      ),
-                      const SizedBox(height: 5),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3.5),
-                        decoration: BoxDecoration(
-                          color: bg,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: border),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(badgeIcon, size: 12, color: fg),
-                            const SizedBox(width: 4),
-                            Text(
-                              badgeText,
-                              style: TextStyle(
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w800,
-                                color: fg,
-                              ),
-                            ),
-                          ],
-                        ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: baseColor.withValues(alpha: 0.50),
+                        blurRadius: 6,
                       ),
                     ],
                   ),
-                ],
+                ),
               ),
-              if (item.note.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(
-                  '💬 ${item.note}',
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                    color: textSecondaryOf(context),
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(AppTokens.radius),
+                  onTap: onTap,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 13, 15, 13),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 9, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: bg,
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: border),
+                              ),
+                              child: Text(
+                                item.displayNum,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w900,
+                                  fontFeatures: AppTokens.tabularNums,
+                                  color: fg,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 11),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    item.supplierName,
+                                    style: TextStyle(
+                                      fontSize: 15.5,
+                                      fontWeight: FontWeight.w800,
+                                      color: textPrimaryOf(context),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 3,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
+                                    children: [
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(Icons.schedule_rounded,
+                                              size: 12.5,
+                                              color: textSecondaryOf(context)),
+                                          const SizedBox(width: 3),
+                                          Text(
+                                            item.reportDate != null
+                                                ? '${item.reportDate} • ${item.timeHm}'
+                                                : item.timeHm,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                              color: textSecondaryOf(context),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            item.inGroup
+                                                ? Icons.cloud_done_rounded
+                                                : Icons.storage_rounded,
+                                            size: 13.5,
+                                            color: item.inGroup
+                                                ? grpFg
+                                                : textSecondaryOf(context),
+                                          ),
+                                          const SizedBox(width: 3),
+                                          Text(
+                                            item.inGroup ? 'Guruhda' : 'Bazada',
+                                            style: TextStyle(
+                                              fontSize: 11.5,
+                                              fontWeight: FontWeight.w700,
+                                              color: item.inGroup
+                                                  ? grpFg
+                                                  : textSecondaryOf(context),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      if (item.hasPhoto)
+                                        Icon(Icons.image_rounded,
+                                            size: 14, color: fg),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text(
+                                  formatUzs(item.amount, withCurrency: true),
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w900,
+                                    fontFeatures: AppTokens.tabularNums,
+                                    color: item.isDebt
+                                        ? fg
+                                        : textPrimaryOf(context),
+                                  ),
+                                ),
+                                const SizedBox(height: 5),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 3.5),
+                                  decoration: BoxDecoration(
+                                    color: bg,
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: border),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(badgeIcon, size: 12, color: fg),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        badgeText,
+                                        style: TextStyle(
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.w800,
+                                          color: fg,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                        if (item.note.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            '💬 ${item.note}',
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                              color: textSecondaryOf(context),
+                            ),
+                          ),
+                        ],
+                        if (onQuickPay != null && item.isDebt) ...[
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            width: double.infinity,
+                            child: FilledButton.tonalIcon(
+                              style: FilledButton.styleFrom(
+                                minimumSize: const Size(0, 44),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 10),
+                              ),
+                              onPressed: onQuickPay,
+                              icon: const Icon(
+                                  Icons.check_circle_outline_rounded,
+                                  size: 18),
+                              label: const FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  "Qarzni to'lash (Naqd / Karta / O'tkazma)",
+                                  maxLines: 1,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
                 ),
-              ],
-              if (onQuickPay != null && item.isDebt) ...[
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.tonalIcon(
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(0, 44),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 10),
-                    ),
-                    onPressed: onQuickPay,
-                    icon: const Icon(Icons.check_circle_outline_rounded,
-                        size: 18),
-                    label: const FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Text(
-                        "Qarzni to'lash (Naqd / Karta / O'tkazma)",
-                        maxLines: 1,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ],
           ),
         ),
       ),
-    ),
     );
   }
 }
@@ -4190,26 +4249,26 @@ class _DashboardLoadingSkeletonState extends State<DashboardLoadingSkeleton>
 
         return ListView(
           physics: const NeverScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 110),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 124),
           children: [
-            // Date switcher bar placeholder
+            // Date switcher capsule placeholder
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: BoxDecoration(
-                color: isDark ? AppTokens.cardDark : Colors.white,
-                borderRadius: BorderRadius.circular(14),
+                color: isDark ? const Color(0xFF130F21) : Colors.white,
+                borderRadius: BorderRadius.circular(18),
                 border: Border.all(
                   color: isDark
-                      ? AppTokens.cardBorderDark
+                      ? AppTokens.brandViolet.withValues(alpha: 0.24)
                       : AppTokens.cardBorderLight,
                 ),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  box(28, w: 34, r: 8),
-                  box(18, w: 140, r: 8),
-                  box(28, w: 34, r: 8),
+                  box(28, w: 34, r: 9),
+                  box(18, w: 150, r: 9),
+                  box(28, w: 34, r: 9),
                 ],
               ),
             ),
@@ -4220,10 +4279,13 @@ class _DashboardLoadingSkeletonState extends State<DashboardLoadingSkeleton>
               decoration: BoxDecoration(
                 gradient: AppTokens.heroGradient,
                 borderRadius: BorderRadius.circular(24),
+                border: Border.all(
+                  color: const Color(0xFFE879F9).withValues(alpha: 0.30),
+                ),
                 boxShadow: [
                   BoxShadow(
-                    color: AppTokens.brand.withValues(alpha: 0.24),
-                    blurRadius: 22,
+                    color: AppTokens.brandViolet.withValues(alpha: 0.28),
+                    blurRadius: 24,
                     offset: const Offset(0, 10),
                   ),
                 ],
@@ -4247,10 +4309,10 @@ class _DashboardLoadingSkeletonState extends State<DashboardLoadingSkeleton>
                   Container(
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.20),
+                      color: const Color(0xFF0A0614).withValues(alpha: 0.38),
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.12),
+                        color: const Color(0xFFF5D0FE).withValues(alpha: 0.16),
                       ),
                     ),
                     child: Column(
@@ -4278,11 +4340,17 @@ class _DashboardLoadingSkeletonState extends State<DashboardLoadingSkeleton>
                   const SizedBox(height: 14),
                   Row(
                     children: [
-                      Expanded(child: box(52, r: 13, onHero: true)),
+                      Expanded(child: box(52, r: 14, onHero: true)),
                       const SizedBox(width: 8),
-                      Expanded(child: box(52, r: 13, onHero: true)),
+                      Expanded(child: box(52, r: 14, onHero: true)),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(child: box(52, r: 14, onHero: true)),
                       const SizedBox(width: 8),
-                      Expanded(child: box(52, r: 13, onHero: true)),
+                      Expanded(child: box(52, r: 14, onHero: true)),
                     ],
                   ),
                 ],
@@ -4290,88 +4358,76 @@ class _DashboardLoadingSkeletonState extends State<DashboardLoadingSkeleton>
             ),
             const SizedBox(height: 12),
 
-            // Mirror Quick action row (Jonli Sverka / Smena Tarixi)
+            // Mirror Quick action glass pills (Sverka / Arxiv)
             Row(
               children: [
-                Expanded(child: box(44, r: 14)),
-                const SizedBox(width: 8),
-                Expanded(child: box(44, r: 14)),
+                Expanded(child: box(46, r: 16)),
+                const SizedBox(width: 10),
+                Expanded(child: box(46, r: 16)),
               ],
             ),
             const SizedBox(height: 14),
 
-            // Mirror Analytics Card with chart bars
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        box(18, w: 160, r: 8),
-                        box(24, w: 80, r: 10),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    SizedBox(
-                      height: 68,
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          for (final h in const [
-                            36.0,
-                            54.0,
-                            42.0,
-                            64.0,
-                            48.0,
-                            58.0,
-                          ]) ...[
-                            Expanded(child: box(h, r: 8)),
-                            const SizedBox(width: 8),
-                          ],
-                          Expanded(child: box(32, r: 8)),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(child: box(40, r: 10)),
-                        const SizedBox(width: 8),
-                        Expanded(child: box(40, r: 10)),
-                      ],
-                    ),
-                  ],
+            // Mirror Xarajatlar taqsimoti card
+            Container(
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF130F21) : Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: isDark
+                      ? const Color(0xFF2D2448)
+                      : AppTokens.cardBorderLight,
                 ),
+              ),
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      box(20, w: 170, r: 8),
+                      box(24, w: 86, r: 10),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  box(20, r: 8),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(child: box(48, r: 12)),
+                      const SizedBox(width: 8),
+                      Expanded(child: box(48, r: 12)),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(child: box(48, r: 12)),
+                      const SizedBox(width: 8),
+                      Expanded(child: box(48, r: 12)),
+                    ],
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 14),
 
-            // Mirror Kassa Timeline Card
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        box(18, w: 185, r: 8),
-                        box(24, w: 72, r: 8),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    box(58, r: 14),
-                    const SizedBox(height: 8),
-                    box(58, r: 14),
-                    const SizedBox(height: 8),
-                    box(58, r: 14),
-                  ],
-                ),
-              ),
+            // Mirror 2x2 Neon KPI Bento Cards
+            Row(
+              children: [
+                Expanded(child: box(92, r: 18)),
+                const SizedBox(width: 10),
+                Expanded(child: box(92, r: 18)),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(child: box(92, r: 18)),
+                const SizedBox(width: 10),
+                Expanded(child: box(92, r: 18)),
+              ],
             ),
           ],
         );

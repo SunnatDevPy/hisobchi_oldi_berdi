@@ -36,9 +36,9 @@ class AppTokens {
 
   // Dark surfaces (deep obsidian-plum matching 3D cosmic splash)
   static const Color surfaceDark = Color(0xFF090712);
-  static const Color cardDark = Color(0xFF131020);
+  static const Color cardDark = Color(0xFF130F21);
   static const Color cardElevatedDark = Color(0xFF1B162D);
-  static const Color cardBorderDark = Color(0xFF2B2344);
+  static const Color cardBorderDark = Color(0xFF2D2448);
   static const Color textPrimaryDark = Color(0xFFFAF8FF);
   static const Color textSecondaryDark = Color(0xFFB8B0D0);
 
@@ -257,10 +257,12 @@ ThemeData buildAppTheme(Brightness brightness) {
       ),
     ),
     bottomSheetTheme: BottomSheetThemeData(
-      backgroundColor: isDark ? AppTokens.cardDark : Colors.white,
+      backgroundColor: isDark ? const Color(0xFF120E20) : Colors.white,
       surfaceTintColor: Colors.transparent,
       showDragHandle: true,
-      dragHandleColor: secondaryText.withValues(alpha: 0.45),
+      dragHandleColor: isDark
+          ? AppTokens.brandViolet.withValues(alpha: 0.55)
+          : secondaryText.withValues(alpha: 0.45),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),

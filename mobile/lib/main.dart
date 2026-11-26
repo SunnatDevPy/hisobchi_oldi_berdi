@@ -3563,73 +3563,133 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     required Color color,
     required String filterKey,
   }) {
+    final isDark = isDarkCtx(context);
     final isSelected = _filterMode == filterKey;
     final (fg, bg, border) = AppTokens.semanticSurface(context, color);
 
-    return Card(
-      color: isSelected ? bg : null,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: BorderSide(
-          color: isSelected ? fg : border.withValues(alpha: 0.45),
-          width: isSelected ? 2.0 : 1.0,
-        ),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: () => setState(() {
-          _filterMode = isSelected ? 'all' : filterKey;
-        }),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(7),
-                decoration: BoxDecoration(
-                  color: fg.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(icon, size: 17, color: fg),
+    return TactileScaleTap(
+      pressedScale: 0.97,
+      haptic: false,
+      child: Container(
+        decoration: BoxDecoration(
+          color: isSelected
+              ? (isDark
+                  ? Color.alphaBlend(
+                      color.withValues(alpha: 0.16), const Color(0xFF130F21))
+                  : bg)
+              : (isDark ? const Color(0xFF130F21) : Colors.white),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isSelected
+                ? fg.withValues(alpha: 0.85)
+                : (isDark
+                    ? const Color(0xFF2D2448)
+                    : AppTokens.cardBorderLight),
+            width: isSelected ? 1.5 : 1.0,
+          ),
+          boxShadow: [
+            if (isSelected)
+              BoxShadow(
+                color: color.withValues(alpha: isDark ? 0.24 : 0.14),
+                blurRadius: 14,
+                offset: const Offset(0, 4),
               ),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            '$label ($count)',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w800,
-                              color: isSelected ? fg : textSecondaryOf(context),
-                            ),
-                          ),
-                        ),
-                        if (isSelected)
-                          Icon(Icons.check_circle_rounded, size: 14, color: fg),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Stack(
+            children: [
+              Positioned(
+                top: 0,
+                left: 14,
+                right: 14,
+                height: isSelected ? 2.4 : 1.5,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: const BorderRadius.vertical(
+                        bottom: Radius.circular(4)),
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.transparent,
+                        color.withValues(alpha: isSelected ? 0.95 : 0.45),
+                        Colors.transparent,
                       ],
                     ),
-                    const SizedBox(height: 2),
-                    FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        formatUzs(amount, withCurrency: true),
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w900,
-                          color: textPrimaryOf(context),
-                          fontFeatures: AppTokens.tabularNums,
+                  ),
+                ),
+              ),
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: () {
+                    HapticFeedback.selectionClick();
+                    setState(() {
+                      _filterMode = isSelected ? 'all' : filterKey;
+                    });
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 11),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(7),
+                          decoration: BoxDecoration(
+                            color: bg,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                                color: border.withValues(alpha: 0.6)),
+                          ),
+                          child: Icon(icon, size: 17, color: fg),
                         ),
-                      ),
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      '$label ($count)',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w800,
+                                        color: isSelected
+                                            ? fg
+                                            : textSecondaryOf(context),
+                                      ),
+                                    ),
+                                  ),
+                                  if (isSelected)
+                                    Icon(Icons.check_circle_rounded,
+                                        size: 14, color: fg),
+                                ],
+                              ),
+                              const SizedBox(height: 2),
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  formatUzs(amount, withCurrency: true),
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w900,
+                                    color: textPrimaryOf(context),
+                                    fontFeatures: AppTokens.tabularNums,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ),
             ],
@@ -3705,42 +3765,94 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
           _buildDebtSectionSwitcher(),
           const SizedBox(height: 12),
           Container(
-            padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
-              color: amberBg,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: amberBorder),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.push_pin_rounded, color: amberFg, size: 30),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Qarzlar (${visibleDebts.length} ta)',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 13.5,
-                          color: textPrimaryOf(context),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        formatUzs(totalDebt, withCurrency: true),
-                        style: TextStyle(
-                          fontSize: 23,
-                          fontWeight: FontWeight.w900,
-                          color: amberFg,
-                          fontFeatures: AppTokens.tabularNums,
-                        ),
-                      ),
-                    ],
-                  ),
+              color: isDarkCtx(context)
+                  ? const Color(0xFF130F21)
+                  : Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: AppTokens.debtAmber
+                    .withValues(alpha: isDarkCtx(context) ? 0.50 : 0.40),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: AppTokens.debtAmber
+                      .withValues(alpha: isDarkCtx(context) ? 0.16 : 0.10),
+                  blurRadius: 16,
+                  offset: const Offset(0, 6),
                 ),
               ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: Stack(
+                children: [
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: 44,
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              AppTokens.debtAmber.withValues(
+                                  alpha: isDarkCtx(context) ? 0.24 : 0.14),
+                              Colors.transparent,
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(11),
+                          decoration: BoxDecoration(
+                            color: amberBg,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: amberBorder),
+                          ),
+                          child: Icon(Icons.push_pin_rounded,
+                              color: amberFg, size: 24),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Qarzlar (${visibleDebts.length} ta)',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 13.5,
+                                  color: textPrimaryOf(context),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                formatUzs(totalDebt, withCurrency: true),
+                                style: TextStyle(
+                                  fontSize: 23,
+                                  fontWeight: FontWeight.w900,
+                                  color: amberFg,
+                                  fontFeatures: AppTokens.tabularNums,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
           if (debtSuppliers.length > 1) ...[
@@ -3834,62 +3946,114 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
   }
 
   Widget _buildDebtSectionSwitcher() {
-    final filledCompact = FilledButton.styleFrom(
-      minimumSize: const Size(0, 42),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 9),
-    );
-    final outlinedCompact = OutlinedButton.styleFrom(
-      minimumSize: const Size(0, 42),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 9),
-    );
+    final isDark = isDarkCtx(context);
     Widget tabBtn(String key, String label, IconData activeIc, IconData idleIc) {
       final sel = _debtSubTab == key;
       return Expanded(
-        child: sel
-            ? FilledButton.icon(
-                style: filledCompact,
-                onPressed: () {},
-                icon: Icon(activeIc, size: 16),
-                label: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(label, maxLines: 1),
+        child: TactileScaleTap(
+          pressedScale: 0.96,
+          haptic: false,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () {
+                if (!sel) {
+                  HapticFeedback.selectionClick();
+                  setState(() => _debtSubTab = key);
+                }
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOutCubic,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  gradient: sel
+                      ? const LinearGradient(
+                          colors: [
+                            AppTokens.brand,
+                            AppTokens.brandOrchid,
+                          ],
+                        )
+                      : null,
+                  boxShadow: sel
+                      ? [
+                          BoxShadow(
+                            color: AppTokens.brandViolet.withValues(alpha: 0.36),
+                            blurRadius: 10,
+                            offset: const Offset(0, 3),
+                          ),
+                        ]
+                      : null,
                 ),
-              )
-            : OutlinedButton.icon(
-                style: outlinedCompact,
-                onPressed: () => setState(() => _debtSubTab = key),
-                icon: Icon(idleIc, size: 16),
-                label: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(label, maxLines: 1),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      sel ? activeIc : idleIc,
+                      size: 16,
+                      color: sel ? Colors.white : textSecondaryOf(context),
+                    ),
+                    const SizedBox(width: 5),
+                    Flexible(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          label,
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: sel ? FontWeight.w800 : FontWeight.w700,
+                            color: sel ? Colors.white : textPrimaryOf(context),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
+            ),
+          ),
+        ),
       );
     }
 
-    return Row(
-      children: [
-        tabBtn(
-          'directory',
-          'Barchasi',
-          Icons.storefront_rounded,
-          Icons.storefront_outlined,
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF130F21) : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color:
+              isDark ? const Color(0xFF2D2448) : AppTokens.cardBorderLight,
         ),
-        const SizedBox(width: 6),
-        tabBtn(
-          'nakladnoy',
-          'Qarz (${_allDebts.length})',
-          Icons.push_pin_rounded,
-          Icons.push_pin_outlined,
-        ),
-        const SizedBox(width: 6),
-        tabBtn(
-          'nasiya',
-          'Nasiya',
-          Icons.menu_book_rounded,
-          Icons.menu_book_outlined,
-        ),
-      ],
+      ),
+      child: Row(
+        children: [
+          tabBtn(
+            'directory',
+            'Barchasi',
+            Icons.storefront_rounded,
+            Icons.storefront_outlined,
+          ),
+          const SizedBox(width: 4),
+          tabBtn(
+            'nakladnoy',
+            'Qarz (${_allDebts.length})',
+            Icons.push_pin_rounded,
+            Icons.push_pin_outlined,
+          ),
+          const SizedBox(width: 4),
+          tabBtn(
+            'nasiya',
+            'Nasiya',
+            Icons.menu_book_rounded,
+            Icons.menu_book_outlined,
+          ),
+        ],
+      ),
     );
   }
 
@@ -4384,8 +4548,21 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                 Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
-                    color: AppTokens.brand.withValues(alpha: 0.10),
-                    borderRadius: BorderRadius.circular(12),
+                    gradient: LinearGradient(
+                      colors: isDarkCtx(context)
+                          ? [
+                              const Color(0xFF211A3A),
+                              const Color(0xFF19132D),
+                            ]
+                          : [
+                              const Color(0xFFF6F1FE),
+                              const Color(0xFFFAF8FF),
+                            ],
+                    ),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: AppTokens.brandViolet.withValues(alpha: 0.28),
+                    ),
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -4399,6 +4576,7 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                         style: const TextStyle(
                           fontWeight: FontWeight.w900,
                           fontSize: 16,
+                          color: AppTokens.brandViolet,
                           fontFeatures: AppTokens.tabularNums,
                         ),
                       ),
@@ -4575,66 +4753,77 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                 Row(
                   children: [
                     Expanded(
-                      child: OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          side: BorderSide(
-                            color: AppTokens.brandSky.withValues(alpha: 0.65),
+                      child: TactileScaleTap(
+                        pressedScale: 0.96,
+                        enabled:
+                            widget.api.canWrite && !_savingInterim && !_closing,
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            side: BorderSide(
+                              color: AppTokens.brandSky.withValues(alpha: 0.65),
+                            ),
+                            foregroundColor: isDarkCtx(context)
+                                ? AppTokens.brandSky
+                                : AppTokens.cardBlue,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 12),
                           ),
-                          foregroundColor: isDarkCtx(context)
-                              ? AppTokens.brandSky
-                              : AppTokens.cardBlue,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 12),
-                        ),
-                        onPressed: widget.api.canWrite &&
-                                !_savingInterim &&
-                                !_closing
-                            ? _submitInterimReconciliation
-                            : null,
-                        icon: _savingInterim
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.fact_check_rounded, size: 18),
-                        label: const FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Text(
-                            'Oraliq sverka',
-                            maxLines: 1,
+                          onPressed: widget.api.canWrite &&
+                                  !_savingInterim &&
+                                  !_closing
+                              ? _submitInterimReconciliation
+                              : null,
+                          icon: _savingInterim
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.fact_check_rounded, size: 18),
+                          label: const FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              'Oraliq sverka',
+                              maxLines: 1,
+                            ),
                           ),
                         ),
                       ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: FilledButton.icon(
-                        style: FilledButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 12),
-                        ),
-                        onPressed: widget.api.canWrite &&
-                                !_closing &&
-                                !_savingInterim
-                            ? _submitCloseDay
-                            : null,
-                        icon: _closing
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Icon(Icons.check_circle_rounded, size: 18),
-                        label: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Text(
-                            _closing ? 'Yopilmoqda...' : 'Smenani yopish',
-                            maxLines: 1,
+                      child: TactileScaleTap(
+                        pressedScale: 0.96,
+                        enabled:
+                            widget.api.canWrite && !_closing && !_savingInterim,
+                        child: FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 12),
+                          ),
+                          onPressed: widget.api.canWrite &&
+                                  !_closing &&
+                                  !_savingInterim
+                              ? _submitCloseDay
+                              : null,
+                          icon: _closing
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(Icons.check_circle_rounded,
+                                  size: 18),
+                          label: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              _closing ? 'Yopilmoqda...' : 'Smenani yopish',
+                              maxLines: 1,
+                            ),
                           ),
                         ),
                       ),
