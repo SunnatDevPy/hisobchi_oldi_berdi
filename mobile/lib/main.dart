@@ -1882,7 +1882,6 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     String sourceType, {
     CashTxItem? existing,
     double? presetAmount,
-    bool returnPickerMode = false,
   }) async {
     final titles = {
       'main': existing != null ? 'Kirimni tahrirlash' : 'Pul oldim',
@@ -1914,11 +1913,9 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
 
     var activeSource = sourceType;
     final showMainPairToggle = existing == null &&
-        !returnPickerMode &&
         (sourceType == 'main' || sourceType == 'main_return');
-    final showReturnPairToggle = existing == null &&
-        (returnPickerMode ||
-            (sourceType == 'kassa_repay' && (_summary?.mainCashIn ?? 0) > 0));
+    final showKassaPairToggle = existing == null &&
+        (sourceType == 'kassa_debt' || sourceType == 'kassa_repay');
 
     var dialogPopped = false;
     final confirmed = await showModalBottomSheet<bool>(
@@ -1929,6 +1926,11 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
         builder: (ctx, setSheetState) {
           final (retFg, retBg, retBorder) =
               AppTokens.semanticSurface(ctx, AppTokens.brandViolet);
+          final kassaAccent = activeSource == 'kassa_repay'
+              ? AppTokens.debtAmber
+              : AppTokens.brandSky;
+          final (kassaFg, kassaBg, kassaBorder) =
+              AppTokens.semanticSurface(ctx, kassaAccent);
           return SafeArea(
             top: false,
             maintainBottomViewPadding: true,
@@ -1953,7 +1955,9 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                           Icon(icons[activeSource] ?? Icons.payments_rounded,
                               color: activeSource == 'main_return'
                                   ? AppTokens.brandViolet
-                                  : AppTokens.brand),
+                                  : (activeSource == 'kassa_repay'
+                                      ? AppTokens.debtAmber
+                                      : AppTokens.brand)),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
@@ -1986,18 +1990,19 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                             setSheetState(() => activeSource = sel.first);
                           },
                         ),
-                      ] else if (showReturnPairToggle) ...[
+                      ] else if (showKassaPairToggle) ...[
                         const SizedBox(height: 12),
                         SegmentedButton<String>(
                           segments: const [
                             ButtonSegment<String>(
-                              value: 'main_return',
-                              label: Text('Pul oldimdan'),
-                              icon: Icon(Icons.undo_rounded, size: 17),
+                              value: 'kassa_debt',
+                              label: Text('Qarz olish'),
+                              icon: Icon(Icons.account_balance_rounded,
+                                  size: 17),
                             ),
                             ButtonSegment<String>(
                               value: 'kassa_repay',
-                              label: Text('Kassa qarzidan'),
+                              label: Text('Qaytarish'),
                               icon: Icon(Icons.assignment_return_rounded,
                                   size: 17),
                             ),
@@ -2029,6 +2034,52 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                               fontWeight: FontWeight.w700,
                               color: retFg,
                             ),
+                          ),
+                        ),
+                      ] else if ((activeSource == 'kassa_debt' ||
+                              activeSource == 'kassa_repay') &&
+                          _summary != null) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: kassaBg,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: kassaBorder),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  "Joriy kassa qarzi: ${formatUzs(_summary!.totalKassaDebtOutstanding)} so'm",
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: kassaFg,
+                                  ),
+                                ),
+                              ),
+                              if (activeSource == 'kassa_repay' &&
+                                  _summary!.totalKassaDebtOutstanding > 0) ...[
+                                const SizedBox(width: 8),
+                                ActionChip(
+                                  visualDensity: VisualDensity.compact,
+                                  label: const Text("To'liq yopish"),
+                                  onPressed: () {
+                                    amtCtrl.text =
+                                        UzsAmountInputFormatter.formatDigits(
+                                      _summary!.totalKassaDebtOutstanding
+                                          .round()
+                                          .toString(),
+                                    );
+                                    setSheetState(() {});
+                                  },
+                                ),
+                              ],
+                            ],
                           ),
                         ),
                       ],
@@ -3127,37 +3178,6 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
             onKassaDebt: (!isViewingPast && widget.api.canWrite)
                 ? () => _openCashDialog('kassa_debt')
                 : null,
-            onKassaRepay: (!isViewingPast && widget.api.canWrite)
-                ? () => _openCashDialog(
-                      s.totalKassaDebtOutstanding <= 0
-                          ? 'main_return'
-                          : 'kassa_repay',
-                      returnPickerMode: true,
-                    )
-                : null,
-          ),
-          const SizedBox(height: 14),
-          // Frosted Glass Quick Action Pills (Sverka & Arxiv)
-          Row(
-            children: [
-              Expanded(
-                child: _buildDashboardQuickPill(
-                  icon: Icons.query_stats_rounded,
-                  label: 'Sverka',
-                  accent: AppTokens.brandSky,
-                  onTap: _openLiveSverkaSheet,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildDashboardQuickPill(
-                  icon: Icons.history_rounded,
-                  label: 'Arxiv',
-                  accent: AppTokens.brandViolet,
-                  onTap: _openHistorySessionsSheet,
-                ),
-              ),
-            ],
           ),
           const SizedBox(height: 16),
           DashboardAnalyticsSection(
@@ -3469,6 +3489,29 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
           _buildDashboardDateSwitcherBar(s, isViewingPast),
           const SizedBox(height: 12),
           _buildNakladnoyMiniDashboard(s),
+          const SizedBox(height: 12),
+          // Frosted Glass Quick Action Pills (Sverka & Arxiv)
+          Row(
+            children: [
+              Expanded(
+                child: _buildDashboardQuickPill(
+                  icon: Icons.query_stats_rounded,
+                  label: 'Sverka',
+                  accent: AppTokens.brandSky,
+                  onTap: _openLiveSverkaSheet,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildDashboardQuickPill(
+                  icon: Icons.history_rounded,
+                  label: 'Arxiv',
+                  accent: AppTokens.brandViolet,
+                  onTap: _openHistorySessionsSheet,
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 14),
           // Header strip
           Row(

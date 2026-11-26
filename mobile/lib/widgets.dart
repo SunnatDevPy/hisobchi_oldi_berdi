@@ -642,8 +642,19 @@ class HeroBalanceCard extends StatelessWidget {
                             onTap: onAddCash!,
                           ),
                         ),
+                        if (onKassaDebt != null) ...[
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: _HeroActionBtn(
+                              icon: Icons.account_balance_rounded,
+                              label: 'Kassa',
+                              accentColor: AppTokens.brandSky,
+                              onTap: onKassaDebt!,
+                            ),
+                          ),
+                        ],
                         if (onExpense != null) ...[
-                          const SizedBox(width: 12),
+                          const SizedBox(width: 10),
                           Expanded(
                             child: _HeroActionBtn(
                               icon: Icons.trending_down_rounded,
@@ -653,28 +664,6 @@ class HeroBalanceCard extends StatelessWidget {
                             ),
                           ),
                         ],
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _HeroActionBtn(
-                            icon: Icons.account_balance_rounded,
-                            label: 'Kassa qarz',
-                            accentColor: AppTokens.brandSky,
-                            onTap: onKassaDebt!,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _HeroActionBtn(
-                            icon: Icons.assignment_return_rounded,
-                            label: 'Qaytarish',
-                            accentColor: AppTokens.debtAmber,
-                            onTap: onKassaRepay!,
-                          ),
-                        ),
                       ],
                     ),
                   ],

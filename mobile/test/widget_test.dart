@@ -800,6 +800,7 @@ void main() {
     expect(summary.expenseToday, equals(75000));
 
     var pulOldimTapped = 0;
+    var kassaTapped = 0;
     var xarajatTapped = 0;
     await tester.pumpWidget(
       MaterialApp(
@@ -811,9 +812,8 @@ void main() {
               child: HeroBalanceCard(
                 summary: summary,
                 onAddCash: () => pulOldimTapped++,
+                onKassaDebt: () => kassaTapped++,
                 onExpense: () => xarajatTapped++,
-                onKassaDebt: () {},
-                onKassaRepay: () {},
               ),
             ),
           ),
@@ -824,12 +824,18 @@ void main() {
 
     expect(find.text('Egadan'), findsNothing);
     expect(find.text('Egadan oldim'), findsNothing);
+    expect(find.text('Qaytarish'), findsNothing);
     expect(find.text('Pul oldim'), findsNWidgets(2)); // Sub-stat + action button
+    expect(find.text('Kassa'), findsOneWidget);
     expect(find.text('Xarajat'), findsNWidgets(2)); // Sub-stat + action button
 
     await tester.tap(find.widgetWithIcon(InkWell, Icons.trending_down_rounded));
     await tester.pump();
     expect(xarajatTapped, equals(1));
+
+    await tester.tap(find.widgetWithIcon(InkWell, Icons.account_balance_rounded));
+    await tester.pump();
+    expect(kassaTapped, equals(1));
 
     await tester.tap(find.widgetWithIcon(InkWell, Icons.add_card_rounded));
     await tester.pump();
