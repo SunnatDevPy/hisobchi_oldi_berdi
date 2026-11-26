@@ -3100,3 +3100,137 @@ def test_cash_expense_deducts_expected_cash_and_parses_deterministic(
     finally:
         clear_role_cache()
         get_settings.cache_clear()
+
+
+def test_interim_and_closing_cash_reconciliation_api_and_sync(
+    tmp_path: Path, monkeypatch
+):
+    import httpx
+    import api.app as api_app_mod
+    import api.auth as api_auth_mod
+    from bot.auth import clear_role_cache
+    from config import get_settings
+    from database.sync_state import get_sync_snapshot
+
+    monkeypatch.setenv("BOT_TOKEN", "987654:TEST_BOT_SVERKA")
+    monkeypatch.setenv("ADMIN_IDS", "111")
+    get_settings.cache_clear()
+    clear_role_cache()
+
+    async def scenario() -> None:
+        db_file = tmp_path / "reconcile_test.db"
+        eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+        monkeypatch.setattr(api_app_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_auth_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_app_mod, "get_bot", lambda: None)
+        api_auth_mod.clear_auth_memory_state()
+        try:
+            await init_db(engine_override=eng, session_maker_override=maker)
+            async with maker() as db:
+                raw_token, _ = await api_auth_mod.issue_api_token(
+                    db, user_id=111, device_name="Pytest Sverka APK"
+                )
+            headers = {"Authorization": f"Bearer {raw_token}"}
+            app = api_app_mod.create_api_app()
+
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                # 1. Seed cash + nakladnoy so expected_cash = 700,000
+                r_in = await client.post(
+                    "/cash",
+                    json={"amount": 1_000_000, "source_type": "main", "note": "Kirim"},
+                    headers=headers,
+                )
+                assert r_in.status_code == 200
+                r_nak = await client.post(
+                    "/nakladnoy",
+                    data={
+                        "supplier_name": "Coca Cola",
+                        "amount": "300000",
+                        "payment_mode": "cash",
+                        "send_to_group": "false",
+                    },
+                    headers=headers,
+                )
+                assert r_nak.status_code == 200
+
+                snap_before = get_sync_snapshot()["seq"]
+
+                # 2. Save interim (vaqtinchalik) sverka — MUST NOT alter expected_cash or close session
+                r_interim = await client.post(
+                    "/cash/reconciliations",
+                    json={"counted_cash": 680_000, "note": "Tushlik sverkasi"},
+                    headers=headers,
+                )
+                assert r_interim.status_code == 200
+                interim = r_interim.json()
+                assert interim["kind"] == "interim"
+                assert interim["expected_cash"] == 700_000.0
+                assert interim["counted_cash"] == 680_000.0
+                assert interim["difference"] == -20_000.0
+                assert interim["note"] == "Tushlik sverkasi"
+                assert len(interim["time_hm"]) == 5
+
+                assert get_sync_snapshot()["seq"] > snap_before
+
+                st = (await client.get("/status", headers=headers)).json()
+                assert st["expected_cash"] == 700_000.0
+                assert st["session_status"] == "open"
+
+                # 3. Close day -> saves main closing sverka automatically alongside interim
+                r_close = await client.post(
+                    "/day/close",
+                    json={"actual_counted_cash": 705_000, "note": "Kechki yopish"},
+                    headers=headers,
+                )
+                assert r_close.status_code == 200
+                assert r_close.json()["difference"] == 5_000.0
+
+                r_all = await client.get("/cash/reconciliations", headers=headers)
+                assert r_all.status_code == 200
+                items = r_all.json()["items"]
+                assert len(items) == 2
+                kinds = {i["kind"] for i in items}
+                assert kinds == {"interim", "closing"}
+
+                closing_item = (
+                    await client.get(
+                        "/cash/reconciliations", params={"kind": "closing"}, headers=headers
+                    )
+                ).json()["items"]
+                assert len(closing_item) == 1
+                assert closing_item[0]["counted_cash"] == 705_000.0
+                assert closing_item[0]["difference"] == 5_000.0
+                assert closing_item[0]["note"] == "Kechki yopish"
+
+                interim_only = (
+                    await client.get(
+                        "/cash/reconciliations", params={"kind": "interim"}, headers=headers
+                    )
+                ).json()["items"]
+                assert len(interim_only) == 1
+                assert interim_only[0]["id"] == interim["id"]
+
+                # 4. Closing sverka is protected against delete; interim can be deleted cleanly
+                r_del_close = await client.delete(
+                    f"/cash/reconciliations/{closing_item[0]['id']}", headers=headers
+                )
+                assert r_del_close.status_code == 400
+
+                r_del_int = await client.delete(
+                    f"/cash/reconciliations/{interim['id']}", headers=headers
+                )
+                assert r_del_int.status_code == 200
+
+                remaining = (await client.get("/cash/reconciliations", headers=headers)).json()["items"]
+                assert len(remaining) == 1
+                assert remaining[0]["kind"] == "closing"
+        finally:
+            await eng.dispose()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        clear_role_cache()
+        get_settings.cache_clear()

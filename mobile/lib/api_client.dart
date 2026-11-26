@@ -734,15 +734,64 @@ class HisobchiApiClient {
     }
   }
 
-  Future<Map<String, dynamic>> closeDay(double actualCountedCash) async {
+  Future<Map<String, dynamic>> closeDay(
+    double actualCountedCash, {
+    String note = '',
+  }) async {
     final res = await _http
         .post(
           _uri('/day/close'),
           headers: _headers(),
-          body: jsonEncode({'actual_counted_cash': actualCountedCash}),
+          body: jsonEncode({
+            'actual_counted_cash': actualCountedCash,
+            'note': note.trim(),
+          }),
         )
         .timeout(const Duration(seconds: 15));
     return _decodeJson(res);
+  }
+
+  Future<List<CashReconciliationItem>> getCashReconciliations({
+    int? sessionId,
+    String? kind,
+    int limit = 60,
+  }) async {
+    final q = <String, String>{'limit': '$limit'};
+    if (sessionId != null) q['session_id'] = '$sessionId';
+    if (kind != null && kind.isNotEmpty) q['kind'] = kind;
+    final res = await _http
+        .get(_uri('/cash/reconciliations', q), headers: _headers())
+        .timeout(const Duration(seconds: 15));
+    final data = _decodeJson(res);
+    final raw = (data['items'] as List?) ?? const [];
+    return raw
+        .map((e) =>
+            CashReconciliationItem.fromJson(Map<String, dynamic>.from(e as Map)))
+        .toList();
+  }
+
+  Future<CashReconciliationItem> createInterimReconciliation({
+    required double countedCash,
+    String note = '',
+  }) async {
+    final res = await _http
+        .post(
+          _uri('/cash/reconciliations'),
+          headers: _headers(),
+          body: jsonEncode({
+            'counted_cash': countedCash,
+            'note': note.trim(),
+          }),
+        )
+        .timeout(const Duration(seconds: 15));
+    return CashReconciliationItem.fromJson(_decodeJson(res));
+  }
+
+  Future<void> deleteInterimReconciliation(int id) async {
+    final res = await _http
+        .delete(_uri('/cash/reconciliations/$id'), headers: _headers())
+        .timeout(const Duration(seconds: 15));
+    _decodeJson(res);
   }
 
   Future<Uint8List> downloadExcelBytes(
@@ -1349,6 +1398,48 @@ class HistorySessionItem {
         closedAt: j['closed_at']?.toString(),
         shiftSeq: ((j['shift_seq'] as num?) ?? 1).toInt(),
         shiftTotal: ((j['shift_total'] as num?) ?? 1).toInt(),
+      );
+}
+
+class CashReconciliationItem {
+  final int id;
+  final int sessionId;
+  final String reportDate;
+  final String kind; // 'interim' | 'closing'
+  final double expectedCash;
+  final double countedCash;
+  final double difference;
+  final String note;
+  final String createdAt;
+  final String timeHm;
+
+  const CashReconciliationItem({
+    required this.id,
+    required this.sessionId,
+    required this.reportDate,
+    required this.kind,
+    required this.expectedCash,
+    required this.countedCash,
+    required this.difference,
+    required this.note,
+    required this.createdAt,
+    required this.timeHm,
+  });
+
+  bool get isClosing => kind == 'closing';
+
+  factory CashReconciliationItem.fromJson(Map<String, dynamic> j) =>
+      CashReconciliationItem(
+        id: (j['id'] as num).toInt(),
+        sessionId: (j['session_id'] as num).toInt(),
+        reportDate: (j['report_date'] ?? '').toString(),
+        kind: (j['kind'] ?? 'interim').toString(),
+        expectedCash: ((j['expected_cash'] as num?) ?? 0).toDouble(),
+        countedCash: ((j['counted_cash'] as num?) ?? 0).toDouble(),
+        difference: ((j['difference'] as num?) ?? 0).toDouble(),
+        note: (j['note'] ?? '').toString(),
+        createdAt: (j['created_at'] ?? '').toString(),
+        timeHm: (j['time_hm'] ?? '').toString(),
       );
 }
 

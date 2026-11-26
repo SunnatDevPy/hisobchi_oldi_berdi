@@ -19,6 +19,7 @@ from database.models import (
     AIUsageLog,
     AppSetting,
     AuditLog,
+    CashReconciliation,
     CashTransaction,
     DailyCashSession,
     GroupConfig,
@@ -976,17 +977,108 @@ async def restore_nakladnoy(
     return payment
 
 
+VALID_RECONCILIATION_KINDS = ("interim", "closing")
+
+
+async def create_cash_reconciliation(
+    db: AsyncSession,
+    counted_cash: float,
+    *,
+    kind: str = "interim",
+    note: str = "",
+    session_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+) -> Tuple[CashReconciliation, str]:
+    """Save an interim (non-mutating) or closing cash count snapshot for audit history."""
+    summary = await compute_session_summary(db, session_id=session_id)
+    norm_kind = "closing" if (kind or "").strip().lower() == "closing" else "interim"
+    expected = float(summary.expected_cash)
+    counted = float(counted_cash)
+    rec = CashReconciliation(
+        session_id=summary.session.id,
+        kind=norm_kind,
+        expected_cash=expected,
+        counted_cash=counted,
+        difference=counted - expected,
+        note=(note or "").strip()[:500],
+        created_by=user_id,
+        created_at=now_local(),
+    )
+    db.add(rec)
+    await db.commit()
+    await db.refresh(rec)
+    return rec, summary.session.report_date
+
+
+async def list_cash_reconciliations(
+    db: AsyncSession,
+    *,
+    session_id: Optional[int] = None,
+    kind: Optional[str] = None,
+    limit: int = 60,
+) -> List[Tuple[CashReconciliation, str]]:
+    """Return cash reconciliation snapshots ordered newest-first alongside session report_date."""
+    stmt = (
+        select(CashReconciliation, DailyCashSession.report_date)
+        .join(DailyCashSession, DailyCashSession.id == CashReconciliation.session_id)
+        .order_by(desc(CashReconciliation.created_at), desc(CashReconciliation.id))
+        .limit(max(1, min(limit, 200)))
+    )
+    if session_id is not None:
+        stmt = stmt.where(CashReconciliation.session_id == session_id)
+    clean_kind = (kind or "").strip().lower()
+    if clean_kind in VALID_RECONCILIATION_KINDS:
+        stmt = stmt.where(CashReconciliation.kind == clean_kind)
+    rows = (await db.execute(stmt)).all()
+    return [(rec, str(report_date or "")) for rec, report_date in rows]
+
+
+async def delete_cash_reconciliation(
+    db: AsyncSession, rec_id: int
+) -> Tuple[bool, str]:
+    """Delete a temporary interim reconciliation; closing snapshots are protected."""
+    rec = await db.get(CashReconciliation, rec_id)
+    if rec is None:
+        return False, "not_found"
+    if rec.kind != "interim":
+        return False, "closing_protected"
+    await db.delete(rec)
+    await db.commit()
+    return True, "deleted"
+
+
 async def close_cash_session(
-    db: AsyncSession, session_id: int, actual_counted_cash: float
+    db: AsyncSession,
+    session_id: int,
+    actual_counted_cash: float,
+    *,
+    note: str = "",
+    user_id: Optional[int] = None,
 ) -> SessionSummary:
-    """Close a cash session with actual counted cash, recording discrepancy into history."""
+    """Close a cash session with actual counted cash and persist the closing sverka."""
     summary = await compute_session_summary(db, session_id)
     sess = summary.session
-    sess.actual_counted_cash = float(actual_counted_cash)
-    sess.expected_cash = summary.expected_cash
-    sess.difference = float(actual_counted_cash) - summary.expected_cash
+    closed_ts = now_local()
+    expected = float(summary.expected_cash)
+    counted = float(actual_counted_cash)
+    diff = counted - expected
+    sess.actual_counted_cash = counted
+    sess.expected_cash = expected
+    sess.difference = diff
     sess.status = "closed"
-    sess.closed_at = now_local()
+    sess.closed_at = closed_ts
+    db.add(
+        CashReconciliation(
+            session_id=sess.id,
+            kind="closing",
+            expected_cash=expected,
+            counted_cash=counted,
+            difference=diff,
+            note=(note or "").strip()[:500],
+            created_by=user_id,
+            created_at=closed_ts,
+        )
+    )
     await db.commit()
     await db.refresh(sess)
     return await compute_session_summary(db, session_id)

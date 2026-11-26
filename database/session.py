@@ -61,6 +61,7 @@ DEFAULT_SUPPLIERS = [
 
 _PG_MONEY_COLUMNS = (
     ("daily_cash_sessions", ("opening_balance", "actual_counted_cash", "expected_cash", "difference")),
+    ("cash_reconciliations", ("expected_cash", "counted_cash", "difference")),
     ("cash_transactions", ("amount",)),
     ("nakladnoy_payments", ("amount", "original_amount")),
     ("prixod_reports", ("total_cost", "total_price")),

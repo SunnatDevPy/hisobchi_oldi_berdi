@@ -2726,7 +2726,7 @@ async def cb_close_day_confirm(cb: CallbackQuery) -> None:
         if existing.session.status == "closed":
             await cb.answer("Bu kun allaqachon yopilgan!", show_alert=True)
             return
-        closed = await close_cash_session(db, sess_id, counted)
+        closed = await close_cash_session(db, sess_id, counted, user_id=cb.from_user.id)
         kassa_group = await get_group_config(db, "kassa")
 
     diff = closed.session.difference or 0

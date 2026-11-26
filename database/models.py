@@ -78,6 +78,31 @@ class DailyCashSession(Base):
     nakladnoy_payments: Mapped[List["NakladnoyPayment"]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
+    reconciliations: Mapped[List["CashReconciliation"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan"
+    )
+
+
+class CashReconciliation(Base):
+    """Interim or end-of-day cash reconciliation snapshot without mutating cash balance."""
+
+    __tablename__ = "cash_reconciliations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("daily_cash_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="interim", index=True)
+    expected_cash: Mapped[float] = mapped_column(MONEY, nullable=False)
+    counted_cash: Mapped[float] = mapped_column(MONEY, nullable=False)
+    difference: Mapped[float] = mapped_column(MONEY, nullable=False)
+    note: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    created_by: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    session: Mapped["DailyCashSession"] = relationship(back_populates="reconciliations")
 
 
 class CashTransaction(Base):

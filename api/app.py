@@ -44,6 +44,8 @@ from api.deps import (
 from api.schemas import (
     BotPrefsUpdateRequest,
     CashCreateRequest,
+    CashReconciliationCreateRequest,
+    CashReconciliationOut,
     CashTxOut,
     CashUpdateRequest,
     DayCloseRequest,
@@ -83,7 +85,9 @@ from database.crud import (
     close_cash_session,
     compute_session_summary,
     confirm_nakladnoy,
+    create_cash_reconciliation,
     create_pending_nakladnoy,
+    delete_cash_reconciliation,
     delete_cash_transaction,
     delete_group_config,
     delete_nakladnoy,
@@ -109,6 +113,7 @@ from database.crud import (
     get_supplier_debt_balances,
     get_supplier_sverka,
     list_all_sessions,
+    list_cash_reconciliations,
     list_prixod_reports,
     list_recent_cash_transactions,
     list_recent_nakladnoys,
@@ -136,7 +141,12 @@ from database.crud import (
     update_cash_transaction,
     update_nakladnoy,
 )
-from database.models import CashTransaction, DailyCashSession, NakladnoyPayment
+from database.models import (
+    CashReconciliation,
+    CashTransaction,
+    DailyCashSession,
+    NakladnoyPayment,
+)
 from database.session import async_session_maker
 from database.sync_state import get_sync_snapshot
 from services.backup import send_backup
@@ -156,6 +166,21 @@ _WEBAPP_NO_CACHE_FILES = {
 }
 _WEBAPP_NO_CACHE_HEADERS = {"Cache-Control": "no-cache, no-store, must-revalidate"}
 _WEBAPP_STATIC_CACHE_HEADERS = {"Cache-Control": "public, max-age=86400"}
+
+
+def _reconciliation_to_out(rec: CashReconciliation, report_date: str) -> CashReconciliationOut:
+    return CashReconciliationOut(
+        id=int(rec.id),
+        session_id=int(rec.session_id),
+        report_date=report_date,
+        kind=rec.kind,
+        expected_cash=float(rec.expected_cash),
+        counted_cash=float(rec.counted_cash),
+        difference=float(rec.difference),
+        note=rec.note or "",
+        created_at=format_local_dt(rec.created_at, "%Y-%m-%d %H:%M"),
+        time_hm=format_local_dt(rec.created_at, "%H:%M"),
+    )
 
 
 def _serialize_cash_tx(tx: CashTransaction) -> CashTxOut:
@@ -1341,6 +1366,51 @@ def create_api_app() -> FastAPI:
         total = sum(i.amount for i in items)
         return {"count": len(items), "total_amount": total, "items": items}
 
+    @app.get("/cash/reconciliations")
+    async def list_cash_reconciliations_endpoint(
+        session_id: Optional[int] = Query(default=None),
+        kind: Optional[str] = Query(default=None),
+        limit: int = Query(default=60, ge=1, le=200),
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        async with async_session_maker() as db:
+            rows = await list_cash_reconciliations(
+                db, session_id=session_id, kind=kind, limit=limit
+            )
+        items = [_reconciliation_to_out(rec, r_date) for rec, r_date in rows]
+        return {"count": len(items), "items": items}
+
+    @app.post("/cash/reconciliations", response_model=CashReconciliationOut)
+    async def create_interim_reconciliation_endpoint(
+        payload: CashReconciliationCreateRequest,
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> CashReconciliationOut:
+        async with async_session_maker() as db:
+            rec, r_date = await create_cash_reconciliation(
+                db,
+                counted_cash=payload.counted_cash,
+                kind="interim",
+                note=payload.note,
+                user_id=user.user_id,
+            )
+        return _reconciliation_to_out(rec, r_date)
+
+    @app.delete("/cash/reconciliations/{rec_id}")
+    async def delete_interim_reconciliation_endpoint(
+        rec_id: int,
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> dict:
+        async with async_session_maker() as db:
+            ok, reason = await delete_cash_reconciliation(db, rec_id)
+        if not ok:
+            if reason == "closing_protected":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Asosiy kun yopish sverkasini o'chirib bo'lmaydi",
+                )
+            raise HTTPException(status_code=404, detail="Sverka yozuvi topilmadi")
+        return {"ok": True, "deleted_id": rec_id}
+
     @app.post("/day/close", response_model=DayCloseResponse)
     async def close_day_endpoint(
         payload: DayCloseRequest,
@@ -1352,6 +1422,8 @@ def create_api_app() -> FastAPI:
                 db,
                 session_id=open_sess.id,
                 actual_counted_cash=payload.actual_counted_cash,
+                note=payload.note,
+                user_id=user.user_id,
             )
             next_sess = await get_or_create_open_session(db)
 

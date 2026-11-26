@@ -120,6 +120,25 @@ class StatusSummaryResponse(BaseModel):
 
 class DayCloseRequest(BaseModel):
     actual_counted_cash: float = Field(..., ge=0)
+    note: str = Field(default="", max_length=500)
+
+
+class CashReconciliationCreateRequest(BaseModel):
+    counted_cash: float = Field(..., ge=0)
+    note: str = Field(default="", max_length=500)
+
+
+class CashReconciliationOut(BaseModel):
+    id: int
+    session_id: int
+    report_date: str
+    kind: str
+    expected_cash: float
+    counted_cash: float
+    difference: float
+    note: str
+    created_at: str
+    time_hm: str
 
 
 class DayCloseResponse(BaseModel):

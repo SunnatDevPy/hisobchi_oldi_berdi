@@ -3907,9 +3907,14 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
     1000,
   ];
   final TextEditingController _countedCtrl = TextEditingController();
+  final TextEditingController _reconcileNoteCtrl = TextEditingController();
   final Map<int, int> _denomCounts = {};
   bool _showDenomCalc = false;
   bool _closing = false;
+  bool _savingInterim = false;
+  bool _loadingReconciliations = false;
+  List<CashReconciliationItem> _reconciliations = const [];
+  String _reconcileFilter = 'all'; // all | interim | closing
   String _selectedReportType = 'today'; // today | week | month | custom | sverka
   bool _downloadingExcel = false;
   bool _sendingExcelTelegram = false;
@@ -3927,7 +3932,28 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
         widget.presetCountedCash!.round().toString(),
       );
     }
+    SyncBus.remoteChangeTick.addListener(_onRemoteSync);
     _loadSecurityLock();
+    _loadReconciliations();
+  }
+
+  void _onRemoteSync() {
+    if (!mounted) return;
+    _loadReconciliations();
+  }
+
+  Future<void> _loadReconciliations() async {
+    if (_loadingReconciliations) return;
+    if (mounted) setState(() => _loadingReconciliations = true);
+    try {
+      final items = await widget.api.getCashReconciliations(limit: 60);
+      if (mounted) {
+        setState(() => _reconciliations = items);
+      }
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _loadingReconciliations = false);
+    }
   }
 
   @override
@@ -4066,8 +4092,58 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
 
   @override
   void dispose() {
+    SyncBus.remoteChangeTick.removeListener(_onRemoteSync);
     _countedCtrl.dispose();
+    _reconcileNoteCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _submitInterimReconciliation() async {
+    final counted = parseUzsInput(_countedCtrl.text);
+    if (counted == null || counted < 0) {
+      widget.showSnack("Qo'lda sanalgan haqiqiy pulni kiriting", isError: true);
+      return;
+    }
+    setState(() => _savingInterim = true);
+    try {
+      final rec = await widget.api.createInterimReconciliation(
+        countedCash: counted,
+        note: _reconcileNoteCtrl.text.trim(),
+      );
+      _countedCtrl.clear();
+      _reconcileNoteCtrl.clear();
+      _denomCounts.clear();
+      await _loadReconciliations();
+      if (!mounted) return;
+      final diffStr = rec.difference.abs() < 1
+          ? "Farq: 0 so'm"
+          : (rec.difference > 0
+              ? "Ortiqcha: +${formatUzs(rec.difference, withCurrency: true)}"
+              : "Kamomad: ${formatUzs(rec.difference, withCurrency: true)}");
+      showTopSlideNotification(
+        context,
+        title: "Oraliq sverka saqlandi (${rec.timeHm})",
+        subtitle:
+            "Sanalgan: ${formatUzs(rec.countedCash, withCurrency: true)} • $diffStr • Qo'ldagi pul o'zgarmadi",
+        tone: rec.difference < 0
+            ? TopNotifyTone.edit
+            : TopNotifyTone.success,
+      );
+    } catch (e) {
+      widget.showSnack(e.toString(), isError: true);
+    } finally {
+      if (mounted) setState(() => _savingInterim = false);
+    }
+  }
+
+  Future<void> _deleteInterimReconciliation(CashReconciliationItem item) async {
+    try {
+      await widget.api.deleteInterimReconciliation(item.id);
+      await _loadReconciliations();
+      widget.showSnack("Vaqtinchalik sverka o'chirildi");
+    } catch (e) {
+      widget.showSnack(e.toString(), isError: true);
+    }
   }
 
   Future<void> _submitCloseDay() async {
@@ -4078,11 +4154,17 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
     }
     setState(() => _closing = true);
     try {
-      final res = await widget.api.closeDay(counted);
-      _countedCtrl.clear();
-      widget.showSnack(
-        "🏁 Kun yakunlandi! Keyingi kunga qoldiq: ${formatUzs(res['next_opening_balance'] as num?, withCurrency: true)}",
+      final res = await widget.api.closeDay(
+        counted,
+        note: _reconcileNoteCtrl.text.trim(),
       );
+      _countedCtrl.clear();
+      _reconcileNoteCtrl.clear();
+      _denomCounts.clear();
+      widget.showSnack(
+        "🏁 Kun yakunlandi! Asosiy sverka saqlandi • Qoldiq: ${formatUzs(res['next_opening_balance'] as num?, withCurrency: true)}",
+      );
+      await _loadReconciliations();
       await widget.onClosed();
     } catch (e) {
       widget.showSnack(e.toString(), isError: true);
@@ -4228,9 +4310,9 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                     const SizedBox(width: 8),
                     const Expanded(
                       child: Text(
-                        'Smena yopish',
+                        'Kassa sverka va Smena yopish',
                         style: TextStyle(
-                            fontSize: 17, fontWeight: FontWeight.w900),
+                            fontSize: 16.5, fontWeight: FontWeight.w900),
                       ),
                     ),
                     ActionChip(
@@ -4421,17 +4503,103 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                     ),
                   ),
                 ],
-                const SizedBox(height: 16),
-                FilledButton.icon(
-                  onPressed:
-                      widget.api.canWrite && !_closing ? _submitCloseDay : null,
-                  icon: const Icon(Icons.check_circle_rounded),
-                  label: Text(_closing ? 'Yopilmoqda...' : 'Smenani yopish'),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _reconcileNoteCtrl,
+                  maxLength: 200,
+                  decoration: const InputDecoration(
+                    labelText: 'Izoh (ixtiyoriy)',
+                    prefixIcon: Icon(Icons.notes_rounded),
+                    counterText: '',
+                    isDense: true,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(
+                            color: AppTokens.brandSky.withValues(alpha: 0.65),
+                          ),
+                          foregroundColor: isDarkCtx(context)
+                              ? AppTokens.brandSky
+                              : AppTokens.cardBlue,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 12),
+                        ),
+                        onPressed: widget.api.canWrite &&
+                                !_savingInterim &&
+                                !_closing
+                            ? _submitInterimReconciliation
+                            : null,
+                        icon: _savingInterim
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.fact_check_rounded, size: 18),
+                        label: const FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            'Oraliq sverka',
+                            maxLines: 1,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 12),
+                        ),
+                        onPressed: widget.api.canWrite &&
+                                !_closing &&
+                                !_savingInterim
+                            ? _submitCloseDay
+                            : null,
+                        icon: _closing
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Icon(Icons.check_circle_rounded, size: 18),
+                        label: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            _closing ? 'Yopilmoqda...' : 'Smenani yopish',
+                            maxLines: 1,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  "Oraliq sverka (vaqtinchalik) qo'ldagi naqd pulni o'zgartirmaydi, faqat vaqt va farqni tarixga saqlaydi. Smenani yopganda esa asosiy sverka ham avtomatik saqlanadi.",
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: textSecondaryOf(context),
+                  ),
                 ),
               ],
             ),
           ),
         ),
+        const SizedBox(height: 14),
+
+        // 1B. KASSA SVERKALARI TARIXI (Oraliq & Asosiy)
+        _buildCashReconciliationsCard(),
         const SizedBox(height: 14),
 
         // 2. EXCEL HISOBOTLAR & SVERKA (With Dropdown Selector)
@@ -4767,6 +4935,115 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
     );
   }
 
+  Widget _buildCashReconciliationsCard() {
+    final visible = _reconciliations.where((r) {
+      if (_reconcileFilter == 'interim') return !r.isClosing;
+      if (_reconcileFilter == 'closing') return r.isClosing;
+      return true;
+    }).toList();
+
+    Widget filterChip(String key, String label) {
+      final sel = _reconcileFilter == key;
+      return ChoiceChip(
+        label: Text(label, style: const TextStyle(fontSize: 12)),
+        selected: sel,
+        visualDensity: VisualDensity.compact,
+        onSelected: (_) => setState(() => _reconcileFilter = key),
+      );
+    }
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.fact_check_rounded,
+                    color: AppTokens.brandSky),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Kassa sverkalari tarixi',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+                  ),
+                ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
+                  decoration: BoxDecoration(
+                    color: AppTokens.brand.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    '${_reconciliations.length}',
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w800,
+                      color: AppTokens.brand,
+                      fontFeatures: AppTokens.tabularNums,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Yangilash',
+                  visualDensity: VisualDensity.compact,
+                  onPressed:
+                      _loadingReconciliations ? null : _loadReconciliations,
+                  icon: _loadingReconciliations
+                      ? const SizedBox(
+                          width: 15,
+                          height: 15,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh_rounded, size: 19),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: [
+                filterChip('all', 'Barchasi'),
+                filterChip('interim', 'Oraliq'),
+                filterChip('closing', 'Asosiy'),
+              ],
+            ),
+            const SizedBox(height: 10),
+            if (visible.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(
+                  _reconciliations.isEmpty
+                      ? "Hozircha saqlangan kassa sverkasi yo'q."
+                      : "Tanlangan tur bo'yicha sverka topilmadi.",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    color: textSecondaryOf(context),
+                  ),
+                ),
+              )
+            else
+              ...visible.take(15).map(
+                    (item) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _CashReconciliationTile(
+                        item: item,
+                        onDelete: (!item.isClosing && widget.api.canWrite)
+                            ? () => _deleteInterimReconciliation(item)
+                            : null,
+                      ),
+                    ),
+                  ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _infoRow(String label, String val) {
     return Row(
       children: [
@@ -4782,6 +5059,146 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _CashReconciliationTile extends StatelessWidget {
+  final CashReconciliationItem item;
+  final VoidCallback? onDelete;
+
+  const _CashReconciliationTile({
+    required this.item,
+    this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isClosing = item.isClosing;
+    final kindBase = isClosing ? AppTokens.brandViolet : AppTokens.brandSky;
+    final (kindFg, kindBg, kindBorder) =
+        AppTokens.semanticSurface(context, kindBase);
+
+    final diff = item.difference;
+    final Color diffBase = diff.abs() < 1
+        ? AppTokens.cashGreen
+        : (diff > 0 ? AppTokens.cardBlue : AppTokens.dangerRed);
+    final (diffFg, diffBg, _) = AppTokens.semanticSurface(context, diffBase);
+    final diffText = diff.abs() < 1
+        ? "Farq: 0 so'm"
+        : (diff > 0
+            ? "+${formatUzs(diff, withCurrency: true)}"
+            : formatUzs(diff, withCurrency: true));
+
+    return Container(
+      padding: const EdgeInsets.all(11),
+      decoration: BoxDecoration(
+        color: isDarkCtx(context)
+            ? const Color(0xFF1A142B).withValues(alpha: 0.72)
+            : const Color(0xFFF8F6FD),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(
+          color: kindBorder.withValues(alpha: 0.65),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+                decoration: BoxDecoration(
+                  color: kindBg,
+                  borderRadius: BorderRadius.circular(7),
+                  border: Border.all(color: kindBorder),
+                ),
+                child: Text(
+                  isClosing ? 'Asosiy (kun yopish)' : 'Oraliq (vaqtinchalik)',
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w800,
+                    color: kindFg,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  '${item.reportDate} • ${item.timeHm}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    color: textSecondaryOf(context),
+                    fontFeatures: AppTokens.tabularNums,
+                  ),
+                ),
+              ),
+              if (onDelete != null)
+                IconButton(
+                  tooltip: "Vaqtinchalik sverkani o'chirish",
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints.tightFor(width: 28, height: 28),
+                  onPressed: onDelete,
+                  icon: Icon(
+                    Icons.delete_outline_rounded,
+                    size: 17,
+                    color: textSecondaryOf(context),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 7),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Sanalgan: ${formatUzs(item.countedCash, withCurrency: true)}',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                    color: textPrimaryOf(context),
+                    fontFeatures: AppTokens.tabularNums,
+                  ),
+                ),
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+                decoration: BoxDecoration(
+                  color: diffBg,
+                  borderRadius: BorderRadius.circular(7),
+                ),
+                child: Text(
+                  diffText,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w900,
+                    color: diffFg,
+                    fontFeatures: AppTokens.tabularNums,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 3),
+          Text(
+            'Kutilgan: ${formatUzs(item.expectedCash, withCurrency: true)}${item.note.isNotEmpty ? " • ${item.note}" : ""}',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11.5,
+              color: textSecondaryOf(context),
+              fontFeatures: AppTokens.tabularNums,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -7692,9 +8109,10 @@ class LiveSverkaAndStatsSheet extends StatefulWidget {
 }
 
 class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
-  String _mode = 'sverka'; // sverka | 7d | 30d
+  String _mode = 'sverka'; // sverka | cash | 7d | 30d
   DateTime _selectedMonth = DateTime(DateTime.now().year, DateTime.now().month);
   Map<String, dynamic>? _sverkaData;
+  List<CashReconciliationItem>? _cashReconciliations;
   Map<String, dynamic>? _periodData;
   bool _loading = true;
   bool _downloadingExcel = false;
@@ -7718,6 +8136,9 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
       if (_mode == 'sverka') {
         final d = await widget.api.getLiveSverka(month: _monthStr);
         if (mounted) setState(() => _sverkaData = d);
+      } else if (_mode == 'cash') {
+        final items = await widget.api.getCashReconciliations(limit: 80);
+        if (mounted) setState(() => _cashReconciliations = items);
       } else {
         final days = _mode == '7d' ? 7 : 30;
         final d = await widget.api.getPeriodStats(days: days);
@@ -7800,11 +8221,13 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
               const SizedBox(height: 8),
               Row(
                 children: [
-                  _modeChip('sverka', '🏢 Oylik Sverka'),
+                  _modeChip('sverka', '🏢 Oylik'),
                   const SizedBox(width: 6),
-                  _modeChip('7d', '📅 7 kunlik'),
+                  _modeChip('cash', '💰 Kassa'),
                   const SizedBox(width: 6),
-                  _modeChip('30d', '🗓 30 kunlik'),
+                  _modeChip('7d', '📅 7 kun'),
+                  const SizedBox(width: 6),
+                  _modeChip('30d', '🗓 30 kun'),
                 ],
               ),
               const SizedBox(height: 12),
@@ -7815,6 +8238,8 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
                 Expanded(child: Center(child: Text(_error!)))
               else if (_mode == 'sverka' && _sverkaData != null)
                 Expanded(child: _buildSverkaView(_sverkaData!))
+              else if (_mode == 'cash')
+                Expanded(child: _buildCashReconciliationsView())
               else if (_periodData != null)
                 Expanded(child: _buildPeriodView(_periodData!)),
             ],
@@ -7863,6 +8288,27 @@ class _LiveSverkaAndStatsSheetState extends State<LiveSverkaAndStatsSheet> {
                 ),
               ),
             ),
+    );
+  }
+
+  Widget _buildCashReconciliationsView() {
+    final items = _cashReconciliations ?? const <CashReconciliationItem>[];
+    if (items.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            "Hozircha saqlangan oraliq yoki asosiy kassa sverkasi yo'q.",
+            textAlign: TextAlign.center,
+            style: TextStyle(color: textSecondaryOf(context)),
+          ),
+        ),
+      );
+    }
+    return ListView.separated(
+      itemCount: items.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      itemBuilder: (_, i) => _CashReconciliationTile(item: items[i]),
     );
   }
 

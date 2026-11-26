@@ -1024,4 +1024,43 @@ void main() {
     await tester.pump();
     expect(tappedFilter, equals('cash'));
   });
+
+  test('CashReconciliationItem parses interim and closing sverka records accurately',
+      () {
+    final interim = CashReconciliationItem.fromJson({
+      'id': 7,
+      'session_id': 12,
+      'report_date': '2026-11-26',
+      'kind': 'interim',
+      'expected_cash': 1500000,
+      'counted_cash': 1480000,
+      'difference': -20000,
+      'note': 'Tushlik sverkasi',
+      'created_at': '2026-11-26 14:10',
+      'time_hm': '14:10',
+    });
+    expect(interim.id, equals(7));
+    expect(interim.isClosing, isFalse);
+    expect(interim.expectedCash, equals(1500000));
+    expect(interim.countedCash, equals(1480000));
+    expect(interim.difference, equals(-20000));
+    expect(interim.timeHm, equals('14:10'));
+    expect(interim.note, equals('Tushlik sverkasi'));
+
+    final closing = CashReconciliationItem.fromJson({
+      'id': 8,
+      'session_id': 12,
+      'report_date': '2026-11-26',
+      'kind': 'closing',
+      'expected_cash': 1500000,
+      'counted_cash': 1505000,
+      'difference': 5000,
+      'note': 'Kechki yopish',
+      'created_at': '2026-11-26 21:00',
+      'time_hm': '21:00',
+    });
+    expect(closing.isClosing, isTrue);
+    expect(closing.difference, equals(5000));
+    expect(closing.timeHm, equals('21:00'));
+  });
 }

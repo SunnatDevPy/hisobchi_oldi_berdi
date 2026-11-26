@@ -16,6 +16,7 @@ from sqlalchemy.orm import ORMExecuteState, Session
 SYNC_TRACKED_TABLES: frozenset[str] = frozenset(
     {
         "daily_cash_sessions",
+        "cash_reconciliations",
         "cash_transactions",
         "nakladnoy_payments",
         "supplier_debts",
