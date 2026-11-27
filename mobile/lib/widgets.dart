@@ -220,7 +220,7 @@ class FloatingGlassBottomNav extends StatelessWidget {
                                                             child:
                                                                 Figma3DIconBadge(
                                                               asset: d.asset3d!,
-                                                              size: 23,
+                                                              size: 27,
                                                               fallbackIcon:
                                                                   isSelected
                                                                       ? d.selectedIcon
@@ -410,14 +410,14 @@ class HeroBalanceCard extends StatelessWidget {
             ),
             // Subtle floating 3D Bank emblem in top-right hero atmosphere
             Positioned(
-              right: 14,
-              top: 52,
+              right: 12,
+              top: 46,
               child: IgnorePointer(
                 child: Opacity(
-                  opacity: 0.20,
+                  opacity: 0.26,
                   child: Figma3DIconBadge(
                     asset: Figma3DIcons.bank,
-                    size: 56,
+                    size: 68,
                     fallbackIcon: Icons.account_balance_rounded,
                   ),
                 ),
@@ -523,7 +523,7 @@ class HeroBalanceCard extends StatelessWidget {
                     children: [
                       const Figma3DIconBadge(
                         asset: Figma3DIcons.bag,
-                        size: 28,
+                        size: 32,
                         fallbackIcon: Icons.account_balance_wallet_rounded,
                         glowColor: Color(0xFFF5C443),
                       ),
@@ -865,7 +865,7 @@ class _HeroActionBtn extends StatelessWidget {
                   if (asset3d != null)
                     Figma3DIconBadge(
                       asset: asset3d!,
-                      size: 30,
+                      size: 36,
                       fallbackIcon: icon,
                       glowColor: accent,
                     )
@@ -1714,7 +1714,7 @@ class _GlowingDistributionCard extends StatelessWidget {
             children: [
               const Figma3DIconBadge(
                 asset: Figma3DIcons.charts,
-                size: 36,
+                size: 40,
                 fallbackIcon: Icons.equalizer_rounded,
               ),
               const SizedBox(width: 10),
@@ -2107,7 +2107,7 @@ class _TrendLineStatisticsCard extends StatelessWidget {
             children: [
               const Figma3DIconBadge(
                 asset: Figma3DIcons.exchange,
-                size: 36,
+                size: 40,
                 fallbackIcon: Icons.bar_chart_rounded,
               ),
               const SizedBox(width: 10),
@@ -3127,7 +3127,7 @@ class _PaymentKpiCard extends StatelessWidget {
                             if (asset3d != null)
                               Figma3DIconBadge(
                                 asset: asset3d!,
-                                size: 22,
+                                size: 28,
                                 fallbackIcon: icon,
                                 glowColor: color,
                               )

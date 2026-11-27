@@ -3281,7 +3281,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                 if (asset3d != null)
                   Figma3DIconBadge(
                     asset: asset3d,
-                    size: 26,
+                    size: 30,
                     fallbackIcon: icon,
                     glowColor: accent,
                   )

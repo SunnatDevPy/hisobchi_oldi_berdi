@@ -211,8 +211,8 @@ class Figma3DIcons {
   static const String shield = 'assets/icons3d/shield.png';
 }
 
-/// Renders a 3D Finance & Banking icon from Figma inside a rounded squircle tile
-/// matching the Figma `rounded-[44px]` (`44/300`) icon geometry with subtle depth glow.
+/// Renders a cutout transparent 3D Finance & Banking icon floating directly
+/// on the UI without any white box or square frame behind it.
 class Figma3DIconBadge extends StatelessWidget {
   final String asset;
   final double size;
@@ -222,43 +222,27 @@ class Figma3DIconBadge extends StatelessWidget {
   const Figma3DIconBadge({
     super.key,
     required this.asset,
-    this.size = 34,
+    this.size = 38,
     this.fallbackIcon = Icons.auto_awesome_rounded,
     this.glowColor,
   });
 
   @override
   Widget build(BuildContext context) {
-    final radius = BorderRadius.circular(size * 0.22);
     final glow = glowColor ?? AppTokens.brandViolet;
-    return Container(
+    return SizedBox(
       width: size,
       height: size,
-      decoration: BoxDecoration(
-        borderRadius: radius,
-        boxShadow: [
-          BoxShadow(
-            color: glow.withValues(alpha: 0.24),
-            blurRadius: size * 0.32,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: radius,
-        child: Image.asset(
-          asset,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          filterQuality: FilterQuality.high,
-          errorBuilder: (_, __, ___) => Container(
-            width: size,
-            height: size,
-            color: glow.withValues(alpha: 0.18),
-            alignment: Alignment.center,
-            child: Icon(fallbackIcon, size: size * 0.56, color: glow),
-          ),
+      child: Image.asset(
+        asset,
+        width: size,
+        height: size,
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.high,
+        errorBuilder: (_, __, ___) => Icon(
+          fallbackIcon,
+          size: size * 0.65,
+          color: glow,
         ),
       ),
     );
