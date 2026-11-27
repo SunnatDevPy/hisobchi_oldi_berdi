@@ -3873,3 +3873,158 @@ def test_reconciliation_history_totals_and_cashflow_snapshots(tmp_path: Path, mo
         api_auth_mod.clear_auth_memory_state()
         clear_role_cache()
         get_settings.cache_clear()
+
+
+
+def test_supplier_merge_undo_and_split(tmp_path: Path, monkeypatch) -> None:
+    """Accidental supplier merges can be undone 1-tap OR manually split back out cleanly."""
+    import httpx
+    import api.app as api_app_mod
+    import api.auth as api_auth_mod
+    import api.deps as api_deps_mod
+    from bot.auth import clear_role_cache
+    from config import get_settings
+    from database.crud import add_supplier_debt, resolve_supplier_name
+
+    monkeypatch.setenv("ADMIN_IDS", "111")
+    monkeypatch.setenv("ALLOWED_USERS", "111")
+    get_settings.cache_clear()
+    clear_role_cache()
+    api_auth_mod.clear_auth_memory_state()
+
+    async def scenario() -> None:
+        db_file = tmp_path / "test_merge_undo_split.db"
+        eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+        await init_db(engine_override=eng, session_maker_override=maker)
+        monkeypatch.setattr(api_auth_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_deps_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_app_mod, "async_session_maker", maker)
+
+        try:
+            async with maker() as db:
+                await get_or_create_open_session(db, report_date="2026-11-27")
+                p_nafis = await create_pending_nakladnoy(db, supplier_name="Nafis", amount=500_000)
+                await confirm_nakladnoy(db, p_nafis.id)
+                p_alisher = await create_pending_nakladnoy(db, supplier_name="Alisher", amount=320_000)
+                await confirm_nakladnoy(db, p_alisher.id)
+                d_alisher = await add_supplier_debt(
+                    db, supplier_name="Alisher", entry_type="debt", amount=150_000, note="Qarz"
+                )
+                nafis_id, alisher_id, debt_id = int(p_nafis.id), int(p_alisher.id), int(d_alisher.id)
+
+            app = api_app_mod.create_api_app()
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                code = api_auth_mod.create_login_code(111)
+                tok = (await client.post("/auth/login", json={"code": code})).json()["access_token"]
+                headers = {"Authorization": f"Bearer {tok}"}
+
+                # 1. Accidentally merge Alisher into Nafis
+                r_merge = await client.post(
+                    "/suppliers/merge",
+                    json={"target_name": "Nafis", "source_names": ["Nafis", "Alisher"]},
+                    headers=headers,
+                )
+                assert r_merge.status_code == 200
+                mj = r_merge.json()
+                assert mj["merge_id"] > 0
+                assert mj["updated_nakladnoys"] == 1
+                assert mj["updated_debts"] == 1
+                assert "Alisher" in mj["aliases"]
+
+                # 2. Merge history lists this merge
+                r_hist = await client.get("/suppliers/merge-history", headers=headers)
+                assert r_hist.status_code == 200
+                hist = r_hist.json()["items"]
+                assert len(hist) == 1
+                assert hist[0]["id"] == mj["merge_id"]
+                assert hist[0]["target_name"] == "Nafis"
+
+                # 3. 1-tap Undo restores Alisher's check, debt, and removes alias
+                r_undo = await client.post(
+                    f"/suppliers/merge/{mj['merge_id']}/undo",
+                    headers=headers,
+                )
+                assert r_undo.status_code == 200
+                uj = r_undo.json()
+                assert uj["restored_nakladnoys"] == 1
+                assert uj["restored_debts"] == 1
+
+                # Merge history is now empty
+                r_hist2 = await client.get("/suppliers/merge-history", headers=headers)
+                assert r_hist2.json()["items"] == []
+
+                # Verify Alisher & Nafis are separated again
+                r_prof_a = await client.get(
+                    "/suppliers/profile", params={"supplier": "Alisher"}, headers=headers
+                )
+                assert r_prof_a.status_code == 200
+                assert r_prof_a.json()["total_count"] == 1
+                assert len(r_prof_a.json()["nasiya_entries"]) == 1
+
+                # 4. Now test manual SPLIT (for merges that happened before merge history existed)
+                r_merge2 = await client.post(
+                    "/suppliers/merge",
+                    json={"target_name": "Nafis", "source_names": ["Nafis", "Alisher"]},
+                    headers=headers,
+                )
+                assert r_merge2.status_code == 200
+
+                r_prof_n = await client.get(
+                    "/suppliers/profile", params={"supplier": "Nafis"}, headers=headers
+                )
+                prof_n = r_prof_n.json()
+                assert prof_n["total_count"] == 2
+                assert len(prof_n["nasiya_entries"]) == 1
+                assert "Alisher" in prof_n["aliases"]
+
+                # Extract Alisher's check + debt back out of Nafis and remove alias
+                r_split = await client.post(
+                    "/suppliers/split",
+                    json={
+                        "from_supplier": "Nafis",
+                        "new_supplier_name": "Alisher",
+                        "payment_ids": [alisher_id],
+                        "debt_ids": [debt_id],
+                        "remove_aliases": ["Alisher"],
+                    },
+                    headers=headers,
+                )
+                assert r_split.status_code == 200
+                sj = r_split.json()
+                assert sj["moved_nakladnoys"] == 1
+                assert sj["moved_debts"] == 1
+                assert "Alisher" not in sj["remaining_aliases"]
+
+                # Nafis keeps only its own 1 check (500k) and 0 nasiya entries
+                r_prof_n2 = await client.get(
+                    "/suppliers/profile", params={"supplier": "Nafis"}, headers=headers
+                )
+                assert r_prof_n2.json()["total_count"] == 1
+                assert r_prof_n2.json()["total_amount"] == 500_000.0
+                assert r_prof_n2.json()["nasiya_entries"] == []
+
+                # Alisher now has its 1 check (320k) + 1 nasiya entry (150k)
+                r_prof_a2 = await client.get(
+                    "/suppliers/profile", params={"supplier": "Alisher"}, headers=headers
+                )
+                assert r_prof_a2.json()["total_count"] == 1
+                assert r_prof_a2.json()["total_amount"] == 320_000.0
+                assert len(r_prof_a2.json()["nasiya_entries"]) == 1
+
+                # Future entry named "Alisher" must NOT auto-resolve back to "Nafis"
+                async with maker() as db:
+                    resolved, _ = await resolve_supplier_name(db, "Alisher")
+                    assert resolved == "Alisher"
+                    resolved_n, _ = await resolve_supplier_name(db, "Nafis")
+                    assert resolved_n == "Nafis"
+                    assert nafis_id != alisher_id
+        finally:
+            await eng.dispose()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        api_auth_mod.clear_auth_memory_state()
+        clear_role_cache()
+        get_settings.cache_clear()

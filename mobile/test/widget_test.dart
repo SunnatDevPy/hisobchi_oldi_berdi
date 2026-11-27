@@ -1660,4 +1660,218 @@ void main() {
     expect(item.countedCash, equals(3460000));
     expect(item.difference, equals(60000));
   });
+
+  testWidgets(
+      'SplitSupplierSheet picks alias chip, selects check/debt, and submits POST /suppliers/split',
+      (WidgetTester tester) async {
+    Map<String, dynamic>? splitPayload;
+    final mockHttp = MockClient((req) async {
+      if (req.url.path == '/suppliers/profile') {
+        return http.Response.bytes(
+          utf8.encode(jsonEncode({
+            'supplier_name': 'Nafis',
+            'aliases': ['Alisher', 'нафис'],
+            'total_count': 2,
+            'total_amount': 820000,
+            'items': [
+              {
+                'id': 101,
+                'session_id': 1,
+                'display_num': '#1',
+                'supplier_name': 'Nafis',
+                'amount': 500000,
+                'payment_method': 'cash',
+                'is_debt': false,
+                'note': 'Nafis chek',
+                'has_photo': false,
+                'in_group': false,
+                'created_at': '2026-11-27 10:00',
+                'time_hm': '10:00',
+                'report_date': '2026-11-27',
+              },
+              {
+                'id': 102,
+                'session_id': 1,
+                'display_num': '#2',
+                'supplier_name': 'Nafis',
+                'amount': 320000,
+                'payment_method': 'cash',
+                'is_debt': false,
+                'note': 'Alisher chek',
+                'has_photo': false,
+                'in_group': false,
+                'created_at': '2026-11-27 11:00',
+                'time_hm': '11:00',
+                'report_date': '2026-11-27',
+              },
+            ],
+            'nasiya_entries': [
+              {
+                'id': 55,
+                'supplier_name': 'Nafis',
+                'entry_type': 'debt',
+                'amount': 150000,
+                'note': 'Alisher qarzi',
+                'created_at': '2026-11-27 11:05',
+              },
+            ],
+          })),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      }
+      if (req.url.path == '/suppliers/split' && req.method == 'POST') {
+        splitPayload = jsonDecode(req.body) as Map<String, dynamic>;
+        return http.Response.bytes(
+          utf8.encode(jsonEncode({
+            'ok': true,
+            'from_supplier': 'Nafis',
+            'new_supplier_name': 'Alisher',
+            'moved_nakladnoys': 1,
+            'moved_debts': 1,
+            'remaining_aliases': ['нафис'],
+          })),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      }
+      return http.Response('{}', 200);
+    });
+
+    final api = HisobchiApiClient(
+      baseUrl: 'https://hisobchi.okaposai.uz',
+      accessToken: 'tok',
+      httpClient: mockHttp,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: Scaffold(
+          body: SplitSupplierSheet(
+            api: api,
+            fromSupplier: 'Nafis',
+            initialAliases: const ['Alisher', 'нафис'],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Tap alias chip "Alisher"
+    expect(find.text('Alisher'), findsOneWidget);
+    await tester.tap(find.text('Alisher'));
+    await tester.pumpAndSettle();
+
+    // Select Alisher's check (#102) and nasiya entry (#55)
+    final checkFinder = find.textContaining('Alisher chek');
+    await tester.ensureVisible(checkFinder);
+    await tester.pumpAndSettle();
+    await tester.tap(checkFinder);
+    await tester.pumpAndSettle();
+
+    final debtFinder = find.textContaining('Alisher qarzi');
+    await tester.scrollUntilVisible(
+      debtFinder,
+      150,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.ensureVisible(debtFinder);
+    await tester.pumpAndSettle();
+    await tester.tap(debtFinder);
+    await tester.pumpAndSettle();
+
+    // Submit split
+    await tester.tap(find.textContaining('Ajratib chiqarish (2 ta'));
+    await tester.pumpAndSettle();
+
+    expect(splitPayload, isNotNull);
+    expect(splitPayload!['from_supplier'], equals('Nafis'));
+    expect(splitPayload!['new_supplier_name'], equals('Alisher'));
+    expect(splitPayload!['payment_ids'], equals([102]));
+    expect(splitPayload!['debt_ids'], equals([55]));
+    expect(splitPayload!['remove_aliases'], equals(['Alisher']));
+
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+      'MergeSuppliersSheet shows recent merge history and calls POST /suppliers/merge/{id}/undo',
+      (WidgetTester tester) async {
+    int? undoneMergeId;
+    var historyItems = <Map<String, dynamic>>[
+      {
+        'id': 77,
+        'target_name': 'Nafis',
+        'merged_sources': ['Nafis', 'Alisher'],
+        'updated_nakladnoys': 2,
+        'updated_debts': 1,
+        'is_reverted': false,
+        'created_at': '2026-11-27 11:30',
+      },
+    ];
+    final mockHttp = MockClient((req) async {
+      if (req.url.path == '/suppliers/merge-history') {
+        return http.Response(
+          jsonEncode({'count': historyItems.length, 'items': historyItems}),
+          200,
+        );
+      }
+      if (req.url.path == '/suppliers/merge/77/undo' && req.method == 'POST') {
+        undoneMergeId = 77;
+        historyItems = [];
+        return http.Response(
+          jsonEncode({
+            'ok': true,
+            'merge_id': 77,
+            'target_name': 'Nafis',
+            'restored_nakladnoys': 2,
+            'restored_debts': 1,
+          }),
+          200,
+        );
+      }
+      if (req.url.path == '/suppliers/directory') {
+        return http.Response(
+          jsonEncode({'duplicate_groups': [], 'suppliers': []}),
+          200,
+        );
+      }
+      return http.Response('{}', 200);
+    });
+
+    final api = HisobchiApiClient(
+      baseUrl: 'https://hisobchi.okaposai.uz',
+      accessToken: 'tok',
+      httpClient: mockHttp,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: Scaffold(
+          body: MergeSuppliersSheet(
+            api: api,
+            initialSuppliers: const [],
+            initialDuplicateGroups: const [],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.text('Bekor qilish'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.textContaining('Nafis, Alisher → Nafis'), findsOneWidget);
+    await tester.tap(find.text('Bekor qilish'));
+    await tester.pumpAndSettle();
+
+    expect(undoneMergeId, equals(77));
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+  });
 }

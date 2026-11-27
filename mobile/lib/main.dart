@@ -11167,9 +11167,11 @@ class _MergeSuppliersSheetState extends State<MergeSuppliersSheet> {
   final TextEditingController _filterCtrl = TextEditingController();
   List<Map<String, dynamic>> _suppliers = [];
   List<Map<String, dynamic>> _duplicateGroups = [];
+  List<Map<String, dynamic>> _mergeHistory = [];
   final Set<String> _selectedSources = {};
   bool _loading = true;
   bool _merging = false;
+  int? _undoingMergeId;
   bool _anyMerged = false;
 
   @override
@@ -11185,6 +11187,7 @@ class _MergeSuppliersSheetState extends State<MergeSuppliersSheet> {
       _duplicateGroups =
           List<Map<String, dynamic>>.from(widget.initialDuplicateGroups!);
       _loading = false;
+      _loadMergeHistoryOnly();
     } else {
       _load();
     }
@@ -11198,10 +11201,24 @@ class _MergeSuppliersSheetState extends State<MergeSuppliersSheet> {
     super.dispose();
   }
 
+  Future<void> _loadMergeHistoryOnly() async {
+    try {
+      final hist = await widget.api.getSupplierMergeHistory();
+      if (!mounted) return;
+      setState(() => _mergeHistory = hist);
+    } catch (_) {
+      // Non-critical: older servers or mocked tests may omit merge-history
+    }
+  }
+
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
       final dir = await widget.api.getSuppliersDirectory();
+      List<Map<String, dynamic>> hist = [];
+      try {
+        hist = await widget.api.getSupplierMergeHistory();
+      } catch (_) {}
       if (!mounted) return;
       setState(() {
         _suppliers = ((dir['suppliers'] as List?) ?? const [])
@@ -11212,6 +11229,7 @@ class _MergeSuppliersSheetState extends State<MergeSuppliersSheet> {
             .whereType<Map>()
             .map((e) => Map<String, dynamic>.from(e))
             .toList();
+        _mergeHistory = hist;
         _loading = false;
       });
     } catch (e) {
@@ -11224,6 +11242,45 @@ class _MergeSuppliersSheetState extends State<MergeSuppliersSheet> {
           tone: TopNotifyTone.error,
         );
       }
+    }
+  }
+
+  Future<void> _undoMerge(Map<String, dynamic> entry) async {
+    final mergeId = ((entry['id'] as num?) ?? 0).toInt();
+    if (mergeId <= 0) return;
+    final targetName = (entry['target_name'] ?? '').toString();
+    final sources = ((entry['merged_sources'] as List?) ?? const [])
+        .map((e) => e.toString())
+        .toList();
+    setState(() => _undoingMergeId = mergeId);
+    try {
+      final res = await widget.api.undoSupplierMerge(mergeId);
+      _anyMerged = true;
+      SyncBus.notifyRemoteChange();
+      final restNak = ((res['restored_nakladnoys'] as num?) ?? 0).toInt();
+      final restDebt = ((res['restored_debts'] as num?) ?? 0).toInt();
+      if (mounted) {
+        showTopSlideNotification(
+          context,
+          title: 'Birlashtirish bekor qilindi',
+          subtitle:
+              '${sources.join(', ')} ↩ $targetName • Cheklar: $restNak ta • Qarzlar: $restDebt ta',
+          tone: TopNotifyTone.success,
+          icon: Icons.undo_rounded,
+        );
+        await _load();
+      }
+    } catch (e) {
+      if (mounted) {
+        showTopSlideNotification(
+          context,
+          title: 'Bekor qilishda xatolik',
+          subtitle: e.toString(),
+          tone: TopNotifyTone.error,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _undoingMergeId = null);
     }
   }
 
@@ -11544,9 +11601,669 @@ class _MergeSuppliersSheetState extends State<MergeSuppliersSheet> {
                               : 'Birlashtirish va saqlash',
                         ),
                       ),
+                      if (_mergeHistory.isNotEmpty) ...[
+                        const Divider(height: 26),
+                        Row(
+                          children: [
+                            const Icon(Icons.history_rounded,
+                                size: 18, color: AppTokens.brandViolet),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                "So'nggi birlashtirishlar (${_mergeHistory.length} ta)",
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        ..._mergeHistory.map((m) {
+                          final mid = ((m['id'] as num?) ?? 0).toInt();
+                          final tName = (m['target_name'] ?? '').toString();
+                          final srcs = ((m['merged_sources'] as List?) ?? const [])
+                              .map((e) => e.toString())
+                              .where((e) => e.trim().isNotEmpty)
+                              .toList();
+                          final nakCnt =
+                              ((m['updated_nakladnoys'] as num?) ?? 0).toInt();
+                          final debtCnt =
+                              ((m['updated_debts'] as num?) ?? 0).toInt();
+                          final created = (m['created_at'] ?? '').toString();
+                          final isUndoing = _undoingMergeId == mid;
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.all(11),
+                            decoration: BoxDecoration(
+                              color: isDarkCtx(context)
+                                  ? Colors.white.withValues(alpha: 0.05)
+                                  : Colors.black.withValues(alpha: 0.03),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: Theme.of(context)
+                                    .dividerColor
+                                    .withValues(alpha: 0.35),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '${srcs.join(', ')} → $tName',
+                                        style: const TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        'Cheklar: $nakCnt ta • Qarzlar: $debtCnt ta${created.isNotEmpty ? ' • $created' : ''}',
+                                        style: TextStyle(
+                                          fontSize: 11.5,
+                                          color: textSecondaryOf(context),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                OutlinedButton.icon(
+                                  style: OutlinedButton.styleFrom(
+                                    visualDensity: VisualDensity.compact,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 6),
+                                  ),
+                                  onPressed: (_undoingMergeId != null || _merging)
+                                      ? null
+                                      : () => _undoMerge(m),
+                                  icon: isUndoing
+                                      ? const SizedBox(
+                                          width: 14,
+                                          height: 14,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2),
+                                        )
+                                      : const Icon(Icons.undo_rounded,
+                                          size: 16),
+                                  label: const Text('Bekor qilish'),
+                                ),
+                              ],
+                            ),
+                          );
+                        }),
+                      ],
                     ],
                   ),
                 ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// SPLIT / EXTRACT SUPPLIER SHEET (/suppliers/split)
+// ============================================================================
+
+class SplitSupplierSheet extends StatefulWidget {
+  final HisobchiApiClient api;
+  final String fromSupplier;
+  final List<String> initialAliases;
+
+  const SplitSupplierSheet({
+    super.key,
+    required this.api,
+    required this.fromSupplier,
+    this.initialAliases = const [],
+  });
+
+  @override
+  State<SplitSupplierSheet> createState() => _SplitSupplierSheetState();
+}
+
+class _SplitSupplierSheetState extends State<SplitSupplierSheet> {
+  final TextEditingController _newNameCtrl = TextEditingController();
+  final TextEditingController _searchCtrl = TextEditingController();
+  List<String> _aliases = [];
+  List<NakladnoyItem> _items = [];
+  List<Map<String, dynamic>> _nasiyaEntries = [];
+  final Set<int> _selectedPaymentIds = {};
+  final Set<int> _selectedDebtIds = {};
+  bool _removeFromAliases = true;
+  bool _loading = true;
+  bool _submitting = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _aliases = List<String>.from(widget.initialAliases);
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _newNameCtrl.dispose();
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final prof = await widget.api.getSupplierProfile(
+        widget.fromSupplier,
+        limit: 200,
+      );
+      if (!mounted) return;
+      final loadedAliases = ((prof['aliases'] as List?) ?? const [])
+          .map((e) => e.toString())
+          .where((e) => e.trim().isNotEmpty)
+          .toList();
+      final loadedItems = ((prof['items'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => NakladnoyItem.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+      final loadedNasiya = ((prof['nasiya_entries'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      setState(() {
+        _aliases = loadedAliases;
+        _items = loadedItems;
+        _nasiyaEntries = loadedNasiya;
+        _loading = false;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _submit() async {
+    final newName = _newNameCtrl.text.trim();
+    if (newName.isEmpty) {
+      showTopSlideNotification(
+        context,
+        title: "Ajratiladigan ta'minotchi nomini kiriting",
+        tone: TopNotifyTone.error,
+      );
+      return;
+    }
+    if (newName.toLowerCase() == widget.fromSupplier.trim().toLowerCase()) {
+      showTopSlideNotification(
+        context,
+        title: "Yangi nom joriy nomdan farqli bo'lishi kerak",
+        tone: TopNotifyTone.error,
+      );
+      return;
+    }
+    final removeAliasList = _removeFromAliases ? <String>[newName] : <String>[];
+    final hasMatchingAlias = _aliases
+        .any((a) => a.trim().toLowerCase() == newName.toLowerCase());
+    if (_selectedPaymentIds.isEmpty &&
+        _selectedDebtIds.isEmpty &&
+        !(hasMatchingAlias && _removeFromAliases)) {
+      showTopSlideNotification(
+        context,
+        title: "Kamida 1 ta chek/qarz tanlang yoki mavjud taxallusni bosing",
+        tone: TopNotifyTone.error,
+      );
+      return;
+    }
+
+    setState(() => _submitting = true);
+    try {
+      final res = await widget.api.splitSupplier(
+        fromSupplier: widget.fromSupplier,
+        newSupplierName: newName,
+        paymentIds: _selectedPaymentIds.toList(),
+        debtIds: _selectedDebtIds.toList(),
+        removeAliases: removeAliasList,
+      );
+      SyncBus.notifyRemoteChange();
+      final movedNak = ((res['moved_nakladnoys'] as num?) ?? 0).toInt();
+      final movedDebt = ((res['moved_debts'] as num?) ?? 0).toInt();
+      if (mounted) {
+        showTopSlideNotification(
+          context,
+          title: 'Ajratib chiqarildi: $newName',
+          subtitle:
+              '«${widget.fromSupplier}» dan ko\'chirildi • Cheklar: $movedNak ta • Qarzlar: $movedDebt ta',
+          tone: TopNotifyTone.success,
+          icon: Icons.call_split_rounded,
+        );
+        Navigator.pop(context, true);
+      }
+    } catch (e) {
+      if (mounted) {
+        showTopSlideNotification(
+          context,
+          title: 'Ajratishda xatolik',
+          subtitle: e.toString(),
+          tone: TopNotifyTone.error,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final q = _searchCtrl.text.trim().toLowerCase();
+    final filteredItems = _items.where((it) {
+      if (q.isEmpty) return true;
+      final amtStr = it.amount.toStringAsFixed(0);
+      return (it.reportDate ?? '').toLowerCase().contains(q) ||
+          it.createdAt.toLowerCase().contains(q) ||
+          it.note.toLowerCase().contains(q) ||
+          amtStr.contains(q);
+    }).toList();
+    final filteredNasiya = _nasiyaEntries.where((n) {
+      if (q.isEmpty) return true;
+      final amtStr = ((n['amount'] as num?) ?? 0).toStringAsFixed(0);
+      return (n['note'] ?? '').toString().toLowerCase().contains(q) ||
+          (n['created_at'] ?? '').toString().toLowerCase().contains(q) ||
+          amtStr.contains(q);
+    }).toList();
+
+    final selectedSum = _items
+        .where((it) => _selectedPaymentIds.contains(it.id))
+        .fold<double>(0.0, (s, it) => s + it.amount);
+    final selectedTotalCount =
+        _selectedPaymentIds.length + _selectedDebtIds.length;
+
+    return SafeArea(
+      top: false,
+      maintainBottomViewPadding: true,
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 4,
+          bottom: sheetBottomPadding(context),
+        ),
+        child: SizedBox(
+          height: sheetMaxHeight(context, fraction: 0.90),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.call_split_rounded,
+                      color: AppTokens.brandViolet, size: 22),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Ajratib chiqarish',
+                          style: TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.w900),
+                        ),
+                        Text(
+                          '«${widget.fromSupplier}» dan boshqa odamni chiqarish',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: textSecondaryOf(context),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (_loading)
+                const Expanded(
+                    child: Center(child: CircularProgressIndicator()))
+              else if (_error != null)
+                Expanded(
+                  child: Center(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(_error!, textAlign: TextAlign.center),
+                          const SizedBox(height: 12),
+                          FilledButton.icon(
+                            onPressed: _load,
+                            icon: const Icon(Icons.refresh_rounded),
+                            label: const Text('Qayta urinish'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                )
+              else ...[
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    children: [
+                      TextField(
+                        controller: _newNameCtrl,
+                        onChanged: (_) => setState(() {}),
+                        decoration: const InputDecoration(
+                          labelText: "Ajratiladigan ta'minotchi nomi",
+                          hintText: 'Masalan: Alisher',
+                          prefixIcon: Icon(Icons.person_add_alt_1_rounded),
+                          isDense: true,
+                        ),
+                      ),
+                      if (_aliases.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          'Mavjud taxallusdan tanlash (1 bosish):',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: textSecondaryOf(context),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: _aliases.map((al) {
+                            final isPicked =
+                                _newNameCtrl.text.trim().toLowerCase() ==
+                                    al.toLowerCase();
+                            return ChoiceChip(
+                              selected: isPicked,
+                              visualDensity: VisualDensity.compact,
+                              label: Text(
+                                al,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              onSelected: (_) {
+                                setState(() {
+                                  _newNameCtrl.text = al;
+                                  _removeFromAliases = true;
+                                });
+                              },
+                            );
+                          }).toList(),
+                        ),
+                      ],
+                      const SizedBox(height: 4),
+                      CheckboxListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        value: _removeFromAliases,
+                        onChanged: (v) =>
+                            setState(() => _removeFromAliases = v ?? true),
+                        title: Text(
+                          'Bu nomni «${widget.fromSupplier}» taxalluslaridan olib tashlash',
+                          style: const TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        subtitle: Text(
+                          "Olib tashlanmasa, keyingi cheklar yana avtomatik birlashib qoladi",
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: textSecondaryOf(context),
+                          ),
+                        ),
+                      ),
+                      const Divider(height: 18),
+                      TextField(
+                        controller: _searchCtrl,
+                        onChanged: (_) => setState(() {}),
+                        decoration: const InputDecoration(
+                          hintText: 'Summa, sana yoki izoh bo\'yicha qidirish...',
+                          prefixIcon: Icon(Icons.search_rounded),
+                          isDense: true,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Cheklar (${filteredItems.length} ta) • Tanlandi: $selectedTotalCount ta',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                          if (filteredItems.isNotEmpty)
+                            TextButton(
+                              style: TextButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 8),
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  final allSel = filteredItems.every((it) =>
+                                      _selectedPaymentIds.contains(it.id));
+                                  if (allSel) {
+                                    for (final it in filteredItems) {
+                                      _selectedPaymentIds.remove(it.id);
+                                    }
+                                  } else {
+                                    for (final it in filteredItems) {
+                                      _selectedPaymentIds.add(it.id);
+                                    }
+                                  }
+                                });
+                              },
+                              child: Text(
+                                filteredItems.every((it) =>
+                                        _selectedPaymentIds.contains(it.id))
+                                    ? 'Tozalash'
+                                    : 'Barchasi',
+                              ),
+                            ),
+                        ],
+                      ),
+                      if (filteredItems.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          child: Text(
+                            'Nakladnoy cheklar topilmadi.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              color: textSecondaryOf(context),
+                            ),
+                          ),
+                        )
+                      else
+                        ...filteredItems.map((it) {
+                          final checked = _selectedPaymentIds.contains(it.id);
+                          final pmLabel = it.isDebt
+                              ? 'Qarzga'
+                              : it.paymentMethod == 'card'
+                                  ? 'Karta'
+                                  : it.paymentMethod == 'transfer'
+                                      ? "O'tkazma"
+                                      : 'Naqd';
+                          final dateLbl = (it.reportDate != null &&
+                                  it.reportDate!.isNotEmpty)
+                              ? '${it.reportDate} ${it.timeHm}'.trim()
+                              : it.createdAt;
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: Material(
+                              color: checked
+                                  ? AppTokens.brandViolet
+                                      .withValues(alpha: 0.10)
+                                  : Colors.transparent,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                side: BorderSide(
+                                  color: checked
+                                      ? AppTokens.brandViolet
+                                          .withValues(alpha: 0.55)
+                                      : Theme.of(context)
+                                          .dividerColor
+                                          .withValues(alpha: 0.30),
+                                ),
+                              ),
+                              clipBehavior: Clip.antiAlias,
+                              child: CheckboxListTile(
+                                dense: true,
+                                controlAffinity:
+                                    ListTileControlAffinity.leading,
+                                value: checked,
+                                onChanged: (v) {
+                                  setState(() {
+                                    if (v == true) {
+                                      _selectedPaymentIds.add(it.id);
+                                    } else {
+                                      _selectedPaymentIds.remove(it.id);
+                                    }
+                                  });
+                                },
+                                title: Text(
+                                  '${formatUzs(it.amount, withCurrency: true)}  •  $pmLabel',
+                                  style: const TextStyle(
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w800,
+                                    fontFeatures: AppTokens.tabularNums,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  it.note.isNotEmpty
+                                      ? '$dateLbl • ${it.note}'
+                                      : dateLbl,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    color: textSecondaryOf(context),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                      if (filteredNasiya.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          'Nasiya daftari yozuvlari (${filteredNasiya.length} ta)',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        ...filteredNasiya.map((n) {
+                          final nid = ((n['id'] as num?) ?? 0).toInt();
+                          final checked = _selectedDebtIds.contains(nid);
+                          final amt = ((n['amount'] as num?) ?? 0).toDouble();
+                          final etype = (n['entry_type'] ?? 'debt').toString();
+                          final note = (n['note'] ?? '').toString();
+                          final dt = (n['created_at'] ?? '').toString();
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: Material(
+                              color: checked
+                                  ? AppTokens.debtAmber.withValues(alpha: 0.12)
+                                  : Colors.transparent,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                side: BorderSide(
+                                  color: checked
+                                      ? AppTokens.debtAmber
+                                          .withValues(alpha: 0.55)
+                                      : Theme.of(context)
+                                          .dividerColor
+                                          .withValues(alpha: 0.30),
+                                ),
+                              ),
+                              clipBehavior: Clip.antiAlias,
+                              child: CheckboxListTile(
+                                dense: true,
+                                controlAffinity:
+                                    ListTileControlAffinity.leading,
+                                value: checked,
+                                onChanged: (v) {
+                                  setState(() {
+                                    if (v == true) {
+                                      _selectedDebtIds.add(nid);
+                                    } else {
+                                      _selectedDebtIds.remove(nid);
+                                    }
+                                  });
+                                },
+                                title: Text(
+                                  '${etype == 'paid' ? "To'lov" : "Qarz"}: ${formatUzs(amt, withCurrency: true)}',
+                                  style: const TextStyle(
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w800,
+                                    fontFeatures: AppTokens.tabularNums,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  note.isNotEmpty ? '$dt • $note' : dt,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    color: textSecondaryOf(context),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                FilledButton.icon(
+                  onPressed: _submitting ? null : _submit,
+                  icon: _submitting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.call_split_rounded),
+                  label: Text(
+                    _submitting
+                        ? 'Ajratilmoqda...'
+                        : selectedTotalCount > 0
+                            ? 'Ajratib chiqarish ($selectedTotalCount ta • ${formatUzs(selectedSum, withCurrency: true)})'
+                            : 'Ajratib chiqarish',
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -12075,13 +12792,20 @@ class _SupplierProfileSheetState extends State<SupplierProfileSheet> {
                                           ),
                                         ),
                                       ),
-                                      if (widget.api.canWrite)
-                                        TextButton.icon(
-                                          style: TextButton.styleFrom(
+                                    ],
+                                  ),
+                                  if (widget.api.canWrite) ...[
+                                    const SizedBox(height: 6),
+                                    Wrap(
+                                      spacing: 8,
+                                      runSpacing: 6,
+                                      children: [
+                                        OutlinedButton.icon(
+                                          style: OutlinedButton.styleFrom(
                                             visualDensity:
                                                 VisualDensity.compact,
                                             padding: const EdgeInsets.symmetric(
-                                                horizontal: 8),
+                                                horizontal: 10, vertical: 6),
                                           ),
                                           onPressed: () async {
                                             final merged =
@@ -12105,8 +12829,39 @@ class _SupplierProfileSheetState extends State<SupplierProfileSheet> {
                                               size: 16),
                                           label: const Text('Birlashtirish'),
                                         ),
-                                    ],
-                                  ),
+                                        OutlinedButton.icon(
+                                          style: OutlinedButton.styleFrom(
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 10, vertical: 6),
+                                          ),
+                                          onPressed: () async {
+                                            final split =
+                                                await showModalBottomSheet<bool>(
+                                              context: context,
+                                              isScrollControlled: true,
+                                              useSafeArea: true,
+                                              builder: (ctx) =>
+                                                  SplitSupplierSheet(
+                                                api: widget.api,
+                                                fromSupplier: supTitle,
+                                                initialAliases: aliases,
+                                              ),
+                                            );
+                                            if (split == true && mounted) {
+                                              _changed = true;
+                                              await _load();
+                                            }
+                                          },
+                                          icon: const Icon(
+                                              Icons.call_split_rounded,
+                                              size: 16),
+                                          label: const Text('Ajratish'),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
                                   const SizedBox(height: 6),
                                   Wrap(
                                     spacing: 6,

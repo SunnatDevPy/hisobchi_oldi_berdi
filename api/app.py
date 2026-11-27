@@ -69,6 +69,7 @@ from api.schemas import (
     SupplierAliasesUpdateRequest,
     SupplierConfigCreateRequest,
     SupplierMergeRequest,
+    SupplierSplitRequest,
     TelegramWebAppAuthRequest,
     UserProfileResponse,
     UserRoleSaveRequest,
@@ -127,6 +128,7 @@ from database.crud import (
     list_recent_cash_transactions,
     list_recent_nakladnoys,
     list_supplier_debt_entries,
+    list_supplier_merge_logs,
     list_suppliers,
     list_unpaid_debt_nakladnoys,
     list_user_roles,
@@ -147,7 +149,9 @@ from database.crud import (
     set_group_config,
     set_nakladnoy_payment_method,
     set_user_role,
+    split_supplier,
     today_iso,
+    undo_supplier_merge,
     update_cash_transaction,
     update_nakladnoy,
     update_supplier_aliases,
@@ -945,6 +949,45 @@ def create_api_app() -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
+    @app.get("/suppliers/merge-history")
+    async def get_supplier_merge_history_endpoint(
+        limit: int = Query(default=20, ge=1, le=50),
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        async with async_session_maker() as db:
+            items = await list_supplier_merge_logs(db, limit=limit)
+        return {"count": len(items), "items": items}
+
+    @app.post("/suppliers/merge/{merge_id}/undo")
+    async def undo_supplier_merge_endpoint(
+        merge_id: int,
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> dict:
+        try:
+            async with async_session_maker() as db:
+                return await undo_supplier_merge(db, merge_id=merge_id, user_id=user.user_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.post("/suppliers/split")
+    async def split_supplier_endpoint(
+        payload: SupplierSplitRequest,
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> dict:
+        try:
+            async with async_session_maker() as db:
+                return await split_supplier(
+                    db,
+                    from_supplier=payload.from_supplier,
+                    new_supplier_name=payload.new_supplier_name,
+                    payment_ids=payload.payment_ids,
+                    debt_ids=payload.debt_ids,
+                    remove_aliases=payload.remove_aliases,
+                    user_id=user.user_id,
+                )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
     @app.post("/suppliers/aliases")
     async def update_supplier_aliases_endpoint(
         payload: SupplierAliasesUpdateRequest,
@@ -989,6 +1032,19 @@ def create_api_app() -> FastAPI:
             )
             all_rows = (await db.execute(stmt)).all()
             nasiya_rows = await get_supplier_debt_balances(db)
+            nasiya_entries_raw = await list_supplier_debt_entries(db, supplier_name=canonical, limit=100)
+
+        nasiya_entries = [
+            {
+                "id": int(d.id),
+                "supplier_name": d.supplier_name,
+                "entry_type": d.entry_type,
+                "amount": float(d.amount),
+                "note": d.note or "",
+                "created_at": format_local_dt(d.created_at, "%Y-%m-%d %H:%M"),
+            }
+            for d in nasiya_entries_raw
+        ]
 
         rows: list[tuple[NakladnoyPayment, DailyCashSession, str]] = []
         for pay, sess in all_rows:
@@ -1063,6 +1119,7 @@ def create_api_app() -> FastAPI:
             "first_date": min(dates) if dates else None,
             "last_date": max(dates) if dates else None,
             "items": items,
+            "nasiya_entries": nasiya_entries,
         }
 
     @app.get("/suppliers/profile")

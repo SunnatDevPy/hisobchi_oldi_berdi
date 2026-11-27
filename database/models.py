@@ -320,3 +320,21 @@ class ApiIdempotencyRecord(Base):
         DateTime(timezone=True), server_default=func.now(), index=True
     )
 
+
+class SupplierMergeLog(Base):
+    """Reversible snapshot of a supplier merge so accidental merges can be undone cleanly."""
+
+    __tablename__ = "supplier_merge_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    target_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    merged_sources_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    snapshot_json: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_nakladnoys: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_debts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_reverted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    created_by: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+

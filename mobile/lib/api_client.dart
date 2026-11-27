@@ -1287,6 +1287,55 @@ class HisobchiApiClient {
     return _decodeJson(res);
   }
 
+  Future<List<Map<String, dynamic>>> getSupplierMergeHistory({
+    int limit = 20,
+  }) async {
+    final res = await _http
+        .get(
+          _uri('/suppliers/merge-history', {'limit': '$limit'}),
+          headers: _headers(),
+        )
+        .timeout(const Duration(seconds: 15));
+    final data = _decodeJson(res);
+    return ((data['items'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> undoSupplierMerge(int mergeId) async {
+    final res = await _http
+        .post(
+          _uri('/suppliers/merge/$mergeId/undo'),
+          headers: _headers(),
+        )
+        .timeout(const Duration(seconds: 25));
+    return _decodeJson(res);
+  }
+
+  Future<Map<String, dynamic>> splitSupplier({
+    required String fromSupplier,
+    required String newSupplierName,
+    List<int> paymentIds = const [],
+    List<int> debtIds = const [],
+    List<String> removeAliases = const [],
+  }) async {
+    final res = await _http
+        .post(
+          _uri('/suppliers/split'),
+          headers: _headers(),
+          body: jsonEncode({
+            'from_supplier': fromSupplier.trim(),
+            'new_supplier_name': newSupplierName.trim(),
+            'payment_ids': paymentIds,
+            'debt_ids': debtIds,
+            'remove_aliases': removeAliases.map((e) => e.trim()).toList(),
+          }),
+        )
+        .timeout(const Duration(seconds: 25));
+    return _decodeJson(res);
+  }
+
   Future<Map<String, dynamic>> updateSupplierAliases({
     required String supplierName,
     required List<String> aliases,

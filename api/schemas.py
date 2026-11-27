@@ -187,6 +187,14 @@ class SupplierAliasesUpdateRequest(BaseModel):
     aliases: List[str] = Field(default_factory=list, max_length=50)
 
 
+class SupplierSplitRequest(BaseModel):
+    from_supplier: str = Field(..., min_length=1, max_length=255)
+    new_supplier_name: str = Field(..., min_length=1, max_length=255)
+    payment_ids: List[int] = Field(default_factory=list, max_length=500)
+    debt_ids: List[int] = Field(default_factory=list, max_length=500)
+    remove_aliases: List[str] = Field(default_factory=list, max_length=50)
+
+
 class RoundModeUpdateRequest(BaseModel):
     round_mode: str = Field(..., pattern="^(floor_1000|nearest_1000|none)$")
 

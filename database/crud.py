@@ -6,6 +6,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import difflib
+import json
 import re
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
@@ -28,6 +29,7 @@ from database.models import (
     PrixodRow,
     SupplierConfig,
     SupplierDebt,
+    SupplierMergeLog,
     UserRole,
 )
 
@@ -1963,15 +1965,36 @@ async def merge_suppliers(
             matched_cfgs[0] if matched_cfgs else None,
         )
 
+    target_cfg_before = (
+        {
+            "display_name": target_cfg.display_name,
+            "aliases": target_cfg.aliases or "",
+            "default_category": target_cfg.default_category or "qarz",
+            "order_num": int(target_cfg.order_num),
+        }
+        if target_cfg is not None
+        else None
+    )
+    removed_cfgs_snapshot: List[dict] = []
+
     removed_cfg_count = 0
     for c in matched_cfgs:
         if target_cfg is not None and c.id != target_cfg.id:
+            removed_cfgs_snapshot.append(
+                {
+                    "display_name": c.display_name,
+                    "aliases": c.aliases or "",
+                    "default_category": c.default_category or "qarz",
+                    "order_num": int(c.order_num),
+                }
+            )
             await db.delete(c)
             removed_cfg_count += 1
     if removed_cfg_count > 0:
         await db.flush()
 
     alias_str = ", ".join(final_aliases)
+    created_new_target_cfg = target_cfg is None
     if target_cfg is None:
         order_num = max((c.order_num for c in all_cfgs), default=0) + 1
         target_cfg = SupplierConfig(
@@ -1997,8 +2020,10 @@ async def merge_suppliers(
         )
     ).all()
     updated_nak = 0
+    nak_prev_snapshot: List[dict] = []
     for pay in nak_rows:
         if _norm_key(pay.supplier_name or "") in merge_keys and pay.supplier_name != target:
+            nak_prev_snapshot.append({"id": int(pay.id), "supplier_name": pay.supplier_name})
             pay.supplier_name = target
             updated_nak += 1
 
@@ -2009,13 +2034,38 @@ async def merge_suppliers(
         )
     ).all()
     updated_debts = 0
+    debt_prev_snapshot: List[dict] = []
     for debt in debt_rows:
         if _norm_key(debt.supplier_name or "") in merge_keys and debt.supplier_name != target:
+            debt_prev_snapshot.append({"id": int(debt.id), "supplier_name": debt.supplier_name})
             debt.supplier_name = target
             updated_debts += 1
 
+    # 4. Save reversible merge snapshot so accidental merges can be undone in 1 tap
+    merge_snapshot = {
+        "target_name": target,
+        "created_new_target_cfg": created_new_target_cfg,
+        "target_cfg_id": int(target_cfg.id),
+        "target_cfg_before": target_cfg_before,
+        "removed_cfgs": removed_cfgs_snapshot,
+        "nakladnoy_prev": nak_prev_snapshot,
+        "debt_prev": debt_prev_snapshot,
+    }
+    merge_log = SupplierMergeLog(
+        target_name=target,
+        merged_sources_json=json.dumps(cleaned_sources, ensure_ascii=False),
+        snapshot_json=json.dumps(merge_snapshot, ensure_ascii=False),
+        updated_nakladnoys=updated_nak,
+        updated_debts=updated_debts,
+        is_reverted=False,
+        created_by=user_id,
+        created_at=now_local(),
+    )
+    db.add(merge_log)
+
     await db.commit()
     await db.refresh(target_cfg)
+    await db.refresh(merge_log)
     await log_action(
         db,
         "merge",
@@ -2026,6 +2076,7 @@ async def merge_suppliers(
     )
     return {
         "ok": True,
+        "merge_id": int(merge_log.id),
         "target_name": target_cfg.display_name,
         "aliases": final_aliases,
         "aliases_str": alias_str,
@@ -2033,6 +2084,202 @@ async def merge_suppliers(
         "updated_nakladnoys": updated_nak,
         "updated_debts": updated_debts,
         "removed_configs": removed_cfg_count,
+    }
+
+
+async def list_supplier_merge_logs(db: AsyncSession, limit: int = 20) -> List[dict]:
+    """Return recent supplier merges (newest first) for 1-tap undo."""
+    rows = (
+        await db.scalars(
+            select(SupplierMergeLog)
+            .where(SupplierMergeLog.is_reverted.is_(False))
+            .order_by(desc(SupplierMergeLog.id))
+            .limit(max(1, min(limit, 50)))
+        )
+    ).all()
+    out: List[dict] = []
+    for row in rows:
+        try:
+            sources = json.loads(row.merged_sources_json or "[]")
+            if not isinstance(sources, list):
+                sources = []
+        except Exception:
+            sources = []
+        out.append(
+            {
+                "id": int(row.id),
+                "target_name": row.target_name,
+                "merged_sources": [str(s) for s in sources],
+                "updated_nakladnoys": int(row.updated_nakladnoys or 0),
+                "updated_debts": int(row.updated_debts or 0),
+                "is_reverted": bool(row.is_reverted),
+                "created_at": format_local_dt(row.created_at, "%Y-%m-%d %H:%M"),
+            }
+        )
+    return out
+
+
+async def undo_supplier_merge(
+    db: AsyncSession,
+    merge_id: int,
+    user_id: Optional[int] = None,
+) -> dict:
+    """Revert a recorded supplier merge, restoring all checks, debts, and supplier configs."""
+    mlog = await db.get(SupplierMergeLog, merge_id)
+    if mlog is None:
+        raise ValueError("Birlashtirish yozuvi topilmadi")
+    if mlog.is_reverted:
+        raise ValueError("Bu birlashtirish allaqachon bekor qilingan")
+
+    snap = json.loads(mlog.snapshot_json or "{}")
+    restored_nak = 0
+    for item in snap.get("nakladnoy_prev") or []:
+        pay = await db.get(NakladnoyPayment, int(item["id"]))
+        if pay is not None:
+            pay.supplier_name = str(item["supplier_name"])
+            restored_nak += 1
+
+    restored_debts = 0
+    for item in snap.get("debt_prev") or []:
+        debt = await db.get(SupplierDebt, int(item["id"]))
+        if debt is not None:
+            debt.supplier_name = str(item["supplier_name"])
+            restored_debts += 1
+
+    # Restore SupplierConfig state
+    target_cfg_id = snap.get("target_cfg_id")
+    target_cfg = await db.get(SupplierConfig, int(target_cfg_id)) if target_cfg_id else None
+    if snap.get("created_new_target_cfg"):
+        if target_cfg is not None:
+            await db.delete(target_cfg)
+            await db.flush()
+    elif snap.get("target_cfg_before") and target_cfg is not None:
+        before = snap["target_cfg_before"]
+        target_cfg.display_name = str(before.get("display_name") or target_cfg.display_name)
+        target_cfg.aliases = str(before.get("aliases") or "")
+        target_cfg.default_category = str(before.get("default_category") or "qarz")
+        await db.flush()
+
+    existing_cfgs = await list_suppliers(db, active_only=False)
+    existing_keys = {_norm_key(c.display_name) for c in existing_cfgs}
+    for rem in snap.get("removed_cfgs") or []:
+        r_disp = str(rem.get("display_name") or "").strip()
+        if not r_disp or _norm_key(r_disp) in existing_keys:
+            continue
+        existing_keys.add(_norm_key(r_disp))
+        db.add(
+            SupplierConfig(
+                order_num=int(rem.get("order_num") or 100),
+                display_name=r_disp,
+                aliases=str(rem.get("aliases") or ""),
+                default_category=str(rem.get("default_category") or "qarz"),
+                is_active=True,
+            )
+        )
+
+    mlog.is_reverted = True
+    await db.commit()
+    await log_action(
+        db,
+        "undo_merge",
+        "supplier",
+        mlog.id,
+        f"reverted merge -> {mlog.target_name} (nak={restored_nak}, debts={restored_debts})",
+        user_id=user_id,
+    )
+    return {
+        "ok": True,
+        "merge_id": int(mlog.id),
+        "target_name": mlog.target_name,
+        "restored_nakladnoys": restored_nak,
+        "restored_debts": restored_debts,
+    }
+
+
+async def split_supplier(
+    db: AsyncSession,
+    from_supplier: str,
+    new_supplier_name: str,
+    payment_ids: List[int],
+    debt_ids: List[int],
+    remove_aliases: Optional[List[str]] = None,
+    user_id: Optional[int] = None,
+) -> dict:
+    """Extract selected checks/debts (and remove alias) out of a supplier into a separate supplier."""
+    from_clean = " ".join((from_supplier or "").strip().split())
+    new_clean = " ".join((new_supplier_name or "").strip().split())
+    if not from_clean or not new_clean:
+        raise ValueError("Ta'minotchi nomlarini to'liq kiriting")
+    from_key = _norm_key(from_clean)
+    new_key = _norm_key(new_clean)
+    if from_key == new_key:
+        raise ValueError("Yangi nom joriy ta'minotchi nomidan farq qilishi kerak")
+
+    moved_nak = 0
+    for pid in {int(x) for x in payment_ids if x is not None}:
+        pay = await db.get(NakladnoyPayment, pid)
+        if pay is not None and pay.supplier_name != new_clean:
+            pay.supplier_name = new_clean
+            moved_nak += 1
+
+    moved_debts = 0
+    for did in {int(x) for x in debt_ids if x is not None}:
+        debt = await db.get(SupplierDebt, did)
+        if debt is not None and not debt.is_deleted and debt.supplier_name != new_clean:
+            debt.supplier_name = new_clean
+            moved_debts += 1
+
+    # Remove extracted name & requested aliases from source SupplierConfig so future writes don't auto-merge back
+    rm_keys = {new_key}
+    for ra in remove_aliases or []:
+        for part in parse_supplier_aliases(ra):
+            rk = _norm_key(part)
+            if rk:
+                rm_keys.add(rk)
+
+    all_cfgs = await list_suppliers(db, active_only=False)
+    remaining_aliases: List[str] = []
+    from_cfg = next((c for c in all_cfgs if _norm_key(c.display_name) == from_key), None)
+    if from_cfg is not None:
+        cur_aliases = parse_supplier_aliases(from_cfg.aliases or "")
+        remaining_aliases = [
+            a for a in cur_aliases
+            if _norm_key(a) not in rm_keys and _norm_key(a) != from_key
+        ]
+        from_cfg.aliases = ", ".join(remaining_aliases)
+
+    # Ensure separated supplier has its own clean SupplierConfig if not already configured
+    new_cfg = next((c for c in all_cfgs if _norm_key(c.display_name) == new_key), None)
+    if new_cfg is None:
+        order_num = max((c.order_num for c in all_cfgs), default=0) + 1
+        db.add(
+            SupplierConfig(
+                order_num=order_num,
+                display_name=new_clean,
+                aliases="",
+                default_category="qarz",
+                is_active=True,
+            )
+        )
+    else:
+        new_cfg.is_active = True
+
+    await db.commit()
+    await log_action(
+        db,
+        "split",
+        "supplier",
+        from_cfg.id if from_cfg is not None else 0,
+        f"{from_clean} -/-> {new_clean} (nak={moved_nak}, debts={moved_debts})",
+        user_id=user_id,
+    )
+    return {
+        "ok": True,
+        "from_supplier": from_clean,
+        "new_supplier_name": new_clean,
+        "moved_nakladnoys": moved_nak,
+        "moved_debts": moved_debts,
+        "remaining_aliases": remaining_aliases,
     }
 
 
