@@ -1854,16 +1854,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
 
   void _showSnack(String msg, {bool isError = false}) {
     if (!mounted) return;
-    if (Overlay.maybeOf(context, rootOverlay: true) != null) {
-      showActionFeedbackBanner(context, msg, isError: isError);
-      return;
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: isError ? AppTokens.dangerRed : AppTokens.navyDark,
-      ),
-    );
+    showActionFeedbackBanner(context, msg, isError: isError);
   }
 
   Future<void> _downloadAndShareApkUpdate({bool manualCheck = false}) async {
@@ -3209,23 +3200,20 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
               await widget.api.deleteCash(tx.id);
               await _refreshAll();
               if (!mounted) return;
-              ScaffoldMessenger.of(context)
-                ..hideCurrentSnackBar()
-                ..showSnackBar(
-                  SnackBar(
-                    duration: const Duration(seconds: 5),
-                    content: const Text("Kassa amali o'chirildi"),
-                    action: SnackBarAction(
-                      label: 'Bekor qilish',
-                      onPressed: () async {
-                        try {
-                          await widget.api.restoreCash(tx.id);
-                          await _refreshAll();
-                        } catch (_) {}
-                      },
-                    ),
-                  ),
-                );
+              showTopSlideNotification(
+                context,
+                title: "Kassa amali o'chirildi",
+                tone: TopNotifyTone.edit,
+                icon: Icons.delete_outline_rounded,
+                duration: const Duration(seconds: 5),
+                actionLabel: 'Bekor qilish',
+                onAction: () async {
+                  try {
+                    await widget.api.restoreCash(tx.id);
+                    await _refreshAll();
+                  } catch (_) {}
+                },
+              );
             },
           ),
         ],
@@ -6310,14 +6298,11 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
         _pendingSubmitKey = null;
         if (mounted) {
           final grpMsg = res['group_message']?.toString() ?? '';
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                grpMsg.isNotEmpty
-                    ? '✅ Saqlandi ($grpMsg)'
-                    : '✅ Nakladnoy saqlandi',
-              ),
-            ),
+          showTopSlideNotification(
+            context,
+            title: 'Nakladnoy saqlandi',
+            subtitle: grpMsg.isNotEmpty ? grpMsg : null,
+            tone: TopNotifyTone.success,
           );
           Navigator.pop(context, true);
         }
@@ -6337,12 +6322,12 @@ class _AddNakladnoySheetState extends State<AddNakladnoySheet> {
           );
           _pendingSubmitKey = null;
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  "📥 Oflayn saqlandi — internet kelganda avtomatik yuboriladi",
-                ),
-              ),
+            showTopSlideNotification(
+              context,
+              title: 'Oflayn saqlandi',
+              subtitle: 'Internet kelganda avtomatik yuboriladi',
+              tone: TopNotifyTone.info,
+              icon: Icons.cloud_upload_rounded,
             );
             Navigator.pop(context, true);
           }
@@ -8212,29 +8197,24 @@ class _NakladnoyDetailSheetState extends State<NakladnoyDetailSheet> {
                           : () async {
                               final delId = _cur.id;
                               final api = widget.api;
-                              final messenger =
-                                  ScaffoldMessenger.maybeOf(context);
                               await api.deleteNakladnoy(delId);
                               if (context.mounted) {
+                                showTopSlideNotification(
+                                  context,
+                                  title: "Nakladnoy o'chirildi",
+                                  tone: TopNotifyTone.edit,
+                                  icon: Icons.delete_outline_rounded,
+                                  duration: const Duration(seconds: 5),
+                                  actionLabel: 'Bekor qilish',
+                                  onAction: () async {
+                                    try {
+                                      await api.restoreNakladnoy(delId);
+                                      SyncBus.notifyRemoteChange();
+                                    } catch (_) {}
+                                  },
+                                );
                                 Navigator.pop(context, true);
                               }
-                              messenger
-                                ?..hideCurrentSnackBar()
-                                ..showSnackBar(
-                                  SnackBar(
-                                    duration: const Duration(seconds: 5),
-                                    content:
-                                        const Text("Nakladnoy o'chirildi"),
-                                    action: SnackBarAction(
-                                      label: 'Bekor qilish',
-                                      onPressed: () async {
-                                        try {
-                                          await api.restoreNakladnoy(delId);
-                                        } catch (_) {}
-                                      },
-                                    ),
-                                  ),
-                                );
                             },
                       icon: const Icon(Icons.delete_outline_rounded, size: 18),
                       label: const Text("O'chirish"),
@@ -8329,8 +8309,12 @@ class _HistorySessionsSheetState extends State<HistorySessionsSheet> {
       if (mounted) setState(() => _selectedDetail = detail);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.toString())));
+        showTopSlideNotification(
+          context,
+          title: 'Xatolik',
+          subtitle: e.toString(),
+          tone: TopNotifyTone.error,
+        );
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -8351,8 +8335,12 @@ class _HistorySessionsSheetState extends State<HistorySessionsSheet> {
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.toString())));
+        showTopSlideNotification(
+          context,
+          title: 'Xatolik',
+          subtitle: e.toString(),
+          tone: TopNotifyTone.error,
+        );
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -8585,14 +8573,20 @@ class _HistorySessionsSheetState extends State<HistorySessionsSheet> {
                                     sessionId: d.sessionId,
                                   );
                                   if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(content: Text(msg)),
+                                    showTopSlideNotification(
+                                      context,
+                                      title: msg,
+                                      tone: TopNotifyTone.success,
+                                      icon: Icons.telegram,
                                     );
                                   }
                                 } catch (e) {
                                   if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(content: Text(e.toString())),
+                                    showTopSlideNotification(
+                                      context,
+                                      title: 'Yuborishda xatolik',
+                                      subtitle: e.toString(),
+                                      tone: TopNotifyTone.error,
                                     );
                                   }
                                 } finally {
@@ -11064,8 +11058,11 @@ class _SupplierProfileSheetState extends State<SupplierProfileSheet> {
                               );
                             } catch (e) {
                               if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text(e.toString())),
+                                showTopSlideNotification(
+                                  context,
+                                  title: 'PDF yuklashda xatolik',
+                                  subtitle: e.toString(),
+                                  tone: TopNotifyTone.error,
                                 );
                               }
                             }

@@ -1461,4 +1461,72 @@ void main() {
     expect(resMissing.sent, equals(1));
     expect(cashPostCalls, equals(1));
   });
+
+  testWidgets(
+      'showTopSlideNotification fast-dismisses on tap and invokes actionLabel callback',
+      (WidgetTester tester) async {
+    var undoCalls = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ElevatedButton(
+                    onPressed: () {
+                      showTopSlideNotification(
+                        ctx,
+                        title: 'Tap dismiss test',
+                        duration: const Duration(seconds: 5),
+                      );
+                    },
+                    child: const Text('ShowTap'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () {
+                      showTopSlideNotification(
+                        ctx,
+                        title: "Nakladnoy o'chirildi",
+                        tone: TopNotifyTone.edit,
+                        duration: const Duration(seconds: 5),
+                        actionLabel: 'Bekor qilish',
+                        onAction: () => undoCalls++,
+                      );
+                    },
+                    child: const Text('ShowUndo'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    // 1. Tap on notification -> fast-dismisses well before the 5s timer
+    await tester.tap(find.text('ShowTap'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 520));
+    expect(find.text('Tap dismiss test'), findsOneWidget);
+
+    await tester.tap(find.text('Tap dismiss test'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 220));
+    expect(find.text('Tap dismiss test'), findsNothing);
+
+    // 2. Action button ('Bekor qilish') fires callback and fast-dismisses
+    await tester.tap(find.text('ShowUndo'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 520));
+    expect(find.text('Bekor qilish'), findsOneWidget);
+
+    await tester.tap(find.text('Bekor qilish'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 220));
+    expect(undoCalls, equals(1));
+    expect(find.text("Nakladnoy o'chirildi"), findsNothing);
+  });
 }

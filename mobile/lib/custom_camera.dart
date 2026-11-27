@@ -588,9 +588,14 @@ class _CustomCameraScreenState extends State<CustomCameraScreen>
 
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(msg)));
+    final low = msg.toLowerCase();
+    showTopSlideNotification(
+      context,
+      title: msg,
+      tone: (low.contains('xato') || low.contains('topilmadi'))
+          ? TopNotifyTone.error
+          : TopNotifyTone.info,
+    );
   }
 
   Future<bool> _onWillPop() async {

@@ -4522,193 +4522,33 @@ class _TactileScaleTapState extends State<TactileScaleTap> {
   }
 }
 
-OverlayEntry? _activeFeedbackEntry;
-
-/// Shows a sleek spring-animated floating confirmation / error pill at the top
-/// of the screen with haptic feedback.
+/// Shows a unified top-slide confirmation / info / error banner that glides
+/// smoothly down from the top and returns faster when tapped.
 void showActionFeedbackBanner(
   BuildContext context,
   String message, {
   bool isError = false,
-  Duration duration = const Duration(milliseconds: 2200),
+  Duration duration = const Duration(milliseconds: 2500),
+  String? actionLabel,
+  VoidCallback? onAction,
 }) {
-  if (isError) {
-    HapticFeedback.heavyImpact();
-  } else {
-    HapticFeedback.mediumImpact();
-  }
-
-  final overlay = Overlay.maybeOf(context, rootOverlay: true);
-  if (overlay == null) return;
-
-  _activeFeedbackEntry?.remove();
-  _activeFeedbackEntry = null;
-
-  late OverlayEntry entry;
-  entry = OverlayEntry(
-    builder: (ctx) => _ActionFeedbackOverlayWidget(
-      message: message,
-      isError: isError,
-      duration: duration,
-      onDismissed: () {
-        if (_activeFeedbackEntry == entry) {
-          _activeFeedbackEntry = null;
-        }
-        if (entry.mounted) {
-          entry.remove();
-        }
-      },
-    ),
+  final low = message.toLowerCase();
+  final tone = isError
+      ? TopNotifyTone.error
+      : (low.contains('oflayn') ||
+              low.contains('tayyorlanmoqda') ||
+              low.contains('navbat') ||
+              low.contains('tekshirilmoqda'))
+          ? TopNotifyTone.info
+          : TopNotifyTone.success;
+  showTopSlideNotification(
+    context,
+    title: message,
+    tone: tone,
+    duration: duration,
+    actionLabel: actionLabel,
+    onAction: onAction,
   );
-  _activeFeedbackEntry = entry;
-  overlay.insert(entry);
-}
-
-class _ActionFeedbackOverlayWidget extends StatefulWidget {
-  final String message;
-  final bool isError;
-  final Duration duration;
-  final VoidCallback onDismissed;
-
-  const _ActionFeedbackOverlayWidget({
-    required this.message,
-    required this.isError,
-    required this.duration,
-    required this.onDismissed,
-  });
-
-  @override
-  State<_ActionFeedbackOverlayWidget> createState() =>
-      _ActionFeedbackOverlayWidgetState();
-}
-
-class _ActionFeedbackOverlayWidgetState
-    extends State<_ActionFeedbackOverlayWidget>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-  late final Animation<double> _opacity;
-  late final Animation<double> _scale;
-  late final Animation<Offset> _slide;
-  Timer? _timer;
-  bool _closing = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 260),
-      reverseDuration: const Duration(milliseconds: 180),
-    );
-    _opacity = CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic);
-    _scale = Tween<double>(begin: 0.90, end: 1.0).animate(
-      CurvedAnimation(parent: _ctrl, curve: Curves.easeOutBack),
-    );
-    _slide = Tween<Offset>(
-      begin: const Offset(0, -0.35),
-      end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic));
-
-    _ctrl.forward();
-    _timer = Timer(widget.duration, _dismiss);
-  }
-
-  Future<void> _dismiss() async {
-    if (_closing || !mounted) return;
-    _closing = true;
-    _timer?.cancel();
-    await _ctrl.reverse();
-    if (mounted) {
-      widget.onDismissed();
-    }
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final topPad = MediaQuery.paddingOf(context).top;
-    final bgColor =
-        widget.isError ? AppTokens.dangerRed : const Color(0xFF065F46);
-    final accentColor =
-        widget.isError ? const Color(0xFFFCA5A5) : const Color(0xFF34D399);
-
-    return Positioned(
-      top: topPad + 10,
-      left: 16,
-      right: 16,
-      child: SafeArea(
-        bottom: false,
-        child: Material(
-          color: Colors.transparent,
-          child: Align(
-            alignment: Alignment.topCenter,
-            child: SlideTransition(
-              position: _slide,
-              child: FadeTransition(
-                opacity: _opacity,
-                child: ScaleTransition(
-                  scale: _scale,
-                  child: GestureDetector(
-                    onTap: _dismiss,
-                    child: Container(
-                      constraints: const BoxConstraints(maxWidth: 460),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 11),
-                      decoration: BoxDecoration(
-                        color: bgColor,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: accentColor.withValues(alpha: 0.55),
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.25),
-                            blurRadius: 18,
-                            offset: const Offset(0, 8),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            widget.isError
-                                ? Icons.error_rounded
-                                : Icons.check_circle_rounded,
-                            color: accentColor,
-                            size: 22,
-                          ),
-                          const SizedBox(width: 10),
-                          Flexible(
-                            child: Text(
-                              widget.message,
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 13.5,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 /// Visual tone for [showTopSlideNotification].
@@ -4761,8 +4601,9 @@ String buildNakladnoyEditSummary({
 
 OverlayEntry? _activeTopNotifyEntry;
 
-/// Shows a rich custom notification card that slides down smoothly from the top
-/// of the screen (above bottom sheets and dialogs) with an animated progress bar.
+/// Shows a rich custom notification card that glides smoothly down from the top
+/// of the screen (above bottom sheets and dialogs) and slides smoothly back up,
+/// or returns immediately faster when tapped.
 void showTopSlideNotification(
   BuildContext context, {
   required String title,
@@ -4770,6 +4611,8 @@ void showTopSlideNotification(
   TopNotifyTone tone = TopNotifyTone.success,
   IconData? icon,
   Duration duration = const Duration(milliseconds: 3200),
+  String? actionLabel,
+  VoidCallback? onAction,
 }) {
   if (tone == TopNotifyTone.error) {
     HapticFeedback.heavyImpact();
@@ -4780,8 +4623,6 @@ void showTopSlideNotification(
   final overlay = Overlay.maybeOf(context, rootOverlay: true);
   if (overlay == null) return;
 
-  _activeFeedbackEntry?.remove();
-  _activeFeedbackEntry = null;
   _activeTopNotifyEntry?.remove();
   _activeTopNotifyEntry = null;
 
@@ -4793,6 +4634,8 @@ void showTopSlideNotification(
       tone: tone,
       icon: icon,
       duration: duration,
+      actionLabel: actionLabel,
+      onAction: onAction,
       onDismissed: () {
         if (_activeTopNotifyEntry == entry) {
           _activeTopNotifyEntry = null;
@@ -4813,6 +4656,8 @@ class _TopSlideNotificationOverlay extends StatefulWidget {
   final TopNotifyTone tone;
   final IconData? icon;
   final Duration duration;
+  final String? actionLabel;
+  final VoidCallback? onAction;
   final VoidCallback onDismissed;
 
   const _TopSlideNotificationOverlay({
@@ -4821,6 +4666,8 @@ class _TopSlideNotificationOverlay extends StatefulWidget {
     required this.tone,
     this.icon,
     required this.duration,
+    this.actionLabel,
+    this.onAction,
     required this.onDismissed,
   });
 
@@ -4845,8 +4692,8 @@ class _TopSlideNotificationOverlayState
     super.initState();
     _slideCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 320),
-      reverseDuration: const Duration(milliseconds: 200),
+      duration: const Duration(milliseconds: 480),
+      reverseDuration: const Duration(milliseconds: 380),
     );
     _barCtrl = AnimationController(
       vsync: this,
@@ -4858,24 +4705,32 @@ class _TopSlideNotificationOverlayState
     ).animate(
       CurvedAnimation(
         parent: _slideCtrl,
-        curve: Curves.easeOutBack,
-        reverseCurve: Curves.easeInCubic,
+        curve: Curves.easeOutCubic,
+        reverseCurve: Curves.easeInOutCubic,
       ),
     );
-    _opacity = CurvedAnimation(parent: _slideCtrl, curve: Curves.easeOutCubic);
-    _scale = Tween<double>(begin: 0.94, end: 1.0).animate(
+    _opacity = CurvedAnimation(
+      parent: _slideCtrl,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
+    _scale = Tween<double>(begin: 0.96, end: 1.0).animate(
       CurvedAnimation(parent: _slideCtrl, curve: Curves.easeOutCubic),
     );
 
     _slideCtrl.forward();
     _barCtrl.forward();
-    _timer = Timer(widget.duration, _dismiss);
+    _timer = Timer(widget.duration, () => _dismiss(fast: false));
   }
 
-  Future<void> _dismiss() async {
+  Future<void> _dismiss({bool fast = false}) async {
     if (_closing || !mounted) return;
     _closing = true;
     _timer?.cancel();
+    if (fast) {
+      HapticFeedback.selectionClick();
+      _slideCtrl.reverseDuration = const Duration(milliseconds: 140);
+    }
     await _slideCtrl.reverse();
     if (mounted) {
       widget.onDismissed();
@@ -4941,7 +4796,8 @@ class _TopSlideNotificationOverlayState
                   direction: DismissDirection.up,
                   onDismissed: (_) => _dismissImmediately(),
                   child: GestureDetector(
-                    onTap: _dismiss,
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _dismiss(fast: true),
                     child: Container(
                       constraints: const BoxConstraints(maxWidth: 460),
                       decoration: BoxDecoration(
@@ -5007,7 +4863,12 @@ class _TopSlideNotificationOverlayState
                                       children: [
                                         Text(
                                           widget.title,
-                                          maxLines: 1,
+                                          maxLines: widget.subtitle != null &&
+                                                  widget.subtitle!
+                                                      .trim()
+                                                      .isNotEmpty
+                                              ? 1
+                                              : 2,
                                           overflow: TextOverflow.ellipsis,
                                           style: TextStyle(
                                             color: titleColor,
@@ -5032,6 +4893,43 @@ class _TopSlideNotificationOverlayState
                                       ],
                                     ),
                                   ),
+                                  if (widget.actionLabel != null &&
+                                      widget.onAction != null) ...[
+                                    const SizedBox(width: 6),
+                                    TextButton(
+                                      style: TextButton.styleFrom(
+                                        foregroundColor: accent,
+                                        backgroundColor:
+                                            accent.withValues(alpha: 0.14),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 6,
+                                        ),
+                                        minimumSize: Size.zero,
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                          side: BorderSide(
+                                            color:
+                                                accent.withValues(alpha: 0.42),
+                                          ),
+                                        ),
+                                      ),
+                                      onPressed: () {
+                                        widget.onAction?.call();
+                                        _dismiss(fast: true);
+                                      },
+                                      child: Text(
+                                        widget.actionLabel!,
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                   IconButton(
                                     visualDensity: VisualDensity.compact,
                                     padding: EdgeInsets.zero,
@@ -5039,7 +4937,7 @@ class _TopSlideNotificationOverlayState
                                       minWidth: 28,
                                       minHeight: 28,
                                     ),
-                                    onPressed: _dismiss,
+                                    onPressed: () => _dismiss(fast: true),
                                     icon: Icon(
                                       Icons.close_rounded,
                                       size: 17,
