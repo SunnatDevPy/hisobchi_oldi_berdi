@@ -802,10 +802,11 @@ class HisobchiApiClient {
     return _decodeJson(res);
   }
 
-  Future<List<CashReconciliationItem>> getCashReconciliations({
+  Future<({List<CashReconciliationItem> items, CashReconciliationSummary summary})>
+      getCashReconciliationsWithSummary({
     int? sessionId,
     String? kind,
-    int limit = 60,
+    int limit = 80,
   }) async {
     final q = <String, String>{'limit': '$limit'};
     if (sessionId != null) q['session_id'] = '$sessionId';
@@ -815,10 +816,30 @@ class HisobchiApiClient {
         .timeout(const Duration(seconds: 15));
     final data = _decodeJson(res);
     final raw = (data['items'] as List?) ?? const [];
-    return raw
+    final items = raw
         .map((e) =>
             CashReconciliationItem.fromJson(Map<String, dynamic>.from(e as Map)))
         .toList();
+    final sumMap = data['summary'] is Map
+        ? Map<String, dynamic>.from(data['summary'] as Map)
+        : const <String, dynamic>{};
+    return (
+      items: items,
+      summary: CashReconciliationSummary.fromJson(sumMap),
+    );
+  }
+
+  Future<List<CashReconciliationItem>> getCashReconciliations({
+    int? sessionId,
+    String? kind,
+    int limit = 60,
+  }) async {
+    final res = await getCashReconciliationsWithSummary(
+      sessionId: sessionId,
+      kind: kind,
+      limit: limit,
+    );
+    return res.items;
   }
 
   Future<CashReconciliationItem> createInterimReconciliation({
@@ -1504,6 +1525,9 @@ class CashReconciliationItem {
   final int sessionId;
   final String reportDate;
   final String kind; // 'interim' | 'closing'
+  final double openingBalance;
+  final double cashInTotal;
+  final double cashOutTotal;
   final double expectedCash;
   final double countedCash;
   final double difference;
@@ -1516,6 +1540,9 @@ class CashReconciliationItem {
     required this.sessionId,
     required this.reportDate,
     required this.kind,
+    this.openingBalance = 0.0,
+    this.cashInTotal = 0.0,
+    this.cashOutTotal = 0.0,
     required this.expectedCash,
     required this.countedCash,
     required this.difference,
@@ -1532,12 +1559,63 @@ class CashReconciliationItem {
         sessionId: (j['session_id'] as num).toInt(),
         reportDate: (j['report_date'] ?? '').toString(),
         kind: (j['kind'] ?? 'interim').toString(),
+        openingBalance: ((j['opening_balance'] as num?) ?? 0).toDouble(),
+        cashInTotal: ((j['cash_in_total'] as num?) ?? 0).toDouble(),
+        cashOutTotal: ((j['cash_out_total'] as num?) ?? 0).toDouble(),
         expectedCash: ((j['expected_cash'] as num?) ?? 0).toDouble(),
         countedCash: ((j['counted_cash'] as num?) ?? 0).toDouble(),
         difference: ((j['difference'] as num?) ?? 0).toDouble(),
         note: (j['note'] ?? '').toString(),
         createdAt: (j['created_at'] ?? '').toString(),
         timeHm: (j['time_hm'] ?? '').toString(),
+      );
+}
+
+class CashReconciliationSummary {
+  final int closingCount;
+  final double closingTotalPlus;
+  final double closingTotalMinus;
+  final double closingNetDiff;
+  final int closingExactCount;
+  final double closingTotalCashIn;
+  final double closingTotalCashOut;
+  final int interimCount;
+  final double interimTotalPlus;
+  final double interimTotalMinus;
+  final double interimNetDiff;
+  final int interimExactCount;
+
+  const CashReconciliationSummary({
+    this.closingCount = 0,
+    this.closingTotalPlus = 0.0,
+    this.closingTotalMinus = 0.0,
+    this.closingNetDiff = 0.0,
+    this.closingExactCount = 0,
+    this.closingTotalCashIn = 0.0,
+    this.closingTotalCashOut = 0.0,
+    this.interimCount = 0,
+    this.interimTotalPlus = 0.0,
+    this.interimTotalMinus = 0.0,
+    this.interimNetDiff = 0.0,
+    this.interimExactCount = 0,
+  });
+
+  factory CashReconciliationSummary.fromJson(Map<String, dynamic> j) =>
+      CashReconciliationSummary(
+        closingCount: ((j['closing_count'] as num?) ?? 0).toInt(),
+        closingTotalPlus: ((j['closing_total_plus'] as num?) ?? 0).toDouble(),
+        closingTotalMinus: ((j['closing_total_minus'] as num?) ?? 0).toDouble(),
+        closingNetDiff: ((j['closing_net_diff'] as num?) ?? 0).toDouble(),
+        closingExactCount: ((j['closing_exact_count'] as num?) ?? 0).toInt(),
+        closingTotalCashIn:
+            ((j['closing_total_cash_in'] as num?) ?? 0).toDouble(),
+        closingTotalCashOut:
+            ((j['closing_total_cash_out'] as num?) ?? 0).toDouble(),
+        interimCount: ((j['interim_count'] as num?) ?? 0).toInt(),
+        interimTotalPlus: ((j['interim_total_plus'] as num?) ?? 0).toDouble(),
+        interimTotalMinus: ((j['interim_total_minus'] as num?) ?? 0).toDouble(),
+        interimNetDiff: ((j['interim_net_diff'] as num?) ?? 0).toDouble(),
+        interimExactCount: ((j['interim_exact_count'] as num?) ?? 0).toInt(),
       );
 }
 

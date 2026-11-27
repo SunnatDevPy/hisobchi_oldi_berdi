@@ -108,6 +108,7 @@ from database.crud import (
     get_all_group_configs,
     get_all_known_suppliers,
     get_app_setting,
+    get_cash_reconciliations_report,
     get_group_config,
     get_kassa_debt_stats,
     get_nakladnoy,
@@ -185,6 +186,9 @@ def _reconciliation_to_out(rec: CashReconciliation, report_date: str) -> CashRec
         session_id=int(rec.session_id),
         report_date=report_date,
         kind=rec.kind,
+        opening_balance=float(getattr(rec, "opening_balance", 0.0) or 0.0),
+        cash_in_total=float(getattr(rec, "cash_in_total", 0.0) or 0.0),
+        cash_out_total=float(getattr(rec, "cash_out_total", 0.0) or 0.0),
         expected_cash=float(rec.expected_cash),
         counted_cash=float(rec.counted_cash),
         difference=float(rec.difference),
@@ -1630,15 +1634,13 @@ def create_api_app() -> FastAPI:
     async def list_cash_reconciliations_endpoint(
         session_id: Optional[int] = Query(default=None),
         kind: Optional[str] = Query(default=None),
-        limit: int = Query(default=60, ge=1, le=200),
+        limit: int = Query(default=80, ge=1, le=200),
         user: AuthenticatedUser = Depends(get_current_user),
     ) -> dict:
         async with async_session_maker() as db:
-            rows = await list_cash_reconciliations(
+            return await get_cash_reconciliations_report(
                 db, session_id=session_id, kind=kind, limit=limit
             )
-        items = [_reconciliation_to_out(rec, r_date) for rec, r_date in rows]
-        return {"count": len(items), "items": items}
 
     @app.post("/cash/reconciliations", response_model=CashReconciliationOut)
     async def create_interim_reconciliation_endpoint(

@@ -4390,7 +4390,10 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
   bool _savingInterim = false;
   bool _loadingReconciliations = false;
   List<CashReconciliationItem> _reconciliations = const [];
+  CashReconciliationSummary _reconcileSummary =
+      const CashReconciliationSummary();
   String _reconcileFilter = 'all'; // all | interim | closing
+  bool _showAllReconciliations = false;
   String _selectedReportType = 'today'; // today | week | month | custom | sverka
   bool _downloadingExcel = false;
   bool _sendingExcelTelegram = false;
@@ -4416,9 +4419,12 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
     if (_loadingReconciliations) return;
     if (mounted) setState(() => _loadingReconciliations = true);
     try {
-      final items = await widget.api.getCashReconciliations(limit: 60);
+      final res = await widget.api.getCashReconciliationsWithSummary(limit: 80);
       if (mounted) {
-        setState(() => _reconciliations = items);
+        setState(() {
+          _reconciliations = res.items;
+          _reconcileSummary = res.summary;
+        });
       }
     } catch (_) {
     } finally {
@@ -5214,14 +5220,185 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                 ],
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
+            Builder(builder: (context) {
+              final useInterim = _reconcileFilter == 'interim';
+              final sumCount = useInterim
+                  ? _reconcileSummary.interimCount
+                  : _reconcileSummary.closingCount;
+              final sumPlus = useInterim
+                  ? _reconcileSummary.interimTotalPlus
+                  : _reconcileSummary.closingTotalPlus;
+              final sumMinus = useInterim
+                  ? _reconcileSummary.interimTotalMinus
+                  : _reconcileSummary.closingTotalMinus;
+              final sumNet = useInterim
+                  ? _reconcileSummary.interimNetDiff
+                  : _reconcileSummary.closingNetDiff;
+
+              if (sumCount == 0 && _reconciliations.isEmpty) {
+                return const SizedBox.shrink();
+              }
+
+              final Color netBase = sumNet.abs() < 1
+                  ? AppTokens.cashGreen
+                  : (sumNet > 0 ? AppTokens.cardBlue : AppTokens.dangerRed);
+              final (netFg, netBg, netBorder) =
+                  AppTokens.semanticSurface(context, netBase);
+              final (plusFg, plusBg, plusBorder) =
+                  AppTokens.semanticSurface(context, AppTokens.cashGreen);
+              final (minFg, minBg, minBorder) =
+                  AppTokens.semanticSurface(context, AppTokens.dangerRed);
+
+              final netLabel = sumNet.abs() < 1
+                  ? "0 so'm (Aniq)"
+                  : (sumNet > 0
+                      ? "+${formatUzs(sumNet, withCurrency: true)} (Plyus)"
+                      : "${formatUzs(sumNet, withCurrency: true)} (Zarar)");
+
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: netBg,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: netBorder),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              useInterim
+                                  ? "UMUMIY NATIJA (ORALIQ • $sumCount TA)"
+                                  : "UMUMIY ZARAR / PLYUS (ASOSIY • $sumCount TA)",
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.5,
+                                color: netFg.withValues(alpha: 0.85),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          netLabel,
+                          style: TextStyle(
+                            fontSize: 19,
+                            fontWeight: FontWeight.w900,
+                            color: netFg,
+                            fontFeatures: AppTokens.tabularNums,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 7),
+                              decoration: BoxDecoration(
+                                color: plusBg,
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                    color: plusBorder.withValues(alpha: 0.7)),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Jami plyus',
+                                    style: TextStyle(
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.w700,
+                                      color: plusFg.withValues(alpha: 0.85),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      sumPlus > 0
+                                          ? '+${formatUzs(sumPlus)}'
+                                          : '0',
+                                      style: TextStyle(
+                                        fontSize: 13.5,
+                                        fontWeight: FontWeight.w900,
+                                        color: plusFg,
+                                        fontFeatures: AppTokens.tabularNums,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 7),
+                              decoration: BoxDecoration(
+                                color: minBg,
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                    color: minBorder.withValues(alpha: 0.7)),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Jami zarar',
+                                    style: TextStyle(
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.w700,
+                                      color: minFg.withValues(alpha: 0.85),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      sumMinus < 0
+                                          ? formatUzs(sumMinus)
+                                          : '0',
+                                      style: TextStyle(
+                                        fontSize: 13.5,
+                                        fontWeight: FontWeight.w900,
+                                        color: minFg,
+                                        fontFeatures: AppTokens.tabularNums,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: [
                 filterChip('all', 'Barchasi'),
-                filterChip('interim', 'Oraliq'),
                 filterChip('closing', 'Asosiy'),
+                filterChip('interim', 'Oraliq'),
               ],
             ),
             const SizedBox(height: 10),
@@ -5239,18 +5416,34 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                   ),
                 ),
               )
-            else
-              ...visible.take(15).map(
-                    (item) => Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: _CashReconciliationTile(
-                        item: item,
-                        onDelete: (!item.isClosing && widget.api.canWrite)
-                            ? () => _deleteInterimReconciliation(item)
-                            : null,
-                      ),
-                    ),
+            else ...[
+              ...(_showAllReconciliations ? visible : visible.take(10)).map(
+                (item) => Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _CashReconciliationTile(
+                    item: item,
+                    onDelete: (!item.isClosing &&
+                            item.id > 0 &&
+                            widget.api.canWrite)
+                        ? () => _deleteInterimReconciliation(item)
+                        : null,
                   ),
+                ),
+              ),
+              if (visible.length > 10)
+                TextButton.icon(
+                  onPressed: () => setState(() =>
+                      _showAllReconciliations = !_showAllReconciliations),
+                  icon: Icon(_showAllReconciliations
+                      ? Icons.expand_less_rounded
+                      : Icons.expand_more_rounded),
+                  label: Text(
+                    _showAllReconciliations
+                        ? 'Qisqartirish'
+                        : "Hammasini ko'rish (${visible.length} ta)",
+                  ),
+                ),
+            ],
           ],
         ),
       ),
@@ -5858,26 +6051,87 @@ class _CashReconciliationTile extends StatelessWidget {
                 ),
             ],
           ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: isDarkCtx(context)
+                  ? Colors.white.withValues(alpha: 0.04)
+                  : Colors.black.withValues(alpha: 0.03),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: _miniRow(
+                        context,
+                        label: 'Pul olindi',
+                        value: '+${formatUzs(item.cashInTotal)}',
+                        valueColor: AppTokens.cashGreen,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _miniRow(
+                        context,
+                        label: 'Sotildi / Rasxod',
+                        value: '−${formatUzs(item.cashOutTotal)}',
+                        valueColor: AppTokens.dangerRed,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _miniRow(
+                        context,
+                        label: 'Qolishi kerak',
+                        value: formatUzs(item.expectedCash),
+                        valueColor: textPrimaryOf(context),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _miniRow(
+                        context,
+                        label: 'Sanalgan (qoldi)',
+                        value: formatUzs(item.countedCash),
+                        valueColor: textPrimaryOf(context),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
           const SizedBox(height: 7),
           Row(
             children: [
               Expanded(
                 child: Text(
-                  'Sanalgan: ${formatUzs(item.countedCash, withCurrency: true)}',
+                  item.openingBalance > 0
+                      ? 'Kechadan: ${formatUzs(item.openingBalance)}${item.note.isNotEmpty ? " • ${item.note}" : ""}'
+                      : (item.note.isNotEmpty ? item.note : 'Farq holati'),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w900,
-                    color: textPrimaryOf(context),
+                    fontSize: 11.5,
+                    color: textSecondaryOf(context),
                     fontFeatures: AppTokens.tabularNums,
                   ),
                 ),
               ),
+              const SizedBox(width: 8),
               Container(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
                   color: diffBg,
-                  borderRadius: BorderRadius.circular(7),
+                  borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   diffText,
@@ -5891,19 +6145,45 @@ class _CashReconciliationTile extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 3),
-          Text(
-            'Kutilgan: ${formatUzs(item.expectedCash, withCurrency: true)}${item.note.isNotEmpty ? " • ${item.note}" : ""}',
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
+        ],
+      ),
+    );
+  }
+
+  Widget _miniRow(
+    BuildContext context, {
+    required String label,
+    required String value,
+    required Color valueColor,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: 10.5,
+            fontWeight: FontWeight.w600,
+            color: textSecondaryOf(context),
+          ),
+        ),
+        const SizedBox(height: 1),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(
+            value,
             style: TextStyle(
-              fontSize: 11.5,
-              color: textSecondaryOf(context),
+              fontSize: 12.5,
+              fontWeight: FontWeight.w900,
+              color: valueColor,
               fontFeatures: AppTokens.tabularNums,
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

@@ -93,6 +93,9 @@ class CashReconciliation(Base):
         ForeignKey("daily_cash_sessions.id", ondelete="CASCADE"), nullable=False, index=True
     )
     kind: Mapped[str] = mapped_column(String(16), nullable=False, default="interim", index=True)
+    opening_balance: Mapped[float] = mapped_column(MONEY, nullable=False, default=0.0)
+    cash_in_total: Mapped[float] = mapped_column(MONEY, nullable=False, default=0.0)
+    cash_out_total: Mapped[float] = mapped_column(MONEY, nullable=False, default=0.0)
     expected_cash: Mapped[float] = mapped_column(MONEY, nullable=False)
     counted_cash: Mapped[float] = mapped_column(MONEY, nullable=False)
     difference: Mapped[float] = mapped_column(MONEY, nullable=False)

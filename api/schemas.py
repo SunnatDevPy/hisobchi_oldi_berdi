@@ -137,6 +137,9 @@ class CashReconciliationOut(BaseModel):
     session_id: int
     report_date: str
     kind: str
+    opening_balance: float = 0.0
+    cash_in_total: float = 0.0
+    cash_out_total: float = 0.0
     expected_cash: float
     counted_cash: float
     difference: float

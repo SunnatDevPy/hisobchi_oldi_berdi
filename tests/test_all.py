@@ -3792,3 +3792,84 @@ def test_supplier_merge_duplicates_and_aliases(tmp_path: Path, monkeypatch) -> N
         api_auth_mod.clear_auth_memory_state()
         clear_role_cache()
         get_settings.cache_clear()
+
+
+def test_reconciliation_history_totals_and_cashflow_snapshots(tmp_path: Path, monkeypatch) -> None:
+    """Reconciliation history aggregates closing plus/minus totals and returns pul olindi/rasxod/qoldi/farq."""
+    import httpx
+    import api.app as api_app_mod
+    import api.auth as api_auth_mod
+    import api.deps as api_deps_mod
+    from bot.auth import clear_role_cache
+    from config import get_settings
+
+    monkeypatch.setenv("ADMIN_IDS", "111")
+    monkeypatch.setenv("ALLOWED_USERS", "111")
+    get_settings.cache_clear()
+    clear_role_cache()
+    api_auth_mod.clear_auth_memory_state()
+
+    async def scenario() -> None:
+        db_file = tmp_path / "test_rec_totals.db"
+        eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+        await init_db(engine_override=eng, session_maker_override=maker)
+        monkeypatch.setattr(api_auth_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_deps_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_app_mod, "async_session_maker", maker)
+
+        try:
+            async with maker() as db:
+                s1 = await get_or_create_open_session(db, report_date="2026-11-25")
+                await add_cash_transaction(db, amount=5_000_000, source_type="main", note="Day 1")
+                p1 = await create_pending_nakladnoy(db, supplier_name="Nafis", amount=3_000_000)
+                await confirm_nakladnoy(db, p1.id)
+                # Day 1 expected = 2_000_000, counted = 1_900_000 -> -100_000 (zarar)
+                await close_cash_session(db, s1.id, actual_counted_cash=1_900_000, note="Kun 1")
+
+                s2 = await get_or_create_open_session(db, report_date="2026-11-26")
+                await add_cash_transaction(db, amount=4_000_000, source_type="main", note="Day 2")
+                p2 = await create_pending_nakladnoy(db, supplier_name="Nafis", amount=2_500_000)
+                await confirm_nakladnoy(db, p2.id)
+                # Day 2 expected = 1_900_000 + 4_000_000 - 2_500_000 = 3_400_000; counted = 3_460_000 -> +60_000 (plyus)
+                await close_cash_session(db, s2.id, actual_counted_cash=3_460_000, note="Kun 2")
+
+            app = api_app_mod.create_api_app()
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                code = api_auth_mod.create_login_code(111)
+                tok = (await client.post("/auth/login", json={"code": code})).json()["access_token"]
+                headers = {"Authorization": f"Bearer {tok}"}
+
+                r = await client.get("/cash/reconciliations", headers=headers)
+                assert r.status_code == 200
+                data = r.json()
+                summary = data["summary"]
+                assert summary["closing_count"] == 2
+                assert summary["closing_total_plus"] == 60_000.0
+                assert summary["closing_total_minus"] == -100_000.0
+                assert summary["closing_net_diff"] == -40_000.0
+
+                items = data["items"]
+                assert len(items) == 2
+                by_note = {i["note"]: i for i in items}
+                assert by_note["Kun 1"]["cash_in_total"] == 5_000_000.0
+                assert by_note["Kun 1"]["cash_out_total"] == 3_000_000.0
+                assert by_note["Kun 1"]["expected_cash"] == 2_000_000.0
+                assert by_note["Kun 1"]["counted_cash"] == 1_900_000.0
+                assert by_note["Kun 1"]["difference"] == -100_000.0
+
+                assert by_note["Kun 2"]["opening_balance"] == 1_900_000.0
+                assert by_note["Kun 2"]["cash_in_total"] == 4_000_000.0
+                assert by_note["Kun 2"]["cash_out_total"] == 2_500_000.0
+                assert by_note["Kun 2"]["expected_cash"] == 3_400_000.0
+                assert by_note["Kun 2"]["counted_cash"] == 3_460_000.0
+                assert by_note["Kun 2"]["difference"] == 60_000.0
+        finally:
+            await eng.dispose()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        api_auth_mod.clear_auth_memory_state()
+        clear_role_cache()
+        get_settings.cache_clear()

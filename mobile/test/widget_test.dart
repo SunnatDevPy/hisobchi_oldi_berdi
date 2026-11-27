@@ -1619,4 +1619,45 @@ void main() {
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
   });
+
+  test('CashReconciliationSummary and item snapshot fields parse accurately', () {
+    final sum = CashReconciliationSummary.fromJson({
+      'closing_count': 3,
+      'closing_total_plus': 60000,
+      'closing_total_minus': -100000,
+      'closing_net_diff': -40000,
+      'closing_exact_count': 1,
+      'interim_count': 2,
+      'interim_total_plus': 15000,
+      'interim_total_minus': -5000,
+      'interim_net_diff': 10000,
+    });
+    expect(sum.closingCount, equals(3));
+    expect(sum.closingTotalPlus, equals(60000));
+    expect(sum.closingTotalMinus, equals(-100000));
+    expect(sum.closingNetDiff, equals(-40000));
+    expect(sum.interimNetDiff, equals(10000));
+
+    final item = CashReconciliationItem.fromJson({
+      'id': 15,
+      'session_id': 9,
+      'report_date': '2026-11-27',
+      'kind': 'closing',
+      'opening_balance': 1900000,
+      'cash_in_total': 4000000,
+      'cash_out_total': 2500000,
+      'expected_cash': 3400000,
+      'counted_cash': 3460000,
+      'difference': 60000,
+      'note': 'Kun yopildi',
+      'created_at': '2026-11-27 21:00',
+      'time_hm': '21:00',
+    });
+    expect(item.openingBalance, equals(1900000));
+    expect(item.cashInTotal, equals(4000000));
+    expect(item.cashOutTotal, equals(2500000));
+    expect(item.expectedCash, equals(3400000));
+    expect(item.countedCash, equals(3460000));
+    expect(item.difference, equals(60000));
+  });
 }

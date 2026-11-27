@@ -1008,11 +1008,22 @@ async def create_cash_reconciliation(
     """Save an interim (non-mutating) or closing cash count snapshot for audit history."""
     summary = await compute_session_summary(db, session_id=session_id)
     norm_kind = "closing" if (kind or "").strip().lower() == "closing" else "interim"
+    opening = float(summary.opening_balance)
+    cash_in = float(
+        summary.main_cash_in
+        - summary.main_return_today
+        + summary.kassa_debt_today
+        - summary.kassa_repay_today
+    )
+    cash_out = float(summary.total_nakladnoy_spent + summary.expense_today)
     expected = float(summary.expected_cash)
     counted = float(counted_cash)
     rec = CashReconciliation(
         session_id=summary.session.id,
         kind=norm_kind,
+        opening_balance=opening,
+        cash_in_total=cash_in,
+        cash_out_total=cash_out,
         expected_cash=expected,
         counted_cash=counted,
         difference=counted - expected,
@@ -1024,6 +1035,196 @@ async def create_cash_reconciliation(
     await db.commit()
     await db.refresh(rec)
     return rec, summary.session.report_date
+
+
+async def _session_cash_flow_snapshot(
+    db: AsyncSession, session_id: int
+) -> Tuple[float, float, float]:
+    """Compute (opening_balance, cash_in_total, cash_out_total) for a DailyCashSession."""
+    sess = await db.get(DailyCashSession, session_id)
+    if sess is None:
+        return 0.0, 0.0, 0.0
+    opening = float(sess.opening_balance or 0.0)
+    txs = (
+        await db.scalars(
+            select(CashTransaction).where(
+                CashTransaction.session_id == session_id,
+                CashTransaction.is_deleted.is_(False),
+            )
+        )
+    ).all()
+    main_in = sum(float(t.amount) for t in txs if t.source_type == "main")
+    main_ret = sum(float(t.amount) for t in txs if t.source_type == "main_return")
+    k_debt = sum(float(t.amount) for t in txs if t.source_type == "kassa_debt")
+    k_repay = sum(float(t.amount) for t in txs if t.source_type == "kassa_repay")
+    expense = sum(float(t.amount) for t in txs if t.source_type == "expense")
+    cash_spent = float(
+        (
+            await db.scalar(
+                select(func.coalesce(func.sum(NakladnoyPayment.amount), 0.0)).where(
+                    NakladnoyPayment.session_id == session_id,
+                    NakladnoyPayment.status == "confirmed",
+                    NakladnoyPayment.is_debt.is_(False),
+                    or_(
+                        NakladnoyPayment.payment_method == "cash",
+                        NakladnoyPayment.payment_method.is_(None),
+                    ),
+                )
+            )
+        )
+        or 0.0
+    )
+    return opening, main_in - main_ret + k_debt - k_repay, cash_spent + expense
+
+
+async def get_cash_reconciliations_report(
+    db: AsyncSession,
+    *,
+    session_id: Optional[int] = None,
+    kind: Optional[str] = None,
+    limit: int = 80,
+) -> dict:
+    """Return enriched reconciliation history (including legacy closed sessions) + overall plus/minus totals."""
+    stmt = (
+        select(CashReconciliation, DailyCashSession.report_date)
+        .join(DailyCashSession, DailyCashSession.id == CashReconciliation.session_id)
+        .order_by(desc(CashReconciliation.created_at), desc(CashReconciliation.id))
+    )
+    if session_id is not None:
+        stmt = stmt.where(CashReconciliation.session_id == session_id)
+    all_rows = (await db.execute(stmt)).all()
+
+    # Backfill legacy closed sessions that predate the CashReconciliation table
+    closing_session_ids = {
+        int(rec.session_id) for rec, _ in all_rows if rec.kind == "closing"
+    }
+    legacy_stmt = (
+        select(DailyCashSession)
+        .where(
+            DailyCashSession.status == "closed",
+            DailyCashSession.actual_counted_cash.is_not(None),
+        )
+        .order_by(desc(DailyCashSession.closed_at), desc(DailyCashSession.id))
+    )
+    if session_id is not None:
+        legacy_stmt = legacy_stmt.where(DailyCashSession.id == session_id)
+    legacy_sessions = [
+        s for s in (await db.scalars(legacy_stmt)).all()
+        if int(s.id) not in closing_session_ids
+    ]
+
+    snap_cache: Dict[int, Tuple[float, float, float]] = {}
+
+    async def _get_snap(sid: int) -> Tuple[float, float, float]:
+        if sid not in snap_cache:
+            snap_cache[sid] = await _session_cash_flow_snapshot(db, sid)
+        return snap_cache[sid]
+
+    enriched_all: List[dict] = []
+    for rec, r_date in all_rows:
+        opening = float(getattr(rec, "opening_balance", 0.0) or 0.0)
+        c_in = float(getattr(rec, "cash_in_total", 0.0) or 0.0)
+        c_out = float(getattr(rec, "cash_out_total", 0.0) or 0.0)
+        if abs(opening) < 0.01 and abs(c_in) < 0.01 and abs(c_out) < 0.01:
+            opening, c_in, c_out = await _get_snap(int(rec.session_id))
+        enriched_all.append(
+            {
+                "id": int(rec.id),
+                "session_id": int(rec.session_id),
+                "report_date": str(r_date or ""),
+                "kind": rec.kind,
+                "opening_balance": opening,
+                "cash_in_total": c_in,
+                "cash_out_total": c_out,
+                "expected_cash": float(rec.expected_cash),
+                "counted_cash": float(rec.counted_cash),
+                "difference": float(rec.difference),
+                "note": rec.note or "",
+                "created_at": format_local_dt(rec.created_at, "%Y-%m-%d %H:%M"),
+                "time_hm": format_local_dt(rec.created_at, "%H:%M"),
+                "_sort_key": (format_local_dt(rec.created_at, "%Y-%m-%d %H:%M:%S"), int(rec.id)),
+            }
+        )
+
+    for sess in legacy_sessions:
+        opening, c_in, c_out = await _get_snap(int(sess.id))
+        expected = float(sess.expected_cash or 0.0)
+        counted = float(sess.actual_counted_cash or 0.0)
+        diff = float(sess.difference if sess.difference is not None else (counted - expected))
+        ts = sess.closed_at or sess.created_at
+        enriched_all.append(
+            {
+                "id": -int(sess.id),
+                "session_id": int(sess.id),
+                "report_date": str(sess.report_date or ""),
+                "kind": "closing",
+                "opening_balance": opening,
+                "cash_in_total": c_in,
+                "cash_out_total": c_out,
+                "expected_cash": expected,
+                "counted_cash": counted,
+                "difference": diff,
+                "note": "Yopilgan smena",
+                "created_at": format_local_dt(ts, "%Y-%m-%d %H:%M") if ts else str(sess.report_date or ""),
+                "time_hm": format_local_dt(ts, "%H:%M") if ts else "—",
+                "_sort_key": (
+                    format_local_dt(ts, "%Y-%m-%d %H:%M:%S") if ts else str(sess.report_date or ""),
+                    -int(sess.id),
+                ),
+            }
+        )
+
+    enriched_all.sort(key=lambda x: x["_sort_key"], reverse=True)
+
+    def _agg(rows_subset: List[dict]) -> dict:
+        plus = sum(r["difference"] for r in rows_subset if r["difference"] > 0.5)
+        minus = sum(r["difference"] for r in rows_subset if r["difference"] < -0.5)
+        exact = sum(1 for r in rows_subset if abs(r["difference"]) <= 0.5)
+        return {
+            "count": len(rows_subset),
+            "total_plus": round(plus, 2),
+            "total_minus": round(minus, 2),
+            "net_diff": round(plus + minus, 2),
+            "exact_count": exact,
+            "total_cash_in": round(sum(r["cash_in_total"] for r in rows_subset), 2),
+            "total_cash_out": round(sum(r["cash_out_total"] for r in rows_subset), 2),
+        }
+
+    closing_rows = [r for r in enriched_all if r["kind"] == "closing"]
+    interim_rows = [r for r in enriched_all if r["kind"] != "closing"]
+    closing_agg = _agg(closing_rows)
+    interim_agg = _agg(interim_rows)
+
+    clean_kind = (kind or "").strip().lower()
+    if clean_kind in VALID_RECONCILIATION_KINDS:
+        filtered = [r for r in enriched_all if r["kind"] == clean_kind]
+    else:
+        filtered = enriched_all
+
+    limited = []
+    for r in filtered[: max(1, min(limit, 200))]:
+        item = dict(r)
+        item.pop("_sort_key", None)
+        limited.append(item)
+
+    return {
+        "count": len(limited),
+        "summary": {
+            "closing_count": closing_agg["count"],
+            "closing_total_plus": closing_agg["total_plus"],
+            "closing_total_minus": closing_agg["total_minus"],
+            "closing_net_diff": closing_agg["net_diff"],
+            "closing_exact_count": closing_agg["exact_count"],
+            "closing_total_cash_in": closing_agg["total_cash_in"],
+            "closing_total_cash_out": closing_agg["total_cash_out"],
+            "interim_count": interim_agg["count"],
+            "interim_total_plus": interim_agg["total_plus"],
+            "interim_total_minus": interim_agg["total_minus"],
+            "interim_net_diff": interim_agg["net_diff"],
+            "interim_exact_count": interim_agg["exact_count"],
+        },
+        "items": limited,
+    }
 
 
 async def list_cash_reconciliations(
@@ -1075,6 +1276,14 @@ async def close_cash_session(
     summary = await compute_session_summary(db, session_id)
     sess = summary.session
     closed_ts = now_local()
+    opening = float(summary.opening_balance)
+    cash_in = float(
+        summary.main_cash_in
+        - summary.main_return_today
+        + summary.kassa_debt_today
+        - summary.kassa_repay_today
+    )
+    cash_out = float(summary.total_nakladnoy_spent + summary.expense_today)
     expected = float(summary.expected_cash)
     counted = float(actual_counted_cash)
     diff = counted - expected
@@ -1087,6 +1296,9 @@ async def close_cash_session(
         CashReconciliation(
             session_id=sess.id,
             kind="closing",
+            opening_balance=opening,
+            cash_in_total=cash_in,
+            cash_out_total=cash_out,
             expected_cash=expected,
             counted_cash=counted,
             difference=diff,

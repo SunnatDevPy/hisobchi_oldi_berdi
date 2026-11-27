@@ -126,6 +126,17 @@ def upgrade_existing_schema(sync_conn: Connection) -> None:
         if "user_id" not in cols:
             sync_conn.execute(text("ALTER TABLE audit_logs ADD COLUMN user_id BIGINT"))
 
+    if "cash_reconciliations" in tables:
+        cols = {c["name"] for c in inspector.get_columns("cash_reconciliations")}
+        for col_name in ("opening_balance", "cash_in_total", "cash_out_total"):
+            if col_name not in cols:
+                sync_conn.execute(
+                    text(
+                        f"ALTER TABLE cash_reconciliations "
+                        f"ADD COLUMN {col_name} NUMERIC(15, 2) NOT NULL DEFAULT 0"
+                    )
+                )
+
     if sync_conn.dialect.name == "postgresql":
         for tbl, money_cols in _PG_MONEY_COLUMNS:
             if tbl not in tables:
