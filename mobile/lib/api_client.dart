@@ -425,7 +425,7 @@ class HisobchiApiClient {
     return data['status'] == 'ok';
   }
 
-  Future<String> fetchBotUsername({String fallback = 'hisobchi_my_bot'}) async {
+  Future<String> fetchBotUsername({String fallback = 'hisobchi_my_own_bot'}) async {
     try {
       final clean = normalizeBaseUrl(baseUrl);
       final res = await _http

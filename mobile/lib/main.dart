@@ -534,7 +534,7 @@ class _HisobchiAppState extends State<HisobchiApp> with WidgetsBindingObserver {
         final initData = getTelegramWebAppInitData();
         if (initData == null || initData.isEmpty) {
           _webAuthError =
-              "Mini App faqat Telegram bot ichidan (@hisobchi_my_bot) ochiladi.";
+              "Mini App faqat Telegram bot ichidan (@hisobchi_my_own_bot) ochiladi.";
         } else {
           try {
             await _api.loginWithTelegramWebApp(initData: initData);
@@ -863,7 +863,7 @@ class _LoginScreenState extends State<LoginScreen> with WidgetsBindingObserver {
   bool _loading = false;
   bool _openingTelegram = false;
   bool _waitingFromTelegram = false;
-  String _botUsername = 'hisobchi_my_bot';
+  String _botUsername = 'hisobchi_my_own_bot';
   String? _error;
   String? _infoBanner;
 
@@ -13727,7 +13727,7 @@ class _TelegramGroupsAndBotSettingsSheetState
         .whereType<Map>()
         .map((e) => Map<String, dynamic>.from(e))
         .toList();
-    final botUsername = (_hub?['bot_username'] ?? 'hisobchi_my_bot').toString();
+    final botUsername = (_hub?['bot_username'] ?? 'hisobchi_my_own_bot').toString();
 
     return SafeArea(
       top: false,

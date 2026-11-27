@@ -53,8 +53,8 @@
           try {
             var tg = getTg();
             if (!tg) return;
-            var bg = isDark ? '#090712' : '#F6F4FB';
-            var hdr = isDark ? '#131020' : '#6D28D9';
+            var bg = isDark ? '#161817' : '#F2F5F3';
+            var hdr = isDark ? '#202322' : '#0A9E36';
             if (typeof tg.setBackgroundColor === 'function') tg.setBackgroundColor(bg);
             if (typeof tg.setHeaderColor === 'function') tg.setHeaderColor(hdr);
           } catch (_) {}
@@ -165,7 +165,7 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: #05030F;
+      background: #161817;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
     #hisobchi-splash {
@@ -177,10 +177,10 @@
       align-items: center;
       justify-content: center;
       background:
-        radial-gradient(circle at 50% 42%, rgba(180, 76, 255, 0.28) 0%, rgba(124, 58, 237, 0.10) 34%, transparent 66%),
-        radial-gradient(ellipse at 50% 106%, rgba(139, 47, 224, 0.36) 0%, transparent 56%),
-        #05030F;
-      color: #F8FAFC;
+        radial-gradient(circle at 50% 42%, rgba(12, 206, 66, 0.24) 0%, rgba(245, 196, 67, 0.08) 36%, transparent 66%),
+        radial-gradient(ellipse at 50% 106%, rgba(10, 143, 50, 0.34) 0%, transparent 56%),
+        #161817;
+      color: #F8FAF9;
       transition: opacity 0.34s ease, transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
     }
     #hisobchi-splash::after {
@@ -191,8 +191,8 @@
       bottom: -90px;
       height: 130px;
       border-radius: 50% 50% 0 0;
-      border-top: 2px solid rgba(245, 208, 254, 0.72);
-      box-shadow: 0 -10px 32px rgba(236, 72, 153, 0.55);
+      border-top: 2px solid rgba(167, 243, 208, 0.72);
+      box-shadow: 0 -10px 32px rgba(12, 206, 66, 0.50);
       pointer-events: none;
     }
     #hisobchi-splash .logo-wrap {
@@ -209,26 +209,26 @@
       position: absolute;
       inset: 6px;
       border-radius: 50%;
-      border: 1.5px solid rgba(192, 132, 252, 0.55);
+      border: 1.5px solid rgba(40, 224, 112, 0.55);
       pointer-events: none;
       animation: hripple 2.4s cubic-bezier(0.16, 1, 0.3, 1) infinite;
     }
     #hisobchi-splash .ripple.r2 {
       animation-delay: 1.2s;
-      border-color: rgba(244, 114, 182, 0.45);
+      border-color: rgba(245, 196, 67, 0.45);
     }
     #hisobchi-splash .squircle-3d {
       width: 112px;
       height: 112px;
       border-radius: 30px;
       transform: rotateX(14deg) rotateY(-20deg) rotateZ(-6deg);
-      background: linear-gradient(135deg, #FCE7F3 0%, #C084FC 24%, #581C87 58%, #DB2777 100%);
+      background: linear-gradient(135deg, #86EFAC 0%, #0CCE42 28%, #1E3A2B 64%, #D99B26 100%);
       padding: 8px;
       box-sizing: border-box;
       box-shadow:
-        -9px 11px 0 #2E1065,
-        -12px 14px 26px rgba(168, 85, 247, 0.50),
-        0 0 38px rgba(236, 72, 153, 0.42);
+        -9px 11px 0 #121815,
+        -12px 14px 26px rgba(12, 206, 66, 0.42),
+        0 0 38px rgba(245, 196, 67, 0.28);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -237,8 +237,8 @@
       width: 100%;
       height: 100%;
       border-radius: 23px;
-      background: radial-gradient(circle at 40% 38%, #1A0E33 0%, #090514 75%);
-      border: 1px solid rgba(249, 168, 212, 0.45);
+      background: radial-gradient(circle at 40% 38%, #232927 0%, #141716 75%);
+      border: 1px solid rgba(52, 211, 153, 0.42);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -247,14 +247,14 @@
       width: 62px;
       height: 62px;
       animation: hspin 2.2s linear infinite;
-      filter: drop-shadow(0 0 8px rgba(244, 114, 182, 0.75));
+      filter: drop-shadow(0 0 8px rgba(12, 206, 66, 0.72));
     }
     #hisobchi-splash .title {
       margin-top: 22px;
       font-size: 24px;
       font-weight: 900;
       letter-spacing: -0.4px;
-      background: linear-gradient(90deg, #E9D5FF 0%, #FFFFFF 35%, #F9A8D4 55%, #FFFFFF 75%, #E9D5FF 100%);
+      background: linear-gradient(90deg, #86EFAC 0%, #FFFFFF 35%, #FDE68A 55%, #FFFFFF 75%, #4ADE80 100%);
       background-size: 200% auto;
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
@@ -271,7 +271,7 @@
       width: 156px;
       height: 4.5px;
       border-radius: 999px;
-      background: rgba(168, 85, 247, 0.22);
+      background: rgba(12, 206, 66, 0.22);
       overflow: hidden;
       position: relative;
     }
@@ -279,8 +279,8 @@
       width: 68px;
       height: 100%;
       border-radius: 999px;
-      background: linear-gradient(90deg, #A855F7, #F472B6, #FFFFFF);
-      box-shadow: 0 0 10px rgba(236, 72, 153, 0.65);
+      background: linear-gradient(90deg, #0CCE42, #F5C443, #FFFFFF);
+      box-shadow: 0 0 10px rgba(12, 206, 66, 0.65);
       animation: hslide 1.3s ease-in-out infinite alternate;
     }
     @keyframes hspin {
@@ -312,19 +312,19 @@
       <div class="squircle-3d">
         <div class="squircle-cavity">
           <svg class="starburst" viewBox="-50 -50 100 100" xmlns="http://www.w3.org/2000/svg">
-            <g fill="#F472B6">
+            <g fill="#28E070">
               <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" opacity="1.0" fill="#FFFFFF"/>
-              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(30)" opacity="0.92" fill="#FCE7F3"/>
-              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(60)" opacity="0.84" fill="#F9A8D4"/>
+              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(30)" opacity="0.92" fill="#FEF3C7"/>
+              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(60)" opacity="0.84" fill="#86EFAC"/>
               <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(90)" opacity="0.76"/>
               <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(120)" opacity="0.68"/>
               <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(150)" opacity="0.60"/>
-              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(180)" opacity="0.52" fill="#EC4899"/>
-              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(210)" opacity="0.46" fill="#D946EF"/>
-              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(240)" opacity="0.40" fill="#C084FC"/>
-              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(270)" opacity="0.36" fill="#A855F7"/>
-              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(300)" opacity="0.55" fill="#EC4899"/>
-              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(330)" opacity="0.78" fill="#F9A8D4"/>
+              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(180)" opacity="0.52" fill="#0CCE42"/>
+              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(210)" opacity="0.46" fill="#F5C443"/>
+              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(240)" opacity="0.40" fill="#34D399"/>
+              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(270)" opacity="0.36" fill="#10B981"/>
+              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(300)" opacity="0.55" fill="#0CCE42"/>
+              <polygon points="-3.5,-19 3.5,-19 5,-42 -5,-42" transform="rotate(330)" opacity="0.78" fill="#86EFAC"/>
             </g>
           </svg>
         </div>
