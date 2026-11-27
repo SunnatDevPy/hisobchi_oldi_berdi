@@ -39,7 +39,7 @@ double mainTabScrollBottomPadding(
   return sysBottom + (hasFab ? 180.0 : 112.0);
 }
 
-/// Floating frosted-glass bottom navigation capsule with animated neon pill indicator.
+/// Bottom-docked frosted-glass navigation bar flush to the bottom edge with rounded top corners.
 class FloatingGlassBottomNav extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onDestinationSelected;
@@ -57,147 +57,148 @@ class FloatingGlassBottomNav extends StatelessWidget {
     final isDark = isDarkCtx(context);
     final count = destinations.length.clamp(1, 8);
     final activeIdx = selectedIndex.clamp(0, count - 1);
+    final mq = MediaQuery.of(context);
+    final sysBottom = math.max(mq.padding.bottom, mq.viewPadding.bottom);
 
     final glassBg = isDark
-        ? const Color(0xFF120E20).withValues(alpha: 0.84)
-        : Colors.white.withValues(alpha: 0.88);
+        ? const Color(0xFF120E20).withValues(alpha: 0.92)
+        : Colors.white.withValues(alpha: 0.95);
     final rimColor = isDark
         ? Colors.white.withValues(alpha: 0.14)
         : AppTokens.brandViolet.withValues(alpha: 0.16);
+    const topRadius = BorderRadius.vertical(top: Radius.circular(22));
 
     return RepaintBoundary(
-      child: SafeArea(
-        top: false,
-        maintainBottomViewPadding: true,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-          child: Container(
-            height: 64,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(28),
-              boxShadow: [
-                BoxShadow(
-                  color: isDark
-                      ? Colors.black.withValues(alpha: 0.45)
-                      : AppTokens.brandViolet.withValues(alpha: 0.10),
-                  blurRadius: 24,
-                  offset: const Offset(0, 10),
-                ),
-                if (isDark)
-                  BoxShadow(
-                    color: AppTokens.brandViolet.withValues(alpha: 0.14),
-                    blurRadius: 20,
-                    spreadRadius: -4,
-                  ),
-              ],
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: topRadius,
+          boxShadow: [
+            BoxShadow(
+              color: isDark
+                  ? Colors.black.withValues(alpha: 0.42)
+                  : AppTokens.brandViolet.withValues(alpha: 0.10),
+              blurRadius: 20,
+              offset: const Offset(0, -6),
             ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(28),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: glassBg,
-                    borderRadius: BorderRadius.circular(28),
-                    border: Border.all(color: rimColor, width: 1.1),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(5),
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final itemW = constraints.maxWidth / count;
-                        return Stack(
-                          children: [
-                            AnimatedPositioned(
-                              duration: const Duration(milliseconds: 260),
-                              curve: Curves.easeOutCubic,
-                              left: itemW * activeIdx,
-                              top: 0,
-                              bottom: 0,
-                              width: itemW,
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(22),
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topLeft,
-                                    end: Alignment.bottomRight,
-                                    colors: isDark
-                                        ? [
-                                            AppTokens.brandViolet
-                                                .withValues(alpha: 0.28),
-                                            AppTokens.brandOrchid
-                                                .withValues(alpha: 0.18),
-                                          ]
-                                        : [
-                                            AppTokens.brandViolet
-                                                .withValues(alpha: 0.16),
-                                            AppTokens.brandOrchid
-                                                .withValues(alpha: 0.08),
-                                          ],
-                                  ),
-                                  border: Border.all(
-                                    color: AppTokens.brandViolet.withValues(
-                                      alpha: isDark ? 0.36 : 0.24,
-                                    ),
+            if (isDark)
+              BoxShadow(
+                color: AppTokens.brandViolet.withValues(alpha: 0.12),
+                blurRadius: 18,
+                offset: const Offset(0, -2),
+              ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: topRadius,
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: glassBg,
+                borderRadius: topRadius,
+                border: Border(
+                  top: BorderSide(color: rimColor, width: 1.0),
+                ),
+              ),
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(10, 7, 10, 7 + sysBottom),
+                child: SizedBox(
+                  height: 58,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final itemW = constraints.maxWidth / count;
+                      return Stack(
+                        children: [
+                          AnimatedPositioned(
+                            duration: const Duration(milliseconds: 260),
+                            curve: Curves.easeOutCubic,
+                            left: itemW * activeIdx,
+                            top: 0,
+                            bottom: 0,
+                            width: itemW,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(18),
+                                gradient: LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: isDark
+                                      ? [
+                                          AppTokens.brandViolet
+                                              .withValues(alpha: 0.28),
+                                          AppTokens.brandOrchid
+                                              .withValues(alpha: 0.18),
+                                        ]
+                                      : [
+                                          AppTokens.brandViolet
+                                              .withValues(alpha: 0.16),
+                                          AppTokens.brandOrchid
+                                              .withValues(alpha: 0.08),
+                                        ],
+                                ),
+                                border: Border.all(
+                                  color: AppTokens.brandViolet.withValues(
+                                    alpha: isDark ? 0.36 : 0.24,
                                   ),
                                 ),
-                                child: Align(
-                                  alignment: Alignment.topCenter,
-                                  child: Container(
-                                    width: 22,
-                                    height: 2.5,
-                                    margin: const EdgeInsets.only(top: 1),
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(999),
-                                      gradient: const LinearGradient(
-                                        colors: [
-                                          AppTokens.brandViolet,
-                                          AppTokens.brandOrchid,
-                                        ],
-                                      ),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: AppTokens.brandOrchid
-                                              .withValues(alpha: 0.65),
-                                          blurRadius: 8,
-                                        ),
+                              ),
+                              child: Align(
+                                alignment: Alignment.topCenter,
+                                child: Container(
+                                  width: 22,
+                                  height: 2.5,
+                                  margin: const EdgeInsets.only(top: 1),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(999),
+                                    gradient: const LinearGradient(
+                                      colors: [
+                                        AppTokens.brandViolet,
+                                        AppTokens.brandOrchid,
                                       ],
                                     ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: AppTokens.brandOrchid
+                                            .withValues(alpha: 0.65),
+                                        blurRadius: 8,
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ),
                             ),
-                            Row(
-                              children: List.generate(destinations.length, (i) {
-                                final d = destinations[i];
-                                final isSelected = i == activeIdx;
-                                final iconColor = isSelected
-                                    ? (isDark
-                                        ? Colors.white
-                                        : const Color(0xFF6D28D9))
-                                    : textSecondaryOf(context);
-                                final badgeText = d.badgeCount > 99
-                                    ? '99+'
-                                    : '${d.badgeCount}';
+                          ),
+                          Row(
+                            children: List.generate(destinations.length, (i) {
+                              final d = destinations[i];
+                              final isSelected = i == activeIdx;
+                              final iconColor = isSelected
+                                  ? (isDark
+                                      ? Colors.white
+                                      : const Color(0xFF6D28D9))
+                                  : textSecondaryOf(context);
+                              final badgeText = d.badgeCount > 99
+                                  ? '99+'
+                                  : '${d.badgeCount}';
 
-                                return Expanded(
-                                  child: Semantics(
-                                    button: true,
-                                    selected: isSelected,
-                                    label: d.label,
-                                    child: Material(
-                                      color: Colors.transparent,
-                                      child: InkWell(
-                                        borderRadius: BorderRadius.circular(22),
-                                        onTap: () {
-                                          HapticFeedback.selectionClick();
-                                          onDestinationSelected(i);
-                                        },
-                                        child: Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 3),
-                                          child: Column(
-                                            mainAxisAlignment:
+                              return Expanded(
+                                child: Semantics(
+                                  button: true,
+                                  selected: isSelected,
+                                  label: d.label,
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(18),
+                                      onTap: () {
+                                        HapticFeedback.selectionClick();
+                                        onDestinationSelected(i);
+                                      },
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 3),
+                                        child: Column(
+                                          mainAxisAlignment:
                                                 MainAxisAlignment.center,
                                             children: [
                                               Stack(
@@ -300,8 +301,7 @@ class FloatingGlassBottomNav extends StatelessWidget {
             ),
           ),
         ),
-      ),
-    );
+      );
   }
 }
 

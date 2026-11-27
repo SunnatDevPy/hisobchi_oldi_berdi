@@ -1406,7 +1406,8 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
 
   ApkVersionInfo? _remoteVersion;
   bool _updatingApk = false;
-  double _refreshTurns = 0.0;
+  DateTime? _lastAutoPollAt;
+  DateTime? _pausedAt;
   int _dataAnimSeed = 0;
   Timer? _outboxTimer;
   Timer? _liveSyncTimer;
@@ -1432,7 +1433,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
       (_) => _trySyncOutbox(silent: true),
     );
     _liveSyncTimer = Timer.periodic(
-      const Duration(seconds: 5),
+      const Duration(seconds: 4),
       (_) => _pollSyncVersion(),
     );
     final prewarmed = widget.api.consumePrewarmedData();
@@ -1460,13 +1461,28 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _isForeground = true;
+      final awaySeconds = _pausedAt == null
+          ? 0
+          : DateTime.now().difference(_pausedAt!).inSeconds;
+      _pausedAt = null;
       _trySyncOutbox(silent: true);
       _pollSyncVersion(force: true);
+      if (awaySeconds >= 20) {
+        _refreshAll(silent: true, fromRemoteSync: true);
+      }
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive ||
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached) {
       _isForeground = false;
+      _pausedAt ??= DateTime.now();
+    }
+  }
+
+  void _triggerAutoSyncIfDue() {
+    final last = _lastAutoPollAt;
+    if (last == null || DateTime.now().difference(last).inSeconds >= 3) {
+      unawaited(_pollSyncVersion(force: true));
     }
   }
 
@@ -1475,6 +1491,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
       return;
     }
     _pollingSync = true;
+    _lastAutoPollAt = DateTime.now();
     try {
       final info = await widget.api.getSyncVersion();
       if (!mounted) return;
@@ -1523,9 +1540,6 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
         SyncBus.notifyRemoteChange();
       } else if (revChanged) {
         _lastSyncRev = info.rev;
-        if (mounted) {
-          setState(() => _refreshTurns += 1.0);
-        }
         await _refreshAll(silent: true, fromRemoteSync: true);
         SyncBus.notifyRemoteChange();
       }
@@ -1579,6 +1593,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     if (mounted) {
       setState(() => _tabIndex = index);
     }
+    _triggerAutoSyncIfDue();
     if (!_pageController.hasClients) return;
     if (!animate) {
       _programmaticTargetTab = null;
@@ -2518,14 +2533,30 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                 color: AppTokens.brand.withValues(alpha: 0.14),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Text(
-                'v$kAppVersion',
-                style: TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w800,
-                  color: AppTokens.brand,
-                  fontFeatures: AppTokens.tabularNums,
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 6.5,
+                    height: 6.5,
+                    decoration: BoxDecoration(
+                      color: _isOfflineMode
+                          ? AppTokens.debtAmber
+                          : AppTokens.cashGreen,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  const Text(
+                    'v$kAppVersion',
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w800,
+                      color: AppTokens.brand,
+                      fontFeatures: AppTokens.tabularNums,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -2537,45 +2568,6 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
               onPressed: _openVoiceCommandSheet,
               icon: const Icon(Icons.mic_rounded, size: 19),
             ),
-          _buildAppBarCircleAction(
-            tooltip: _isOfflineMode
-                ? 'Oflayn rejim (sinxron kutilmoqda)'
-                : 'Jonli sinxronizatsiya faol — Yangilash',
-            onPressed: () {
-              HapticFeedback.lightImpact();
-              setState(() => _refreshTurns += 1.0);
-              _refreshAll();
-            },
-            icon: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                AnimatedRotation(
-                  turns: _refreshTurns,
-                  duration: const Duration(milliseconds: 520),
-                  curve: Curves.easeOutCubic,
-                  child: const Icon(Icons.refresh_rounded, size: 19),
-                ),
-                Positioned(
-                  right: -2,
-                  top: -2,
-                  child: Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: _isOfflineMode
-                          ? AppTokens.debtAmber
-                          : AppTokens.cashGreen,
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: Theme.of(context).scaffoldBackgroundColor,
-                        width: 1.5,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
           _buildAppBarCircleAction(
             tooltip: 'Mavzu (Kun/Tun)',
             onPressed: () {
@@ -2596,6 +2588,14 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                 key: ValueKey<bool>(isDarkCtx(context)),
               ),
             ),
+          ),
+          _buildAppBarCircleAction(
+            tooltip: 'Sozlamalar',
+            onPressed: () {
+              HapticFeedback.selectionClick();
+              _openAppSettingsSheet();
+            },
+            icon: const Icon(Icons.settings_rounded, size: 19),
           ),
           const SizedBox(width: 8),
         ],
@@ -2791,6 +2791,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                             if (_tabIndex != index) {
                               setState(() => _tabIndex = index);
                             }
+                            _triggerAutoSyncIfDue();
                           },
                           children: [
                             _KeepAliveTabPage(child: _buildDashboardTab()),
@@ -4304,6 +4305,40 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     );
   }
 
+  Future<void> _openAppSettingsSheet() async {
+    final s = _summary;
+    if (s == null) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (ctx) => _AppSettingsSheet(
+        summary: s,
+        api: widget.api,
+        isOfflineMode: _isOfflineMode,
+        onToggleTheme: widget.onToggleTheme,
+        onOpenSupplierSettings: () {
+          Navigator.of(ctx).pop();
+          _openSupplierSettingsSheet();
+        },
+        onOpenTelegramSettings: () {
+          Navigator.of(ctx).pop();
+          _openTelegramHubSheet();
+        },
+        onCheckUpdate: () {
+          Navigator.of(ctx).pop();
+          _downloadAndShareApkUpdate(manualCheck: true);
+        },
+        onLoggedOut: () {
+          Navigator.of(ctx).pop();
+          widget.onLoggedOut();
+        },
+        onLockChanged: widget.onLockChanged,
+        showSnack: _showSnack,
+      ),
+    );
+  }
+
   // --------------------------------------------------------------------------
   // TAB 4: SMENA YOPISH + EXCEL HISOBOTLAR + ARXIV & PRIXOD
   // --------------------------------------------------------------------------
@@ -4315,15 +4350,10 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
       api: widget.api,
       presetCountedCash: _voiceCountedCashPreset,
       onClosed: _refreshAll,
-      onLoggedOut: widget.onLoggedOut,
-      onLockChanged: widget.onLockChanged,
       showSnack: _showSnack,
       onOpenHistorySessions: _openHistorySessionsSheet,
       onOpenLiveSverka: _openLiveSverkaSheet,
       onOpenPrixod: _openPrixodSheet,
-      onOpenSupplierSettings: _openSupplierSettingsSheet,
-      onOpenTelegramSettings: _openTelegramHubSheet,
-      onCheckUpdate: () => _downloadAndShareApkUpdate(manualCheck: true),
     );
   }
 }
@@ -4333,30 +4363,20 @@ class _SmenaAndReportsView extends StatefulWidget {
   final HisobchiApiClient api;
   final double? presetCountedCash;
   final Future<void> Function() onClosed;
-  final VoidCallback onLoggedOut;
-  final VoidCallback? onLockChanged;
   final void Function(String, {bool isError}) showSnack;
   final VoidCallback onOpenHistorySessions;
   final VoidCallback onOpenLiveSverka;
   final VoidCallback onOpenPrixod;
-  final VoidCallback onOpenSupplierSettings;
-  final VoidCallback onOpenTelegramSettings;
-  final VoidCallback onCheckUpdate;
 
   const _SmenaAndReportsView({
     required this.summary,
     required this.api,
     this.presetCountedCash,
     required this.onClosed,
-    required this.onLoggedOut,
-    this.onLockChanged,
     required this.showSnack,
     required this.onOpenHistorySessions,
     required this.onOpenLiveSverka,
     required this.onOpenPrixod,
-    required this.onOpenSupplierSettings,
-    required this.onOpenTelegramSettings,
-    required this.onCheckUpdate,
   });
 
   @override
@@ -4386,11 +4406,6 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
   String _selectedReportType = 'today'; // today | week | month | custom | sverka
   bool _downloadingExcel = false;
   bool _sendingExcelTelegram = false;
-  bool _lockLoaded = false;
-  bool _pinEnabled = false;
-  String? _savedPin;
-  bool _bioEnabled = false;
-  bool _bioSupported = false;
 
   @override
   void initState() {
@@ -4401,7 +4416,6 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
       );
     }
     SyncBus.remoteChangeTick.addListener(_onRemoteSync);
-    _loadSecurityLock();
     _loadReconciliations();
   }
 
@@ -4459,103 +4473,6 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
       _denomCounts.clear();
       _countedCtrl.clear();
     });
-  }
-
-  Future<void> _loadSecurityLock() async {
-    if (kIsWeb) return;
-    final lock = await AppLockStorage.load();
-    final bioAvail = await canUseBiometric();
-    if (!mounted) return;
-    setState(() {
-      _lockLoaded = true;
-      _pinEnabled = lock.enabled && lock.pin != null;
-      _savedPin = lock.pin;
-      _bioEnabled = lock.bioEnabled;
-      _bioSupported = bioAvail;
-    });
-  }
-
-  Future<void> _setupOrChangePin() async {
-    final isChanging = _pinEnabled && _savedPin != null;
-    final saved = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        builder: (ctx) => PinLockScreen(
-          mode: isChanging ? PinScreenMode.change : PinScreenMode.setup,
-          expectedPin: isChanging ? _savedPin : null,
-          biometricEnabled: _bioEnabled,
-          onCanUseBiometric: canUseBiometric,
-          onCompleted: (pin, enableBio) async {
-            await AppLockStorage.savePin(pin, biometricEnabled: enableBio);
-            if (ctx.mounted) Navigator.of(ctx).pop(true);
-          },
-          onCancel: () => Navigator.of(ctx).pop(false),
-        ),
-      ),
-    );
-    if (saved == true && mounted) {
-      await _loadSecurityLock();
-      widget.onLockChanged?.call();
-      widget.showSnack(
-        isChanging
-            ? "🔐 PIN kod muvaffaqiyatli yangilandi!"
-            : "🔐 4 xonali PIN kod o'rnatildi!",
-      );
-    }
-  }
-
-  Future<void> _toggleBiometric(bool nextVal) async {
-    if (!_pinEnabled || _savedPin == null) {
-      widget.showSnack("Avval 4 xonali PIN kod o'rnating", isError: true);
-      await _setupOrChangePin();
-      return;
-    }
-    if (nextVal) {
-      final ok = await authenticateBiometric(
-        subtitle: "Otpechatka orqali kirishni yoqish uchun barmoq izini bosing",
-      );
-      if (!ok) {
-        if (mounted) {
-          widget.showSnack("Barmoq izi tasdiqlanmadi", isError: true);
-        }
-        return;
-      }
-    }
-    await AppLockStorage.setBiometricEnabled(nextVal);
-    if (!mounted) return;
-    await _loadSecurityLock();
-    widget.onLockChanged?.call();
-    widget.showSnack(
-      nextVal
-          ? "✅ Otpechatka orqali kirish yoqildi!"
-          : "🔕 Otpechatka orqali kirish o'chirildi",
-    );
-  }
-
-  Future<void> _disablePin() async {
-    if (!_pinEnabled || _savedPin == null) return;
-    final verified = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        builder: (ctx) => PinLockScreen(
-          mode: PinScreenMode.unlock,
-          expectedPin: _savedPin,
-          biometricEnabled: _bioEnabled,
-          onCanUseBiometric: canUseBiometric,
-          onAuthenticateBiometric: () => authenticateBiometric(
-            subtitle: "PIN kodni o'chirish uchun barmoq izini tasdiqlang",
-          ),
-          onCompleted: (pin, bio) async {
-            if (ctx.mounted) Navigator.of(ctx).pop(true);
-          },
-          onCancel: () => Navigator.of(ctx).pop(false),
-        ),
-      ),
-    );
-    if (verified == true && mounted) {
-      await AppLockStorage.clearPin();
-      await _loadSecurityLock();
-      widget.onLockChanged?.call();
-      widget.showSnack("🔓 PIN kod va xavfsizlik qulfi o'chirildi");
-    }
   }
 
   @override
@@ -5240,193 +5157,6 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                   icon: const Icon(Icons.workspace_premium_rounded),
                   label: const Text('Prixod (ITOG)'),
                 ),
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: widget.onOpenSupplierSettings,
-                  icon: const Icon(Icons.tune_rounded),
-                  label: const Text('Postavshik sozlamalari'),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-
-        if (!kIsWeb) ...[
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(18),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.fingerprint_rounded,
-                          color: AppTokens.brand, size: 24),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Xavfsizlik',
-                          style: TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.w900),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  _infoRow(
-                    'PIN kod:',
-                    !_lockLoaded
-                        ? '...'
-                        : (_pinEnabled ? '✅ Yoqilgan' : "🔕 O'chiq"),
-                  ),
-                  const SizedBox(height: 6),
-                  _infoRow(
-                    'Otpechatka:',
-                    !_lockLoaded
-                        ? '...'
-                        : (!_bioSupported
-                            ? '⚠️ Mavjud emas'
-                            : (_bioEnabled ? '✅ Yoqilgan' : "🔕 O'chiq")),
-                  ),
-                  if (_bioSupported) ...[
-                    const SizedBox(height: 6),
-                    SwitchListTile.adaptive(
-                      contentPadding: EdgeInsets.zero,
-                      secondary: const Icon(
-                        Icons.fingerprint_rounded,
-                        color: AppTokens.brand,
-                      ),
-                      title: const Text(
-                        'Otpechatka',
-                        style: TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      subtitle: Text(
-                        _pinEnabled ? 'Avtomatik tekshirish' : "Avval PIN o'rnating",
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                      value: _pinEnabled && _bioEnabled,
-                      onChanged: _lockLoaded ? _toggleBiometric : null,
-                    ),
-                  ],
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: TactileScaleTap(
-                      child: FilledButton.tonalIcon(
-                        onPressed: _lockLoaded ? _setupOrChangePin : null,
-                        icon: Icon(
-                          _pinEnabled
-                              ? Icons.edit_rounded
-                              : Icons.pin_rounded,
-                        ),
-                        label: Text(
-                          _pinEnabled ? "PIN o'zgartirish" : "PIN o'rnatish",
-                        ),
-                      ),
-                    ),
-                  ),
-                  if (_pinEnabled) ...[
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      child: TactileScaleTap(
-                        child: OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: AppTokens.dangerRed,
-                          ),
-                          onPressed: _lockLoaded ? _disablePin : null,
-                          icon: const Icon(Icons.lock_open_rounded),
-                          label: const Text("PIN o'chirish"),
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-        ],
-        // 3. TELEGRAM GROUP & ACCOUNT SETTINGS
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Row(
-                  children: [
-                    Icon(Icons.telegram, color: AppTokens.cardBlue, size: 24),
-                    SizedBox(width: 8),
-                    Text(
-                      'Telegram va Bot',
-                      style:
-                          TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _infoRow(
-                  'Guruh:',
-                  widget.summary.groupInfo.bound
-                      ? '✅ ${widget.summary.groupInfo.title}'
-                      : '⚠️ Ulanmagan',
-                ),
-                const SizedBox(height: 6),
-                _infoRow(
-                  'Avto-yuborish:',
-                  widget.summary.groupInfo.apkPostToGroup
-                      ? '✅ Yoqilgan'
-                      : "🔕 O'chiq",
-                ),
-                const SizedBox(height: 6),
-                _infoRow(
-                  'Versiya:',
-                  kIsWeb
-                      ? 'v$kAppVersion (Web)'
-                      : 'v$kAppVersion (#$kAppBuildNumber)',
-                ),
-                const SizedBox(height: 6),
-                _infoRow('Rol:', widget.api.role.toUpperCase()),
-                const Divider(height: 24),
-                if (widget.api.isAdmin)
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: widget.onOpenTelegramSettings,
-                      icon: const Icon(Icons.hub_rounded),
-                      label: const Text('Guruh va xodimlar'),
-                    ),
-                  ),
-                if (!kIsWeb) ...[
-                  if (!kIsPlayStoreBuild) ...[
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton.tonalIcon(
-                        onPressed: widget.onCheckUpdate,
-                        icon: const Icon(Icons.system_update_rounded),
-                        label: const Text('Yangilanishni tekshirish'),
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppTokens.dangerRed,
-                      ),
-                      onPressed: () async {
-                        await widget.api.logout();
-                        widget.onLoggedOut();
-                      },
-                      icon: const Icon(Icons.logout_rounded),
-                      label: const Text('Hisobdan chiqish'),
-                    ),
-                  ),
-                ],
               ],
             ),
           ),
@@ -5486,19 +5216,14 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                     ),
                   ),
                 ),
-                IconButton(
-                  tooltip: 'Yangilash',
-                  visualDensity: VisualDensity.compact,
-                  onPressed:
-                      _loadingReconciliations ? null : _loadReconciliations,
-                  icon: _loadingReconciliations
-                      ? const SizedBox(
-                          width: 15,
-                          height: 15,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.refresh_rounded, size: 19),
-                ),
+                if (_loadingReconciliations) ...[
+                  const SizedBox(width: 8),
+                  const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: 8),
@@ -5543,6 +5268,146 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
       ),
     );
   }
+}
+
+class _AppSettingsSheet extends StatefulWidget {
+  final StatusSummary summary;
+  final HisobchiApiClient api;
+  final bool isOfflineMode;
+  final VoidCallback onToggleTheme;
+  final VoidCallback onOpenSupplierSettings;
+  final VoidCallback onOpenTelegramSettings;
+  final VoidCallback onCheckUpdate;
+  final VoidCallback onLoggedOut;
+  final VoidCallback? onLockChanged;
+  final void Function(String, {bool isError}) showSnack;
+
+  const _AppSettingsSheet({
+    required this.summary,
+    required this.api,
+    required this.isOfflineMode,
+    required this.onToggleTheme,
+    required this.onOpenSupplierSettings,
+    required this.onOpenTelegramSettings,
+    required this.onCheckUpdate,
+    required this.onLoggedOut,
+    this.onLockChanged,
+    required this.showSnack,
+  });
+
+  @override
+  State<_AppSettingsSheet> createState() => _AppSettingsSheetState();
+}
+
+class _AppSettingsSheetState extends State<_AppSettingsSheet> {
+  bool _lockLoaded = false;
+  bool _pinEnabled = false;
+  String? _savedPin;
+  bool _bioEnabled = false;
+  bool _bioSupported = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSecurityLock();
+  }
+
+  Future<void> _loadSecurityLock() async {
+    if (kIsWeb) return;
+    final lock = await AppLockStorage.load();
+    final bioAvail = await canUseBiometric();
+    if (!mounted) return;
+    setState(() {
+      _lockLoaded = true;
+      _pinEnabled = lock.enabled && lock.pin != null;
+      _savedPin = lock.pin;
+      _bioEnabled = lock.bioEnabled;
+      _bioSupported = bioAvail;
+    });
+  }
+
+  Future<void> _setupOrChangePin() async {
+    final isChanging = _pinEnabled && _savedPin != null;
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (ctx) => PinLockScreen(
+          mode: isChanging ? PinScreenMode.change : PinScreenMode.setup,
+          expectedPin: isChanging ? _savedPin : null,
+          biometricEnabled: _bioEnabled,
+          onCanUseBiometric: canUseBiometric,
+          onCompleted: (pin, enableBio) async {
+            await AppLockStorage.savePin(pin, biometricEnabled: enableBio);
+            if (ctx.mounted) Navigator.of(ctx).pop(true);
+          },
+          onCancel: () => Navigator.of(ctx).pop(false),
+        ),
+      ),
+    );
+    if (saved == true && mounted) {
+      await _loadSecurityLock();
+      widget.onLockChanged?.call();
+      widget.showSnack(
+        isChanging
+            ? "🔐 PIN kod muvaffaqiyatli yangilandi!"
+            : "🔐 4 xonali PIN kod o'rnatildi!",
+      );
+    }
+  }
+
+  Future<void> _toggleBiometric(bool nextVal) async {
+    if (!_pinEnabled || _savedPin == null) {
+      widget.showSnack("Avval 4 xonali PIN kod o'rnating", isError: true);
+      await _setupOrChangePin();
+      return;
+    }
+    if (nextVal) {
+      final ok = await authenticateBiometric(
+        subtitle: "Otpechatka orqali kirishni yoqish uchun barmoq izini bosing",
+      );
+      if (!ok) {
+        if (mounted) {
+          widget.showSnack("Barmoq izi tasdiqlanmadi", isError: true);
+        }
+        return;
+      }
+    }
+    await AppLockStorage.setBiometricEnabled(nextVal);
+    if (!mounted) return;
+    await _loadSecurityLock();
+    widget.onLockChanged?.call();
+    widget.showSnack(
+      nextVal
+          ? "✅ Otpechatka orqali kirish yoqildi!"
+          : "🔕 Otpechatka orqali kirish o'chirildi",
+    );
+  }
+
+  Future<void> _disablePin() async {
+    if (!_pinEnabled || _savedPin == null) return;
+    final verified = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (ctx) => PinLockScreen(
+          mode: PinScreenMode.unlock,
+          expectedPin: _savedPin,
+          biometricEnabled: _bioEnabled,
+          onCanUseBiometric: canUseBiometric,
+          onAuthenticateBiometric: () => authenticateBiometric(
+            subtitle: "PIN kodni o'chirish uchun barmoq izini tasdiqlang",
+          ),
+          onCompleted: (pin, bio) async {
+            if (ctx.mounted) Navigator.of(ctx).pop(true);
+          },
+          onCancel: () => Navigator.of(ctx).pop(false),
+        ),
+      ),
+    );
+    if (verified == true && mounted) {
+      await AppLockStorage.clearPin();
+      await _loadSecurityLock();
+      widget.onLockChanged?.call();
+      widget.showSnack("🔓 PIN kod va xavfsizlik qulfi o'chirildi");
+    }
+  }
 
   Widget _infoRow(String label, String val) {
     return Row(
@@ -5554,11 +5419,363 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
           child: Text(
             val,
             textAlign: TextAlign.end,
-            style: const TextStyle(
-                fontSize: 13.5, fontWeight: FontWeight.w800),
+            style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800),
           ),
         ),
       ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = isDarkCtx(context);
+    final syncBase =
+        widget.isOfflineMode ? AppTokens.debtAmber : AppTokens.cashGreen;
+    final (syncFg, syncBg, syncBorder) =
+        AppTokens.semanticSurface(context, syncBase);
+
+    return SafeArea(
+      top: false,
+      maintainBottomViewPadding: true,
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 4,
+          bottom: sheetBottomPadding(context),
+        ),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: sheetMaxHeight(context, fraction: 0.90),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.settings_rounded,
+                      color: AppTokens.brand, size: 22),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text(
+                      'Sozlamalar',
+                      style:
+                          TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Yopish',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: syncBg,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: syncBorder),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: syncBase,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        widget.isOfflineMode
+                            ? 'Oflayn rejim — internet qaytganda avtomatik sinxronlanadi'
+                            : "Avto-sinxronizatsiya faol — barcha ma'lumotlar jonli yangilanadi",
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: syncFg,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // 1. UMUMIY SOZLAMALAR
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const Row(
+                                children: [
+                                  Icon(Icons.tune_rounded,
+                                      color: AppTokens.brandViolet, size: 22),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    'Umumiy sozlamalar',
+                                    style: TextStyle(
+                                        fontSize: 15.5,
+                                        fontWeight: FontWeight.w900),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              SwitchListTile.adaptive(
+                                contentPadding: EdgeInsets.zero,
+                                secondary: Icon(
+                                  isDark
+                                      ? Icons.dark_mode_rounded
+                                      : Icons.light_mode_rounded,
+                                  color: AppTokens.brand,
+                                ),
+                                title: const Text(
+                                  'Tungi mavzu',
+                                  style: TextStyle(fontWeight: FontWeight.w700),
+                                ),
+                                subtitle: Text(
+                                  isDark
+                                      ? "Qorong'i ko'rinish"
+                                      : "Yorug' ko'rinish",
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                                value: isDark,
+                                onChanged: (_) {
+                                  HapticFeedback.selectionClick();
+                                  widget.onToggleTheme();
+                                },
+                              ),
+                              const SizedBox(height: 6),
+                              OutlinedButton.icon(
+                                onPressed: widget.onOpenSupplierSettings,
+                                icon: const Icon(Icons.storefront_rounded),
+                                label: const Text('Postavshik sozlamalari'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+
+                      // 2. XAVFSIZLIK (PIN & OTPECHATKA)
+                      if (!kIsWeb) ...[
+                        Card(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Row(
+                                  children: [
+                                    Icon(Icons.fingerprint_rounded,
+                                        color: AppTokens.brand, size: 22),
+                                    SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        'Xavfsizlik',
+                                        style: TextStyle(
+                                            fontSize: 15.5,
+                                            fontWeight: FontWeight.w900),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                _infoRow(
+                                  'PIN kod:',
+                                  !_lockLoaded
+                                      ? '...'
+                                      : (_pinEnabled
+                                          ? '✅ Yoqilgan'
+                                          : "🔕 O'chiq"),
+                                ),
+                                const SizedBox(height: 6),
+                                _infoRow(
+                                  'Otpechatka:',
+                                  !_lockLoaded
+                                      ? '...'
+                                      : (!_bioSupported
+                                          ? '⚠️ Mavjud emas'
+                                          : (_bioEnabled
+                                              ? '✅ Yoqilgan'
+                                              : "🔕 O'chiq")),
+                                ),
+                                if (_bioSupported) ...[
+                                  const SizedBox(height: 6),
+                                  SwitchListTile.adaptive(
+                                    contentPadding: EdgeInsets.zero,
+                                    secondary: const Icon(
+                                      Icons.fingerprint_rounded,
+                                      color: AppTokens.brand,
+                                    ),
+                                    title: const Text(
+                                      'Otpechatka',
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.w700),
+                                    ),
+                                    subtitle: Text(
+                                      _pinEnabled
+                                          ? 'Avtomatik tekshirish'
+                                          : "Avval PIN o'rnating",
+                                      style: const TextStyle(fontSize: 12),
+                                    ),
+                                    value: _pinEnabled && _bioEnabled,
+                                    onChanged:
+                                        _lockLoaded ? _toggleBiometric : null,
+                                  ),
+                                ],
+                                const SizedBox(height: 10),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: TactileScaleTap(
+                                    child: FilledButton.tonalIcon(
+                                      onPressed: _lockLoaded
+                                          ? _setupOrChangePin
+                                          : null,
+                                      icon: Icon(
+                                        _pinEnabled
+                                            ? Icons.edit_rounded
+                                            : Icons.pin_rounded,
+                                      ),
+                                      label: Text(
+                                        _pinEnabled
+                                            ? "PIN o'zgartirish"
+                                            : "PIN o'rnatish",
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                if (_pinEnabled) ...[
+                                  const SizedBox(height: 10),
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: TactileScaleTap(
+                                      child: OutlinedButton.icon(
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: AppTokens.dangerRed,
+                                        ),
+                                        onPressed:
+                                            _lockLoaded ? _disablePin : null,
+                                        icon: const Icon(
+                                            Icons.lock_open_rounded),
+                                        label: const Text("PIN o'chirish"),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+
+                      // 3. TELEGRAM VA HISOB
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Row(
+                                children: [
+                                  Icon(Icons.telegram,
+                                      color: AppTokens.cardBlue, size: 22),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    'Telegram va Hisob',
+                                    style: TextStyle(
+                                        fontSize: 15.5,
+                                        fontWeight: FontWeight.w900),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              _infoRow(
+                                'Guruh:',
+                                widget.summary.groupInfo.bound
+                                    ? '✅ ${widget.summary.groupInfo.title}'
+                                    : '⚠️ Ulanmagan',
+                              ),
+                              const SizedBox(height: 6),
+                              _infoRow(
+                                'Avto-yuborish:',
+                                widget.summary.groupInfo.apkPostToGroup
+                                    ? '✅ Yoqilgan'
+                                    : "🔕 O'chiq",
+                              ),
+                              const SizedBox(height: 6),
+                              _infoRow(
+                                'Versiya:',
+                                kIsWeb
+                                    ? 'v$kAppVersion (Web)'
+                                    : 'v$kAppVersion (#$kAppBuildNumber)',
+                              ),
+                              const SizedBox(height: 6),
+                              _infoRow('Rol:', widget.api.role.toUpperCase()),
+                              const Divider(height: 22),
+                              if (widget.api.isAdmin)
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: FilledButton.icon(
+                                    onPressed: widget.onOpenTelegramSettings,
+                                    icon: const Icon(Icons.hub_rounded),
+                                    label: const Text('Guruh va xodimlar'),
+                                  ),
+                                ),
+                              if (!kIsWeb) ...[
+                                if (!kIsPlayStoreBuild) ...[
+                                  const SizedBox(height: 10),
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: FilledButton.tonalIcon(
+                                      onPressed: widget.onCheckUpdate,
+                                      icon: const Icon(
+                                          Icons.system_update_rounded),
+                                      label: const Text(
+                                          'Yangilanishni tekshirish'),
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(height: 10),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: OutlinedButton.icon(
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: AppTokens.dangerRed,
+                                    ),
+                                    onPressed: () async {
+                                      await widget.api.logout();
+                                      widget.onLoggedOut();
+                                    },
+                                    icon: const Icon(Icons.logout_rounded),
+                                    label: const Text('Hisobdan chiqish'),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
