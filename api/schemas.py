@@ -173,6 +173,17 @@ class SupplierConfigCreateRequest(BaseModel):
     default_category: str = Field(default="qarz", max_length=32)
 
 
+class SupplierMergeRequest(BaseModel):
+    target_name: str = Field(..., min_length=1, max_length=255)
+    source_names: List[str] = Field(default_factory=list, max_length=50)
+    extra_aliases: List[str] = Field(default_factory=list, max_length=50)
+
+
+class SupplierAliasesUpdateRequest(BaseModel):
+    supplier_name: str = Field(..., min_length=1, max_length=255)
+    aliases: List[str] = Field(default_factory=list, max_length=50)
+
+
 class RoundModeUpdateRequest(BaseModel):
     round_mode: str = Field(..., pattern="^(floor_1000|nearest_1000|none)$")
 

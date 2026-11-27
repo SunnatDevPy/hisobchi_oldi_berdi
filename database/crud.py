@@ -1498,19 +1498,330 @@ def _cross_script_similarity(a: str, b: str) -> float:
     return max(direct, phonetic, cursive)
 
 
+def parse_supplier_aliases(raw: str) -> List[str]:
+    """Split comma/semicolon/newline-separated supplier aliases into clean unique strings."""
+    if not raw:
+        return []
+    parts = re.split(r"[,;\n]+", raw)
+    seen: set[str] = set()
+    out: List[str] = []
+    for p in parts:
+        clean = " ".join(p.strip().split())
+        key = _norm_key(clean)
+        if clean and key and key not in seen:
+            seen.add(key)
+            out.append(clean)
+    return out
+
+
 async def _supplier_alias_lookup(db: AsyncSession) -> Dict[str, str]:
-    """Map normalized lowercase display names and aliases -> canonical SupplierConfig display_name."""
+    """Map normalized lowercase & Cyrillic->Latin display names and aliases -> canonical display_name."""
     cfgs = await list_suppliers(db, active_only=True)
     mapping: Dict[str, str] = {}
+    lat_mapping: Dict[str, str] = {}
     for cfg in cfgs:
-        disp = cfg.display_name.strip()
+        disp = " ".join((cfg.display_name or "").strip().split())
         if disp:
-            mapping[_norm_key(disp)] = disp
-        for alias in cfg.aliases.split(","):
+            dk = _norm_key(disp)
+            mapping[dk] = disp
+            dlat = _cyr_to_lat(disp)
+            if len(dlat) >= 2:
+                lat_mapping.setdefault(dlat, disp)
+        for alias in parse_supplier_aliases(cfg.aliases or ""):
             ak = _norm_key(alias)
             if ak:
                 mapping[ak] = disp
+            alat = _cyr_to_lat(alias)
+            if len(alat) >= 2:
+                lat_mapping.setdefault(alat, disp)
+    for k, v in lat_mapping.items():
+        mapping.setdefault(k, v)
     return mapping
+
+
+async def get_supplier_aliases_map(db: AsyncSession) -> Dict[str, List[str]]:
+    """Return {_norm_key(display_name): [alias, ...]} for all active SupplierConfig records."""
+    cfgs = await list_suppliers(db, active_only=True)
+    result: Dict[str, List[str]] = {}
+    for cfg in cfgs:
+        disp = " ".join((cfg.display_name or "").strip().split())
+        if not disp:
+            continue
+        dk = _norm_key(disp)
+        aliases = [
+            a for a in parse_supplier_aliases(cfg.aliases or "")
+            if _norm_key(a) != dk
+        ]
+        result[dk] = aliases
+    return result
+
+
+async def update_supplier_aliases(
+    db: AsyncSession,
+    supplier_name: str,
+    aliases: List[str],
+    user_id: Optional[int] = None,
+) -> dict:
+    """Set the full list of alternative names (aliases) for a supplier."""
+    clean_name = " ".join((supplier_name or "").strip().split())
+    if not clean_name:
+        raise ValueError("Postavshik nomini kiriting")
+    target_key = _norm_key(clean_name)
+
+    cfgs = await list_suppliers(db, active_only=False)
+    target_cfg = next(
+        (c for c in cfgs if _norm_key(c.display_name) == target_key),
+        None,
+    )
+    cleaned_aliases: List[str] = []
+    seen_keys: set[str] = {target_key}
+    for raw_a in aliases:
+        for part in parse_supplier_aliases(raw_a):
+            pk = _norm_key(part)
+            if pk and pk not in seen_keys:
+                seen_keys.add(pk)
+                cleaned_aliases.append(part)
+
+    alias_str = ", ".join(cleaned_aliases)
+    if target_cfg is None:
+        order_num = max((c.order_num for c in cfgs), default=0) + 1
+        target_cfg = SupplierConfig(
+            order_num=order_num,
+            display_name=clean_name,
+            aliases=alias_str,
+            default_category="qarz",
+            is_active=True,
+        )
+        db.add(target_cfg)
+    else:
+        target_cfg.aliases = alias_str
+        target_cfg.is_active = True
+
+    await db.commit()
+    await db.refresh(target_cfg)
+    await log_action(
+        db,
+        "edit",
+        "supplier_aliases",
+        target_cfg.id,
+        f"{target_cfg.display_name}: [{alias_str}]",
+        user_id=user_id,
+    )
+    return {
+        "id": int(target_cfg.id),
+        "supplier_name": target_cfg.display_name,
+        "aliases": cleaned_aliases,
+        "aliases_str": alias_str,
+    }
+
+
+async def find_duplicate_supplier_groups(db: AsyncSession) -> List[dict]:
+    """Detect unmerged supplier name duplicates (case & Cyrillic<->Latin variants like Nafis/nafis/нафис)."""
+    raw_counts: Counter[str] = Counter()
+
+    nak_names = (
+        await db.scalars(
+            select(NakladnoyPayment.supplier_name).where(
+                NakladnoyPayment.status == "confirmed"
+            )
+        )
+    ).all()
+    for s in nak_names:
+        clean = " ".join((s or "").strip().split())
+        if clean:
+            raw_counts[clean] += 1
+
+    debt_names = (
+        await db.scalars(
+            select(SupplierDebt.supplier_name).where(
+                SupplierDebt.is_deleted.is_(False)
+            )
+        )
+    ).all()
+    for s in debt_names:
+        clean = " ".join((s or "").strip().split())
+        if clean:
+            raw_counts[clean] += 1
+
+    cfgs = await list_suppliers(db, active_only=True)
+    cfg_display_by_norm: Dict[str, str] = {}
+    alias_to_cfg_lat: Dict[str, str] = {}
+    for c in cfgs:
+        disp = " ".join((c.display_name or "").strip().split())
+        if not disp:
+            continue
+        raw_counts.setdefault(disp, 0)
+        cfg_display_by_norm[_norm_key(disp)] = disp
+        dlat = _cyr_to_lat(disp) or _norm_key(disp)
+        for a in parse_supplier_aliases(c.aliases or ""):
+            alat = _cyr_to_lat(a) or _norm_key(a)
+            if alat:
+                alias_to_cfg_lat[alat] = dlat
+
+    groups: Dict[str, List[str]] = {}
+    for raw_name in raw_counts:
+        lat_key = _cyr_to_lat(raw_name) or _norm_key(raw_name)
+        cluster_key = alias_to_cfg_lat.get(lat_key, lat_key)
+        groups.setdefault(cluster_key, []).append(raw_name)
+
+    def _is_latin_preferred(name: str) -> int:
+        has_cyr = any("а" <= ch.lower() <= "я" or ch.lower() in "ёўқғҳ" for ch in name)
+        has_upper = any(ch.isupper() for ch in name)
+        return (0 if has_cyr else 2) + (1 if has_upper else 0)
+
+    out: List[dict] = []
+    for variants in groups.values():
+        if len(variants) < 2:
+            continue
+        # Pick best suggested canonical name
+        cfg_match = next(
+            (cfg_display_by_norm[_norm_key(v)] for v in variants if _norm_key(v) in cfg_display_by_norm),
+            None,
+        )
+        ranked = sorted(
+            variants,
+            key=lambda v: (-raw_counts[v], -_is_latin_preferred(v), v.lower()),
+        )
+        suggested = cfg_match or ranked[0]
+        total_cnt = sum(raw_counts[v] for v in variants)
+        out.append(
+            {
+                "suggested_target": suggested,
+                "variants": [{"name": v, "count": int(raw_counts[v])} for v in ranked],
+                "total_count": int(total_cnt),
+            }
+        )
+
+    out.sort(key=lambda g: (-g["total_count"], g["suggested_target"].lower()))
+    return out
+
+
+async def merge_suppliers(
+    db: AsyncSession,
+    target_name: str,
+    source_names: List[str],
+    extra_aliases: Optional[List[str]] = None,
+    user_id: Optional[int] = None,
+) -> dict:
+    """Merge multiple supplier names into one canonical target, rewriting history & saving aliases."""
+    target = " ".join((target_name or "").strip().split())
+    if not target:
+        raise ValueError("Asosiy postavshik nomini kiriting")
+    target_key = _norm_key(target)
+
+    cleaned_sources: List[str] = []
+    merge_keys: set[str] = {target_key}
+    for s in source_names:
+        cs = " ".join((s or "").strip().split())
+        sk = _norm_key(cs)
+        if cs and sk:
+            merge_keys.add(sk)
+            if cs != target and cs not in cleaned_sources:
+                cleaned_sources.append(cs)
+
+    # 1. Consolidate SupplierConfig records and collect all aliases
+    all_cfgs = await list_suppliers(db, active_only=False)
+    matched_cfgs = [c for c in all_cfgs if _norm_key(c.display_name) in merge_keys]
+
+    alias_candidates: List[str] = []
+    for c in matched_cfgs:
+        if c.display_name:
+            alias_candidates.append(c.display_name)
+        alias_candidates.extend(parse_supplier_aliases(c.aliases or ""))
+    alias_candidates.extend(cleaned_sources)
+    for ea in extra_aliases or []:
+        alias_candidates.extend(parse_supplier_aliases(ea))
+
+    final_aliases: List[str] = []
+    seen_alias_keys: set[str] = {target_key}
+    for cand in alias_candidates:
+        cc = " ".join(cand.strip().split())
+        ck = _norm_key(cc)
+        if cc and ck and ck not in seen_alias_keys:
+            seen_alias_keys.add(ck)
+            final_aliases.append(cc)
+
+    target_cfg: Optional[SupplierConfig] = next(
+        (c for c in matched_cfgs if c.display_name == target),
+        None,
+    )
+    if target_cfg is None:
+        target_cfg = next(
+            (c for c in matched_cfgs if _norm_key(c.display_name) == target_key),
+            matched_cfgs[0] if matched_cfgs else None,
+        )
+
+    removed_cfg_count = 0
+    for c in matched_cfgs:
+        if target_cfg is not None and c.id != target_cfg.id:
+            await db.delete(c)
+            removed_cfg_count += 1
+    if removed_cfg_count > 0:
+        await db.flush()
+
+    alias_str = ", ".join(final_aliases)
+    if target_cfg is None:
+        order_num = max((c.order_num for c in all_cfgs), default=0) + 1
+        target_cfg = SupplierConfig(
+            order_num=order_num,
+            display_name=target,
+            aliases=alias_str,
+            default_category="qarz",
+            is_active=True,
+        )
+        db.add(target_cfg)
+        await db.flush()
+    else:
+        target_cfg.display_name = target
+        target_cfg.aliases = alias_str
+        target_cfg.is_active = True
+
+    # 2. Rewrite NakladnoyPayment rows matching any merged key to target_name
+    nak_rows = (
+        await db.scalars(
+            select(NakladnoyPayment).where(
+                NakladnoyPayment.status.in_(["confirmed", "pending"])
+            )
+        )
+    ).all()
+    updated_nak = 0
+    for pay in nak_rows:
+        if _norm_key(pay.supplier_name or "") in merge_keys and pay.supplier_name != target:
+            pay.supplier_name = target
+            updated_nak += 1
+
+    # 3. Rewrite SupplierDebt rows matching any merged key to target_name
+    debt_rows = (
+        await db.scalars(
+            select(SupplierDebt).where(SupplierDebt.is_deleted.is_(False))
+        )
+    ).all()
+    updated_debts = 0
+    for debt in debt_rows:
+        if _norm_key(debt.supplier_name or "") in merge_keys and debt.supplier_name != target:
+            debt.supplier_name = target
+            updated_debts += 1
+
+    await db.commit()
+    await db.refresh(target_cfg)
+    await log_action(
+        db,
+        "merge",
+        "supplier",
+        target_cfg.id,
+        f"{cleaned_sources} -> {target} (nak={updated_nak}, debts={updated_debts})",
+        user_id=user_id,
+    )
+    return {
+        "ok": True,
+        "target_name": target_cfg.display_name,
+        "aliases": final_aliases,
+        "aliases_str": alias_str,
+        "merged_sources": cleaned_sources,
+        "updated_nakladnoys": updated_nak,
+        "updated_debts": updated_debts,
+        "removed_configs": removed_cfg_count,
+    }
 
 
 async def find_similar_suppliers(
@@ -1564,6 +1875,9 @@ async def resolve_supplier_name(
     alias_map = await _supplier_alias_lookup(db)
     if low in alias_map:
         return alias_map[low], None
+    lat = _cyr_to_lat(cleaned)
+    if len(lat) >= 2 and lat in alias_map:
+        return alias_map[lat], None
 
     hist_rows = (
         await db.scalars(
@@ -1573,14 +1887,21 @@ async def resolve_supplier_name(
         )
     ).all()
     casing_counts: Dict[str, Counter[str]] = {}
+    lat_counts: Dict[str, Counter[str]] = {}
     for s in hist_rows:
         s_clean = " ".join(s.strip().split())
         if s_clean:
             casing_counts.setdefault(s_clean.lower(), Counter())[s_clean] += 1
+            s_lat = _cyr_to_lat(s_clean)
+            if len(s_lat) >= 2:
+                lat_counts.setdefault(s_lat, Counter())[s_clean] += 1
     hist_canonical = {k: cnt.most_common(1)[0][0] for k, cnt in casing_counts.items()}
 
     if low in hist_canonical:
         return hist_canonical[low], None
+
+    if len(lat) >= 2 and lat in lat_counts:
+        return lat_counts[lat].most_common(1)[0][0], None
 
     similar = await find_similar_suppliers(db, cleaned, limit=1, cutoff=0.68)
     if similar:

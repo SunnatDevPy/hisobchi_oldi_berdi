@@ -3628,3 +3628,167 @@ def test_main_return_accounting_excel_and_status(tmp_path: Path) -> None:
             await eng.dispose()
 
     asyncio.run(scenario())
+
+
+def test_supplier_merge_duplicates_and_aliases(tmp_path: Path, monkeypatch) -> None:
+    """Detect Nafis/nafis/нафис duplicates, merge history + debts, save aliases & auto-resolve new rows."""
+    import httpx
+    from types import SimpleNamespace
+    import api.app as api_app_mod
+    import api.auth as api_auth_mod
+    import api.deps as api_deps_mod
+    from bot.auth import clear_role_cache
+    from config import get_settings
+    from database.models import NakladnoyPayment, SupplierDebt
+
+    monkeypatch.setenv("ADMIN_IDS", "111")
+    monkeypatch.setenv("ALLOWED_USERS", "111")
+    get_settings.cache_clear()
+    clear_role_cache()
+    api_auth_mod.clear_auth_memory_state()
+
+    async def scenario() -> None:
+        db_file = tmp_path / "test_merge_sup.db"
+        eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+        await init_db(engine_override=eng, session_maker_override=maker)
+        monkeypatch.setattr(api_auth_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_deps_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_app_mod, "async_session_maker", maker)
+
+        try:
+            async with maker() as db:
+                sess = await get_or_create_open_session(db, report_date="2026-11-27")
+                # Seed legacy unmerged variants directly in DB
+                db.add_all(
+                    [
+                        NakladnoyPayment(
+                            session_id=sess.id,
+                            supplier_name="Nafis",
+                            amount=200_000,
+                            status="confirmed",
+                            payment_method="cash",
+                            is_debt=False,
+                        ),
+                        NakladnoyPayment(
+                            session_id=sess.id,
+                            supplier_name="nafis",
+                            amount=300_000,
+                            status="confirmed",
+                            payment_method="cash",
+                            is_debt=True,
+                        ),
+                        NakladnoyPayment(
+                            session_id=sess.id,
+                            supplier_name="нафис",
+                            amount=400_000,
+                            status="confirmed",
+                            payment_method="cash",
+                            is_debt=False,
+                        ),
+                        NakladnoyPayment(
+                            session_id=sess.id,
+                            supplier_name="Coca Cola",
+                            amount=500_000,
+                            status="confirmed",
+                            payment_method="cash",
+                            is_debt=False,
+                        ),
+                        SupplierDebt(
+                            supplier_name="нафис",
+                            amount=150_000,
+                            entry_type="debt",
+                            note="eski nasiya",
+                            is_deleted=False,
+                        ),
+                    ]
+                )
+                await db.commit()
+
+            app = api_app_mod.create_api_app()
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                code = api_auth_mod.create_login_code(111)
+                tok = (await client.post("/auth/login", json={"code": code})).json()["access_token"]
+                headers = {"Authorization": f"Bearer {tok}"}
+
+                # 1. Duplicate detector catches Nafis / nafis / нафис
+                r_dup = await client.get("/suppliers/duplicates", headers=headers)
+                assert r_dup.status_code == 200
+                dup_groups = r_dup.json()["groups"]
+                assert len(dup_groups) == 1
+                names_in_grp = {v["name"] for v in dup_groups[0]["variants"]}
+                assert names_in_grp == {"Nafis", "nafis", "нафис"}
+
+                # 2. Merge all 3 into canonical "Nafis" + extra alias "Нафис савдо"
+                r_merge = await client.post(
+                    "/suppliers/merge",
+                    headers=headers,
+                    json={
+                        "target_name": "Nafis",
+                        "source_names": ["Nafis", "nafis", "нафис"],
+                        "extra_aliases": ["Нафис савдо"],
+                    },
+                )
+                assert r_merge.status_code == 200
+                m = r_merge.json()
+                assert m["target_name"] == "Nafis"
+                assert m["updated_nakladnoys"] == 2
+                assert m["updated_debts"] == 1
+                assert "нафис" in m["aliases"]
+                assert "Нафис савдо" in m["aliases"]
+
+                # 3. Duplicates are now 0 & directory consolidates into 1 Nafis bucket
+                r_dup2 = await client.get("/suppliers/duplicates", headers=headers)
+                assert r_dup2.json()["count"] == 0
+
+                r_dir = await client.get("/suppliers/directory", headers=headers)
+                assert r_dir.status_code == 200
+                dir_sups = {s["supplier_name"]: s for s in r_dir.json()["suppliers"]}
+                assert "Nafis" in dir_sups
+                assert "нафис" not in dir_sups
+                assert dir_sups["Nafis"]["total_count"] == 3
+                assert dir_sups["Nafis"]["total_amount"] == 900_000.0
+                assert dir_sups["Nafis"]["nasiya_balance"] == 150_000.0
+
+                # 4. Future nakladnoy typed in Cyrillic or alias auto-resolves to "Nafis"
+                r_new = await client.post(
+                    "/nakladnoy",
+                    headers=headers,
+                    data={
+                        "supplier_name": "Нафис савдо",
+                        "amount": "100000",
+                        "payment_mode": "cash",
+                        "send_to_group": "false",
+                    },
+                )
+                assert r_new.status_code == 200
+                assert r_new.json()["nakladnoy"]["supplier_name"] == "Nafis"
+
+                # 5. Update aliases via /suppliers/aliases & verify on /suppliers/profile
+                r_al = await client.post(
+                    "/suppliers/aliases",
+                    headers=headers,
+                    json={"supplier_name": "Nafis", "aliases": ["нафис", "Nafis Plus"]},
+                )
+                assert r_al.status_code == 200
+                assert r_al.json()["aliases"] == ["нафис", "Nafis Plus"]
+
+                r_prof = await client.get(
+                    "/suppliers/profile",
+                    headers=headers,
+                    params={"supplier": "Nafis"},
+                )
+                assert r_prof.status_code == 200
+                prof = r_prof.json()
+                assert prof["supplier_name"] == "Nafis"
+                assert prof["total_count"] == 4
+                assert prof["aliases"] == ["нафис", "Nafis Plus"]
+        finally:
+            await eng.dispose()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        api_auth_mod.clear_auth_memory_state()
+        clear_role_cache()
+        get_settings.cache_clear()

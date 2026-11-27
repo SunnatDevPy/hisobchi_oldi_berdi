@@ -1529,4 +1529,94 @@ void main() {
     expect(undoCalls, equals(1));
     expect(find.text("Nakladnoy o'chirildi"), findsNothing);
   });
+
+  testWidgets(
+      'MergeSuppliersSheet shows Nafis/nafis/нафис duplicate group and submits merge',
+      (WidgetTester tester) async {
+    Map<String, dynamic>? sentPayload;
+    final mockHttp = MockClient((req) async {
+      if (req.url.path == '/suppliers/merge') {
+        sentPayload = Map<String, dynamic>.from(jsonDecode(req.body) as Map);
+        return http.Response(
+          jsonEncode({
+            'ok': true,
+            'target_name': 'Nafis',
+            'aliases': ['нафис'],
+            'updated_nakladnoys': 2,
+            'updated_debts': 1,
+          }),
+          200,
+        );
+      }
+      if (req.url.path == '/suppliers/directory') {
+        return http.Response(
+          jsonEncode({
+            'suppliers_count': 1,
+            'grand_total': 900000,
+            'total_unpaid_debt': 0,
+            'total_nasiya_balance': 0,
+            'duplicate_groups': [],
+            'suppliers': [
+              {
+                'supplier_name': 'Nafis',
+                'aliases': ['нафис'],
+                'total_count': 3,
+                'total_amount': 900000,
+              }
+            ],
+          }),
+          200,
+        );
+      }
+      return http.Response('{}', 200);
+    });
+
+    final api = HisobchiApiClient(
+      baseUrl: 'https://hisobchi.okaposai.uz',
+      accessToken: 'tok',
+      httpClient: mockHttp,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: Scaffold(
+          body: MergeSuppliersSheet(
+            api: api,
+            initialSuppliers: const [
+              {'supplier_name': 'Nafis', 'aliases': [], 'total_count': 2},
+              {'supplier_name': 'nafis', 'aliases': [], 'total_count': 1},
+              {'supplier_name': 'нафис', 'aliases': [], 'total_count': 1},
+            ],
+            initialDuplicateGroups: const [
+              {
+                'suggested_target': 'Nafis',
+                'total_count': 4,
+                'variants': [
+                  {'name': 'Nafis', 'count': 2},
+                  {'name': 'nafis', 'count': 1},
+                  {'name': 'нафис', 'count': 1},
+                ],
+              }
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Birlashtirish → Nafis'), findsOneWidget);
+    await tester.tap(find.text('Birlashtirish → Nafis'));
+    await tester.pumpAndSettle();
+
+    expect(sentPayload, isNotNull);
+    expect(sentPayload!['target_name'], equals('Nafis'));
+    expect(
+      (sentPayload!['source_names'] as List),
+      containsAll(['Nafis', 'nafis', 'нафис']),
+    );
+    // Let top-slide notification timer finish cleanly
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+  });
 }

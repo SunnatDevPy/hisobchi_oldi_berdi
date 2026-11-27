@@ -66,7 +66,9 @@ from api.schemas import (
     PrixodTextCreateRequest,
     RoundModeUpdateRequest,
     StatusSummaryResponse,
+    SupplierAliasesUpdateRequest,
     SupplierConfigCreateRequest,
+    SupplierMergeRequest,
     TelegramWebAppAuthRequest,
     UserProfileResponse,
     UserRoleSaveRequest,
@@ -99,6 +101,7 @@ from database.crud import (
     delete_supplier_debt,
     delete_user_role,
     effective_tx_local_date,
+    find_duplicate_supplier_groups,
     find_similar_suppliers,
     format_local_dt,
     get_ai_usage_stats,
@@ -114,6 +117,7 @@ from database.crud import (
     get_prixod_report,
     get_range_report_data,
     get_recent_amounts_for_supplier,
+    get_supplier_aliases_map,
     get_supplier_debt_balances,
     get_supplier_sverka,
     list_all_sessions,
@@ -128,6 +132,7 @@ from database.crud import (
     mark_nakladnoy_as_debt,
     mark_nakladnoy_as_paid,
     mark_prixod_published,
+    merge_suppliers,
     normalize_payment_method,
     now_local,
     reopen_cash_session,
@@ -144,6 +149,7 @@ from database.crud import (
     today_iso,
     update_cash_transaction,
     update_nakladnoy,
+    update_supplier_aliases,
 )
 from database.models import (
     ApiIdempotencyRecord,
@@ -798,6 +804,8 @@ def create_api_app() -> FastAPI:
     async def get_suppliers_directory_endpoint(
         user: AuthenticatedUser = Depends(get_current_user),
     ) -> dict:
+        from database.crud import _cyr_to_lat, _norm_key, _supplier_alias_lookup
+
         async with async_session_maker() as db:
             stmt = (
                 select(NakladnoyPayment, DailyCashSession)
@@ -808,15 +816,32 @@ def create_api_app() -> FastAPI:
             rows = (await db.execute(stmt)).all()
             nasiya_rows = await get_supplier_debt_balances(db)
             configured = await list_suppliers(db, active_only=True)
+            alias_lookup = await _supplier_alias_lookup(db)
+            aliases_map = await get_supplier_aliases_map(db)
+            duplicate_groups = await find_duplicate_supplier_groups(db)
 
         buckets: dict[str, dict] = {}
 
-        def _ensure_bucket(display_name: str) -> dict:
-            key = display_name.strip().lower()
+        def _canonical_for(raw: str) -> str:
+            clean = " ".join((raw or "").strip().split())
+            if not clean:
+                return ""
+            nk = _norm_key(clean)
+            if nk in alias_lookup:
+                return alias_lookup[nk]
+            lat = _cyr_to_lat(clean)
+            if len(lat) >= 2 and lat in alias_lookup:
+                return alias_lookup[lat]
+            return clean
+
+        def _ensure_bucket(raw_name: str) -> dict:
+            canon = _canonical_for(raw_name)
+            key = _norm_key(canon)
             entry = buckets.get(key)
             if entry is None:
                 entry = {
-                    "supplier_name": display_name.strip(),
+                    "supplier_name": canon,
+                    "aliases": list(aliases_map.get(key, [])),
                     "total_count": 0,
                     "total_amount": 0.0,
                     "cash_amount": 0.0,
@@ -867,7 +892,7 @@ def create_api_app() -> FastAPI:
             if not sname:
                 continue
             b = _ensure_bucket(sname)
-            b["nasiya_balance"] = float(nb.get("balance") or 0.0)
+            b["nasiya_balance"] += float(nb.get("balance") or 0.0)
 
         suppliers_list = sorted(
             buckets.values(),
@@ -887,8 +912,50 @@ def create_api_app() -> FastAPI:
             "grand_total": grand_total,
             "total_unpaid_debt": total_unpaid_debt,
             "total_nasiya_balance": total_nasiya_balance,
+            "duplicate_groups": duplicate_groups,
             "suppliers": suppliers_list,
         }
+
+    @app.get("/suppliers/duplicates")
+    async def get_supplier_duplicates_endpoint(
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        async with async_session_maker() as db:
+            groups = await find_duplicate_supplier_groups(db)
+        return {"count": len(groups), "groups": groups}
+
+    @app.post("/suppliers/merge")
+    async def merge_suppliers_endpoint(
+        payload: SupplierMergeRequest,
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> dict:
+        try:
+            async with async_session_maker() as db:
+                return await merge_suppliers(
+                    db,
+                    target_name=payload.target_name,
+                    source_names=payload.source_names,
+                    extra_aliases=payload.extra_aliases,
+                    user_id=user.user_id,
+                )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.post("/suppliers/aliases")
+    async def update_supplier_aliases_endpoint(
+        payload: SupplierAliasesUpdateRequest,
+        user: AuthenticatedUser = Depends(require_write_user),
+    ) -> dict:
+        try:
+            async with async_session_maker() as db:
+                return await update_supplier_aliases(
+                    db,
+                    supplier_name=payload.supplier_name,
+                    aliases=payload.aliases,
+                    user_id=user.user_id,
+                )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
     async def _build_supplier_profile_data(
         supplier: str,
@@ -896,16 +963,22 @@ def create_api_app() -> FastAPI:
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
     ) -> dict:
+        from database.crud import _norm_key
+
         if date_from and date_to and date_from > date_to:
             date_from, date_to = date_to, date_from
 
         async with async_session_maker() as db:
             canonical, _ = await resolve_supplier_name(db, supplier.strip())
+            aliases_map = await get_supplier_aliases_map(db)
+            canon_key = _norm_key(canonical)
+            supplier_aliases = list(aliases_map.get(canon_key, []))
+            match_lowers = {canonical.lower(), *(a.lower() for a in supplier_aliases)}
             stmt = (
                 select(NakladnoyPayment, DailyCashSession)
                 .join(DailyCashSession, DailyCashSession.id == NakladnoyPayment.session_id)
                 .where(
-                    func.lower(NakladnoyPayment.supplier_name) == canonical.lower(),
+                    func.lower(NakladnoyPayment.supplier_name).in_(list(match_lowers)),
                     NakladnoyPayment.status == "confirmed",
                 )
                 .order_by(NakladnoyPayment.id.desc())
@@ -955,9 +1028,8 @@ def create_api_app() -> FastAPI:
 
         nasiya_balance = 0.0
         for nb in nasiya_rows:
-            if str(nb.get("supplier") or "").strip().lower() == canonical.lower():
-                nasiya_balance = float(nb.get("balance") or 0.0)
-                break
+            if str(nb.get("supplier") or "").strip().lower() in match_lowers:
+                nasiya_balance += float(nb.get("balance") or 0.0)
 
         items = [
             _serialize_nakladnoy(
@@ -970,6 +1042,7 @@ def create_api_app() -> FastAPI:
 
         return {
             "supplier_name": canonical,
+            "aliases": supplier_aliases,
             "date_from": date_from,
             "date_to": date_to,
             "total_count": len(rows),

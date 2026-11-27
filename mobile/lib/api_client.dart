@@ -1236,6 +1236,53 @@ class HisobchiApiClient {
     return _decodeJson(res);
   }
 
+  Future<List<Map<String, dynamic>>> getSupplierDuplicates() async {
+    final res = await _http
+        .get(_uri('/suppliers/duplicates'), headers: _headers())
+        .timeout(const Duration(seconds: 15));
+    final data = _decodeJson(res);
+    return ((data['groups'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> mergeSuppliers({
+    required String targetName,
+    required List<String> sourceNames,
+    List<String> extraAliases = const [],
+  }) async {
+    final res = await _http
+        .post(
+          _uri('/suppliers/merge'),
+          headers: _headers(),
+          body: jsonEncode({
+            'target_name': targetName.trim(),
+            'source_names': sourceNames.map((e) => e.trim()).toList(),
+            'extra_aliases': extraAliases.map((e) => e.trim()).toList(),
+          }),
+        )
+        .timeout(const Duration(seconds: 25));
+    return _decodeJson(res);
+  }
+
+  Future<Map<String, dynamic>> updateSupplierAliases({
+    required String supplierName,
+    required List<String> aliases,
+  }) async {
+    final res = await _http
+        .post(
+          _uri('/suppliers/aliases'),
+          headers: _headers(),
+          body: jsonEncode({
+            'supplier_name': supplierName.trim(),
+            'aliases': aliases.map((e) => e.trim()).toList(),
+          }),
+        )
+        .timeout(const Duration(seconds: 15));
+    return _decodeJson(res);
+  }
+
   Future<Map<String, dynamic>> getSupplierProfile(
     String supplier, {
     int limit = 60,
