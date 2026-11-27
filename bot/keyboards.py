@@ -944,11 +944,11 @@ GROUP_ADMIN_RIGHTS = "change_info+delete_messages+invite_users+pin_messages+mana
 
 def build_add_to_group_url(bot_username: str, role: str) -> str:
     """Build Telegram deep-link that opens group picker with admin permission prompt and auto-binds role."""
-    clean_username = bot_username.lstrip("@") or "hisobchi_my_bot"
+    clean_username = bot_username.lstrip("@") or "hisobchi_my_own_bot"
     return f"https://t.me/{clean_username}?startgroup=bind_{role}&admin={GROUP_ADMIN_RIGHTS}"
 
 
-def groups_config_kb(bot_username: str = "hisobchi_my_bot") -> InlineKeyboardMarkup:
+def groups_config_kb(bot_username: str = "hisobchi_my_own_bot") -> InlineKeyboardMarkup:
     """Group binding menu with 1-click Telegram Admin Picker + manual ID fallback."""
     return InlineKeyboardMarkup(
         inline_keyboard=[

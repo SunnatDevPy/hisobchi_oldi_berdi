@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     API_PORT: int = 8088
     API_PUBLIC_URL: str = "https://hisobchi.okaposai.uz"
 
+    @field_validator("BOT_TOKEN")
+    @classmethod
+    def clean_bot_token(cls, value: str) -> str:
+        """Strip whitespace, CR/LF, and accidental surrounding quotes from BOT_TOKEN."""
+        return (value or "").strip().strip('"').strip("'")
+
     @field_validator("DATABASE_URL")
     @classmethod
     def ensure_sqlite_dir(cls, value: str) -> str:

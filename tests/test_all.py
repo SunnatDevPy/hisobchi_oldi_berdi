@@ -2572,7 +2572,7 @@ def test_telegram_apk_login_deeplink_and_health_bot_username(tmp_path: Path, mon
             ) as client:
                 r0 = await client.get("/health")
                 assert r0.status_code == 200
-                assert r0.json()["bot_username"] == "hisobchi_my_bot"
+                assert r0.json()["bot_username"] == "hisobchi_my_own_bot"
 
             # 2. /health exposes live bot_username from bot.get_me()
             monkeypatch.setattr(api_app_mod, "get_bot", lambda: FakeBot())

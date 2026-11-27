@@ -312,7 +312,7 @@ class _HisobchiSplashState extends State<HisobchiSplash>
     );
 
     return Scaffold(
-      backgroundColor: const Color(0xFF05030F),
+      backgroundColor: const Color(0xFF161817),
       body: Stack(
         children: [
           Positioned.fill(
@@ -394,11 +394,11 @@ class _HisobchiSplashState extends State<HisobchiSplash>
             begin: Alignment(sweep - 0.55, -0.2),
             end: Alignment(sweep + 0.55, 0.2),
             colors: const [
-              Color(0xFFD8B4FE),
+              Color(0xFF86EFAC),
               Color(0xFFFFFFFF),
-              Color(0xFFF9A8D4),
+              Color(0xFFFDE68A),
               Color(0xFFFFFFFF),
-              Color(0xFFD8B4FE),
+              Color(0xFF4ADE80),
             ],
             stops: const [0.0, 0.35, 0.50, 0.65, 1.0],
           ).createShader(bounds),
@@ -475,9 +475,9 @@ class _HisobchiSplashState extends State<HisobchiSplash>
                       shape: BoxShape.circle,
                       gradient: RadialGradient(
                         colors: [
-                          const Color(0xFFB44CFF)
-                              .withValues(alpha: (0.30 + 0.22 * p).clamp(0.0, 0.85)),
-                          const Color(0xFF7C3AED).withValues(alpha: 0.11),
+                          const Color(0xFF0CCE42)
+                              .withValues(alpha: (0.28 + 0.20 * p).clamp(0.0, 0.80)),
+                          const Color(0xFFF5C443).withValues(alpha: 0.10),
                           Colors.transparent,
                         ],
                         stops: const [0.0, 0.55, 1.0],
@@ -537,15 +537,15 @@ class _HisobchiSplashState extends State<HisobchiSplash>
                         borderRadius: BorderRadius.circular(10),
                         gradient: const LinearGradient(
                           colors: [
-                            Color(0xFFA855F7),
-                            Color(0xFFFF7ACB),
+                            Color(0xFF0CCE42),
+                            Color(0xFFF5C443),
                             Colors.white,
                           ],
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: const Color(0xFFA855F7)
-                                .withValues(alpha: 0.72),
+                            color: const Color(0xFF0CCE42)
+                                .withValues(alpha: 0.70),
                             blurRadius: 11,
                           ),
                         ],
@@ -560,7 +560,7 @@ class _HisobchiSplashState extends State<HisobchiSplash>
                             color: Colors.white,
                             boxShadow: [
                               BoxShadow(
-                                color: const Color(0xFFFF9BE5)
+                                color: const Color(0xFFF5C443)
                                     .withValues(alpha: 0.9),
                                 blurRadius: 8,
                                 spreadRadius: 1,
@@ -617,11 +617,11 @@ Widget _buildGlossyTile({
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                   colors: [
-                    Color.lerp(const Color(0xFF4C1D95), const Color(0xFF1A0836),
+                    Color.lerp(const Color(0xFF1F382B), const Color(0xFF121815),
                         depthIdx / 4.5)!,
-                    Color.lerp(const Color(0xFF7E22CE), const Color(0xFF2E1065),
+                    Color.lerp(const Color(0xFF0E6837), const Color(0xFF18221D),
                         depthIdx / 4.5)!,
-                    Color.lerp(const Color(0xFF5B21B6), const Color(0xFF0E0520),
+                    Color.lerp(const Color(0xFF282E2C), const Color(0xFF0E1210),
                         depthIdx / 4.5)!,
                   ],
                 ),
@@ -629,7 +629,7 @@ Widget _buildGlossyTile({
             ),
           ),
 
-        // Front glossy glass-bezel face with subtle sweeping liquid highlight
+        // Front glossy glass-bezel face with Figma emerald + gold + clay highlight
         Container(
           width: size,
           height: size,
@@ -645,12 +645,12 @@ Widget _buildGlossyTile({
                 1.0 + 0.35 * math.cos(shimmerPhase * 2 * math.pi),
               ),
               colors: const [
-                Color(0xFFE0A8FF),
-                Color(0xFFA855F7),
-                Color(0xFF5B21B6),
-                Color(0xFFC026D3),
+                Color(0xFF6EE7B7),
+                Color(0xFF0CCE42),
+                Color(0xFF1E3A2B),
+                Color(0xFFD99B26),
               ],
-              stops: const [0.0, 0.35, 0.75, 1.0],
+              stops: const [0.0, 0.38, 0.76, 1.0],
             ),
             border: Border.all(
               color: Colors.white.withValues(alpha: 0.35),
@@ -658,15 +658,15 @@ Widget _buildGlossyTile({
             ),
             boxShadow: [
               BoxShadow(
-                color: const Color(0xFFB44CFF)
-                    .withValues(alpha: (0.45 + 0.25 * pulse).clamp(0.0, 0.95)),
-                blurRadius: (50 + 20 * pulse) * scale,
+                color: const Color(0xFF0CCE42)
+                    .withValues(alpha: (0.40 + 0.24 * pulse).clamp(0.0, 0.90)),
+                blurRadius: (48 + 20 * pulse) * scale,
                 spreadRadius: 2 * scale,
               ),
               BoxShadow(
-                color: const Color(0xFFFF4FD8).withValues(alpha: 0.18),
-                blurRadius: 90 * scale,
-                spreadRadius: 6 * scale,
+                color: const Color(0xFFF5C443).withValues(alpha: 0.16),
+                blurRadius: 85 * scale,
+                spreadRadius: 5 * scale,
               ),
             ],
           ),
@@ -682,16 +682,16 @@ Widget _buildGlossyTile({
                     gradient: const LinearGradient(
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
-                      colors: [Color(0xFF1B1030), Color(0xFF07040F)],
+                      colors: [Color(0xFF232927), Color(0xFF141716)],
                     ),
                     border: Border.all(
-                      color: const Color(0xFFF472B6).withValues(alpha: 0.28),
+                      color: const Color(0xFF34D399).withValues(alpha: 0.30),
                       width: 1.0 * scale,
                     ),
                   ),
                 ),
                 CustomPaint(painter: _BurstPainter(spin)),
-                // Diagonal sweeping glass reflection across the dark crystal face
+                // Diagonal sweeping glass reflection across the dark obsidian face
                 IgnorePointer(
                   child: Transform.translate(
                     offset: Offset(
@@ -710,7 +710,7 @@ Widget _buildGlossyTile({
                             colors: [
                               Colors.transparent,
                               Colors.white.withValues(alpha: 0.13),
-                              const Color(0xFFF472B6).withValues(alpha: 0.08),
+                              const Color(0xFF6EE7B7).withValues(alpha: 0.09),
                               Colors.transparent,
                             ],
                           ),
@@ -933,9 +933,9 @@ class _Interactive3DFintechCubeState extends State<Interactive3DFintechCube>
                   shape: BoxShape.circle,
                   gradient: RadialGradient(
                     colors: [
-                      const Color(0xFFB44CFF)
-                          .withValues(alpha: 0.28 + 0.16 * _pulse),
-                      const Color(0xFF7C3AED).withValues(alpha: 0.09),
+                      const Color(0xFF0CCE42)
+                          .withValues(alpha: 0.26 + 0.16 * _pulse),
+                      const Color(0xFFF5C443).withValues(alpha: 0.08),
                       Colors.transparent,
                     ],
                     stops: const [0.0, 0.55, 1.0],
@@ -1004,12 +1004,12 @@ class _BurstPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final c = size.center(Offset.zero);
-    // Soft luminous core bloom inside cavity
+    // Soft luminous emerald-gold core bloom inside cavity
     canvas.drawCircle(
       c,
       size.width * 0.24,
       Paint()
-        ..color = const Color(0xFFEC4899).withValues(alpha: 0.22)
+        ..color = const Color(0xFF0CCE42).withValues(alpha: 0.24)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
     );
 
@@ -1035,8 +1035,8 @@ class _BurstPainter extends CustomPainter {
       final k = ((i / n) - t) % 1.0;
       final bright = math.pow(k < 0 ? k + 1 : k, 1.6).toDouble();
       final color = Color.lerp(
-        const Color(0xFF9B3FA8),
-        Colors.white,
+        const Color(0xFF10B981),
+        const Color(0xFFFEF3C7),
         bright,
       )!
           .withValues(alpha: 0.35 + 0.65 * bright);
@@ -1055,30 +1055,30 @@ class _BurstPainter extends CustomPainter {
   bool shouldRepaint(covariant _BurstPainter old) => old.t != t;
 }
 
-/// Suzuvchi mayin kosmik bokeh yulduzchalar qatlami.
+/// Suzuvchi mayin zumrad va tilla bokeh zarrachalar qatlami.
 class _BokehParticlesPainter extends CustomPainter {
   _BokehParticlesPainter(this.anim) : super(repaint: anim);
   final Animation<double> anim;
 
   static const _seeds = [
-    (x: 0.14, y: 0.16, r: 2.2, b: 3.0, s: 1.0, c: Color(0xFFA855F7)),
-    (x: 0.84, y: 0.18, r: 1.8, b: 2.5, s: 1.4, c: Color(0xFFF472B6)),
-    (x: 0.24, y: 0.28, r: 2.8, b: 4.5, s: 0.8, c: Color(0xFFF5D0FE)),
-    (x: 0.77, y: 0.30, r: 2.4, b: 4.0, s: 1.2, c: Color(0xFFA855F7)),
-    (x: 0.11, y: 0.42, r: 1.9, b: 3.0, s: 1.5, c: Color(0xFFEC4899)),
-    (x: 0.89, y: 0.44, r: 2.6, b: 4.5, s: 0.9, c: Color(0xFFF5D0FE)),
-    (x: 0.18, y: 0.56, r: 2.2, b: 3.5, s: 1.1, c: Color(0xFFA855F7)),
-    (x: 0.82, y: 0.58, r: 1.7, b: 2.5, s: 1.3, c: Color(0xFFEC4899)),
-    (x: 0.28, y: 0.70, r: 2.5, b: 4.0, s: 1.0, c: Color(0xFFF472B6)),
-    (x: 0.72, y: 0.72, r: 2.0, b: 3.5, s: 1.4, c: Color(0xFFF5D0FE)),
-    (x: 0.12, y: 0.80, r: 2.8, b: 5.0, s: 0.7, c: Color(0xFFA855F7)),
-    (x: 0.88, y: 0.82, r: 2.2, b: 4.0, s: 1.2, c: Color(0xFFEC4899)),
-    (x: 0.42, y: 0.12, r: 1.6, b: 2.5, s: 1.3, c: Color(0xFFF5D0FE)),
-    (x: 0.62, y: 0.14, r: 2.0, b: 3.0, s: 0.9, c: Color(0xFFA855F7)),
-    (x: 0.38, y: 0.84, r: 2.1, b: 4.0, s: 1.1, c: Color(0xFFF472B6)),
-    (x: 0.64, y: 0.86, r: 1.8, b: 3.0, s: 1.5, c: Color(0xFFA855F7)),
-    (x: 0.50, y: 0.10, r: 2.2, b: 4.0, s: 1.0, c: Color(0xFFEC4899)),
-    (x: 0.49, y: 0.89, r: 2.4, b: 4.5, s: 0.8, c: Color(0xFFF5D0FE)),
+    (x: 0.14, y: 0.16, r: 2.2, b: 3.0, s: 1.0, c: Color(0xFF0CCE42)),
+    (x: 0.84, y: 0.18, r: 1.8, b: 2.5, s: 1.4, c: Color(0xFFF5C443)),
+    (x: 0.24, y: 0.28, r: 2.8, b: 4.5, s: 0.8, c: Color(0xFF86EFAC)),
+    (x: 0.77, y: 0.30, r: 2.4, b: 4.0, s: 1.2, c: Color(0xFF0CCE42)),
+    (x: 0.11, y: 0.42, r: 1.9, b: 3.0, s: 1.5, c: Color(0xFFF5C443)),
+    (x: 0.89, y: 0.44, r: 2.6, b: 4.5, s: 0.9, c: Color(0xFFD1FAE5)),
+    (x: 0.18, y: 0.56, r: 2.2, b: 3.5, s: 1.1, c: Color(0xFF22D666)),
+    (x: 0.82, y: 0.58, r: 1.7, b: 2.5, s: 1.3, c: Color(0xFFF5C443)),
+    (x: 0.28, y: 0.70, r: 2.5, b: 4.0, s: 1.0, c: Color(0xFF34D399)),
+    (x: 0.72, y: 0.72, r: 2.0, b: 3.5, s: 1.4, c: Color(0xFFFDE68A)),
+    (x: 0.12, y: 0.80, r: 2.8, b: 5.0, s: 0.7, c: Color(0xFF0CCE42)),
+    (x: 0.88, y: 0.82, r: 2.2, b: 4.0, s: 1.2, c: Color(0xFFF5C443)),
+    (x: 0.42, y: 0.12, r: 1.6, b: 2.5, s: 1.3, c: Color(0xFFD1FAE5)),
+    (x: 0.62, y: 0.14, r: 2.0, b: 3.0, s: 0.9, c: Color(0xFF22D666)),
+    (x: 0.38, y: 0.84, r: 2.1, b: 4.0, s: 1.1, c: Color(0xFFF5C443)),
+    (x: 0.64, y: 0.86, r: 1.8, b: 3.0, s: 1.5, c: Color(0xFF0CCE42)),
+    (x: 0.50, y: 0.10, r: 2.2, b: 4.0, s: 1.0, c: Color(0xFFF5C443)),
+    (x: 0.49, y: 0.89, r: 2.4, b: 4.5, s: 0.8, c: Color(0xFFD1FAE5)),
   ];
 
   @override
@@ -1122,8 +1122,8 @@ class _RippleRingsPainter extends CustomPainter {
       final alpha = (0.28 * fade * fade).clamp(0.0, 0.30);
       if (alpha <= 0.005) continue;
       final color = i.isEven
-          ? const Color(0xFFB44CFF)
-          : const Color(0xFFEC4899);
+          ? const Color(0xFF0CCE42)
+          : const Color(0xFFF5C443);
       canvas.drawCircle(
         c,
         r,
@@ -1170,7 +1170,7 @@ class _OrbitPainter extends CustomPainter {
         dot,
         5 * s,
         Paint()
-          ..color = const Color(0xFFFF9BE5).withValues(alpha: 0.7)
+          ..color = const Color(0xFFF5C443).withValues(alpha: 0.75)
           ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5),
       );
       canvas.drawCircle(dot, 2.4 * s, Paint()..color = Colors.white);
@@ -1185,7 +1185,7 @@ class _OrbitPainter extends CustomPainter {
   bool shouldRepaint(covariant _OrbitPainter old) => old.t != t;
 }
 
-/// Ekran pastidagi yorqin binafsha yoy.
+/// Ekran pastidagi yorqin zumrad yoy.
 class _BottomArcPainter extends CustomPainter {
   _BottomArcPainter(this.anim) : super(repaint: anim);
   final Animation<double> anim;
@@ -1207,7 +1207,7 @@ class _BottomArcPainter extends CustomPainter {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            const Color(0xFF8B2FE0).withValues(alpha: 0.35 + 0.15 * p),
+            const Color(0xFF0A8F32).withValues(alpha: 0.34 + 0.14 * p),
             Colors.transparent,
           ],
         ).createShader(rect),
@@ -1217,7 +1217,7 @@ class _BottomArcPainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 5
-        ..color = const Color(0xFFD27BFF).withValues(alpha: 0.85)
+        ..color = const Color(0xFF28E070).withValues(alpha: 0.80)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
     );
     canvas.drawOval(
@@ -1225,7 +1225,7 @@ class _BottomArcPainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.5
-        ..color = const Color(0xFFF0C8FF).withValues(alpha: 0.9),
+        ..color = const Color(0xFFA7F3D0).withValues(alpha: 0.9),
     );
   }
 
@@ -1369,9 +1369,9 @@ class _Hisobchi3DEmblemState extends State<Hisobchi3DEmblem>
                           shape: BoxShape.circle,
                           gradient: RadialGradient(
                             colors: [
-                              const Color(0xFFB44CFF)
-                                  .withValues(alpha: 0.28 + 0.16 * pulse),
-                              const Color(0xFF7C3AED).withValues(alpha: 0.10),
+                              const Color(0xFF0CCE42)
+                                  .withValues(alpha: 0.26 + 0.16 * pulse),
+                              const Color(0xFFF5C443).withValues(alpha: 0.09),
                               Colors.transparent,
                             ],
                             stops: const [0.0, 0.55, 1.0],
@@ -1445,7 +1445,7 @@ class _StaticHorizonArcPainter extends CustomPainter {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            const Color(0xFF8B2FE0).withValues(alpha: 0.34),
+            const Color(0xFF0A8F32).withValues(alpha: 0.32),
             Colors.transparent,
           ],
         ).createShader(rect),
@@ -1455,7 +1455,7 @@ class _StaticHorizonArcPainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 4.5
-        ..color = const Color(0xFFD27BFF).withValues(alpha: 0.65)
+        ..color = const Color(0xFF28E070).withValues(alpha: 0.62)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 9),
     );
     canvas.drawOval(
@@ -1463,7 +1463,7 @@ class _StaticHorizonArcPainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.3
-        ..color = const Color(0xFFF0C8FF).withValues(alpha: 0.72),
+        ..color = const Color(0xFFA7F3D0).withValues(alpha: 0.72),
     );
   }
 

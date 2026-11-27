@@ -829,15 +829,15 @@ void main() {
     expect(find.text('Kassa'), findsOneWidget);
     expect(find.text('Xarajat'), findsNWidgets(2)); // Sub-stat + action button
 
-    await tester.tap(find.widgetWithIcon(InkWell, Icons.trending_down_rounded));
+    await tester.tap(find.widgetWithText(InkWell, 'Xarajat'));
     await tester.pump();
     expect(xarajatTapped, equals(1));
 
-    await tester.tap(find.widgetWithIcon(InkWell, Icons.account_balance_rounded));
+    await tester.tap(find.widgetWithText(InkWell, 'Kassa'));
     await tester.pump();
     expect(kassaTapped, equals(1));
 
-    await tester.tap(find.widgetWithIcon(InkWell, Icons.add_card_rounded));
+    await tester.tap(find.widgetWithText(InkWell, 'Pul oldim'));
     await tester.pump();
     expect(pulOldimTapped, equals(1));
   });
@@ -1873,5 +1873,45 @@ void main() {
     expect(undoneMergeId, equals(77));
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+      'Figma 3D icons and Obsidian-Emerald atmosphere tokens render cleanly',
+      (WidgetTester tester) async {
+    expect(AppTokens.brand, equals(const Color(0xFF0CCE42)));
+    expect(AppTokens.surfaceDark, equals(const Color(0xFF161817)));
+
+    const allAssets = [
+      Figma3DIcons.agreement,
+      Figma3DIcons.atm,
+      Figma3DIcons.bag,
+      Figma3DIcons.bank,
+      Figma3DIcons.briefcase,
+      Figma3DIcons.calculator,
+      Figma3DIcons.cards,
+      Figma3DIcons.charts,
+      Figma3DIcons.exchange,
+      Figma3DIcons.hourglass,
+      Figma3DIcons.lock,
+      Figma3DIcons.money,
+      Figma3DIcons.qr,
+      Figma3DIcons.shield,
+    ];
+    expect(allAssets.toSet().length, equals(14));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: Scaffold(
+          body: Wrap(
+            children: [
+              for (final a in allAssets) Figma3DIconBadge(asset: a, size: 32),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(Figma3DIconBadge), findsNWidgets(14));
   });
 }

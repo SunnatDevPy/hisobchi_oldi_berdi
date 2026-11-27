@@ -14,12 +14,14 @@ class FloatingNavDestination {
   final IconData selectedIcon;
   final String label;
   final int badgeCount;
+  final String? asset3d;
 
   const FloatingNavDestination({
     required this.icon,
     required this.selectedIcon,
     required this.label,
     this.badgeCount = 0,
+    this.asset3d,
   });
 }
 
@@ -61,11 +63,11 @@ class FloatingGlassBottomNav extends StatelessWidget {
     final sysBottom = math.max(mq.padding.bottom, mq.viewPadding.bottom);
 
     final glassBg = isDark
-        ? const Color(0xFF120E20).withValues(alpha: 0.92)
+        ? const Color(0xFF1A1E1C).withValues(alpha: 0.94)
         : Colors.white.withValues(alpha: 0.95);
     final rimColor = isDark
-        ? Colors.white.withValues(alpha: 0.14)
-        : AppTokens.brandViolet.withValues(alpha: 0.16);
+        ? Colors.white.withValues(alpha: 0.12)
+        : AppTokens.brandViolet.withValues(alpha: 0.18);
     const topRadius = BorderRadius.vertical(top: Radius.circular(22));
 
     return RepaintBoundary(
@@ -172,11 +174,11 @@ class FloatingGlassBottomNav extends StatelessWidget {
                             children: List.generate(destinations.length, (i) {
                               final d = destinations[i];
                               final isSelected = i == activeIdx;
-                              final iconColor = isSelected
-                                  ? (isDark
-                                      ? Colors.white
-                                      : const Color(0xFF6D28D9))
-                                  : textSecondaryOf(context);
+                                final iconColor = isSelected
+                                    ? (isDark
+                                        ? Colors.white
+                                        : const Color(0xFF0A8F30))
+                                    : textSecondaryOf(context);
                               final badgeText = d.badgeCount > 99
                                   ? '99+'
                                   : '${d.badgeCount}';
@@ -210,13 +212,28 @@ class FloatingGlassBottomNav extends StatelessWidget {
                                                     duration: const Duration(
                                                         milliseconds: 220),
                                                     curve: Curves.easeOutBack,
-                                                    child: Icon(
-                                                      isSelected
-                                                          ? d.selectedIcon
-                                                          : d.icon,
-                                                      size: 21,
-                                                      color: iconColor,
-                                                    ),
+                                                    child: d.asset3d != null
+                                                        ? Opacity(
+                                                            opacity: isSelected
+                                                                ? 1.0
+                                                                : 0.78,
+                                                            child:
+                                                                Figma3DIconBadge(
+                                                              asset: d.asset3d!,
+                                                              size: 23,
+                                                              fallbackIcon:
+                                                                  isSelected
+                                                                      ? d.selectedIcon
+                                                                      : d.icon,
+                                                            ),
+                                                          )
+                                                        : Icon(
+                                                            isSelected
+                                                                ? d.selectedIcon
+                                                                : d.icon,
+                                                            size: 21,
+                                                            color: iconColor,
+                                                          ),
                                                   ),
                                                   if (d.badgeCount > 0)
                                                     Positioned(
@@ -234,8 +251,7 @@ class FloatingGlassBottomNav extends StatelessWidget {
                                                           gradient:
                                                               const LinearGradient(
                                                             colors: [
-                                                              AppTokens
-                                                                  .brandOrchid,
+                                                              Color(0xFFF59E0B),
                                                               AppTokens
                                                                   .dangerRed,
                                                             ],
@@ -246,7 +262,7 @@ class FloatingGlassBottomNav extends StatelessWidget {
                                                           border: Border.all(
                                                             color: isDark
                                                                 ? const Color(
-                                                                    0xFF120E20)
+                                                                    0xFF1A1E1C)
                                                                 : Colors.white,
                                                             width: 1.2,
                                                           ),
@@ -333,17 +349,17 @@ class HeroBalanceCard extends StatelessWidget {
         gradient: AppTokens.heroGradient,
         borderRadius: BorderRadius.circular(24),
         border: Border.all(
-          color: const Color(0xFFE879F9).withValues(alpha: 0.36),
+          color: const Color(0xFF34D399).withValues(alpha: 0.38),
           width: 1.15,
         ),
         boxShadow: [
           BoxShadow(
-            color: AppTokens.brandViolet.withValues(alpha: 0.34),
+            color: AppTokens.brand.withValues(alpha: 0.26),
             blurRadius: 28,
             offset: const Offset(0, 12),
           ),
           BoxShadow(
-            color: AppTokens.brandOrchid.withValues(alpha: 0.14),
+            color: AppTokens.brandOrchid.withValues(alpha: 0.10),
             blurRadius: 40,
             spreadRadius: -6,
             offset: const Offset(0, 4),
@@ -354,7 +370,7 @@ class HeroBalanceCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(24),
         child: Stack(
           children: [
-            // Static top-left specular orchid/cyan radial bloom
+            // Static top-left specular emerald/gold radial bloom matching Figma Cover
             Positioned(
               top: -65,
               left: -45,
@@ -365,7 +381,7 @@ class HeroBalanceCard extends StatelessWidget {
                   decoration: BoxDecoration(
                     gradient: RadialGradient(
                       colors: [
-                        const Color(0xFFF0ABFC).withValues(alpha: 0.24),
+                        const Color(0xFF4ADE80).withValues(alpha: 0.22),
                         AppTokens.brandSky.withValues(alpha: 0.08),
                         Colors.transparent,
                       ],
@@ -384,10 +400,25 @@ class HeroBalanceCard extends StatelessWidget {
                   decoration: BoxDecoration(
                     gradient: RadialGradient(
                       colors: [
-                        AppTokens.brandOrchid.withValues(alpha: 0.20),
+                        AppTokens.brandOrchid.withValues(alpha: 0.18),
                         Colors.transparent,
                       ],
                     ),
+                  ),
+                ),
+              ),
+            ),
+            // Subtle floating 3D Bank emblem in top-right hero atmosphere
+            Positioned(
+              right: 14,
+              top: 52,
+              child: IgnorePointer(
+                child: Opacity(
+                  opacity: 0.20,
+                  child: Figma3DIconBadge(
+                    asset: Figma3DIcons.bank,
+                    size: 56,
+                    fallbackIcon: Icons.account_balance_rounded,
                   ),
                 ),
               ),
@@ -490,17 +521,11 @@ class HeroBalanceCard extends StatelessWidget {
                   const SizedBox(height: 18),
                   Row(
                     children: [
-                      Container(
-                        padding: const EdgeInsets.all(6),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.16),
-                          borderRadius: BorderRadius.circular(9),
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.18),
-                          ),
-                        ),
-                        child: const Icon(Icons.account_balance_wallet_rounded,
-                            size: 15, color: Colors.white),
+                      const Figma3DIconBadge(
+                        asset: Figma3DIcons.bag,
+                        size: 28,
+                        fallbackIcon: Icons.account_balance_wallet_rounded,
+                        glowColor: Color(0xFFF5C443),
                       ),
                       const SizedBox(width: 8),
                       const Text(
@@ -538,10 +563,10 @@ class HeroBalanceCard extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF0A0614).withValues(alpha: 0.42),
+                      color: const Color(0xFF101513).withValues(alpha: 0.52),
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
-                        color: const Color(0xFFF5D0FE).withValues(alpha: 0.18),
+                        color: const Color(0xFF6EE7B7).withValues(alpha: 0.20),
                       ),
                     ),
                     child: Column(
@@ -637,6 +662,7 @@ class HeroBalanceCard extends StatelessWidget {
                         Expanded(
                           child: _HeroActionBtn(
                             icon: Icons.add_card_rounded,
+                            asset3d: Figma3DIcons.money,
                             label: 'Pul oldim',
                             accentColor: AppTokens.cashGreen,
                             onTap: onAddCash!,
@@ -647,6 +673,7 @@ class HeroBalanceCard extends StatelessWidget {
                           Expanded(
                             child: _HeroActionBtn(
                               icon: Icons.account_balance_rounded,
+                              asset3d: Figma3DIcons.atm,
                               label: 'Kassa',
                               accentColor: AppTokens.brandSky,
                               onTap: onKassaDebt!,
@@ -658,6 +685,7 @@ class HeroBalanceCard extends StatelessWidget {
                           Expanded(
                             child: _HeroActionBtn(
                               icon: Icons.trending_down_rounded,
+                              asset3d: Figma3DIcons.cards,
                               label: 'Xarajat',
                               accentColor: AppTokens.dangerRed,
                               onTap: onExpense!,
@@ -788,12 +816,14 @@ class _HeroMetricTile extends StatelessWidget {
 
 class _HeroActionBtn extends StatelessWidget {
   final IconData icon;
+  final String? asset3d;
   final String label;
   final VoidCallback onTap;
   final Color? accentColor;
 
   const _HeroActionBtn({
     required this.icon,
+    this.asset3d,
     required this.label,
     required this.onTap,
     this.accentColor,
@@ -813,13 +843,13 @@ class _HeroActionBtn extends StatelessWidget {
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
               colors: [
-                const Color(0xFF0E091D).withValues(alpha: 0.42),
-                accent.withValues(alpha: 0.16),
+                const Color(0xFF141917).withValues(alpha: 0.56),
+                accent.withValues(alpha: 0.18),
               ],
             ),
             border: Border.all(
               color: accentColor != null
-                  ? accent.withValues(alpha: 0.40)
+                  ? accent.withValues(alpha: 0.42)
                   : Colors.white.withValues(alpha: 0.22),
               width: 1.0,
             ),
@@ -828,18 +858,26 @@ class _HeroActionBtn extends StatelessWidget {
             borderRadius: BorderRadius.circular(14),
             onTap: onTap,
             child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 8),
+              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: accent.withValues(alpha: 0.22),
-                      shape: BoxShape.circle,
+                  if (asset3d != null)
+                    Figma3DIconBadge(
+                      asset: asset3d!,
+                      size: 30,
+                      fallbackIcon: icon,
+                      glowColor: accent,
+                    )
+                  else
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: accent.withValues(alpha: 0.22),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(icon, size: 17, color: Colors.white),
                     ),
-                    child: Icon(icon, size: 17, color: Colors.white),
-                  ),
                   const SizedBox(height: 5),
                   FittedBox(
                     fit: BoxFit.scaleDown,
@@ -1038,6 +1076,7 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
                     ? summary.totalNakladnoySpent / grandTotal
                     : 0,
                 icon: Icons.payments_rounded,
+                asset3d: Figma3DIcons.money,
                 color: AppTokens.cashGreen,
                 isFeatured: featuredKey == 'cash',
                 onTap: () => widget.onTapPaymentFilter('cash'),
@@ -1053,6 +1092,7 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
                 share:
                     grandTotal > 0 ? summary.totalCardSpent / grandTotal : 0,
                 icon: Icons.credit_card_rounded,
+                asset3d: Figma3DIcons.cards,
                 color: AppTokens.cardBlue,
                 isFeatured: featuredKey == 'card',
                 onTap: () => widget.onTapPaymentFilter('card'),
@@ -1073,6 +1113,7 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
                     ? summary.totalTransferSpent / grandTotal
                     : 0,
                 icon: Icons.account_balance_rounded,
+                asset3d: Figma3DIcons.bank,
                 color: AppTokens.transferPurple,
                 isFeatured: featuredKey == 'transfer',
                 onTap: () => widget.onTapPaymentFilter('transfer'),
@@ -1089,6 +1130,7 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
                     ? summary.totalDebtNakladnoy / grandTotal
                     : 0,
                 icon: Icons.push_pin_rounded,
+                asset3d: Figma3DIcons.hourglass,
                 color: AppTokens.debtAmber,
                 isFeatured: featuredKey == 'debt',
                 subtitle: summary.allUnpaidDebtCount > 0
@@ -1115,14 +1157,10 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
                 children: [
                   Row(
                     children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: AppTokens.brand.withValues(alpha: 0.14),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Icon(Icons.leaderboard_rounded,
-                            color: AppTokens.brand, size: 19),
+                      const Figma3DIconBadge(
+                        asset: Figma3DIcons.briefcase,
+                        size: 34,
+                        fallbackIcon: Icons.leaderboard_rounded,
                       ),
                       const SizedBox(width: 10),
                       Expanded(
@@ -1279,15 +1317,10 @@ class _DashboardAnalyticsSectionState extends State<DashboardAnalyticsSection> {
           children: [
             Row(
               children: [
-                Container(
-                  width: 30,
-                  height: 30,
-                  decoration: BoxDecoration(
-                    gradient: AppTokens.heroGradient,
-                    borderRadius: BorderRadius.circular(9),
-                  ),
-                  child: const Icon(Icons.account_balance_wallet_rounded,
-                      color: Colors.white, size: 16),
+                const Figma3DIconBadge(
+                  asset: Figma3DIcons.bag,
+                  size: 30,
+                  fallbackIcon: Icons.account_balance_wallet_rounded,
                 ),
                 const SizedBox(width: 9),
                 Text(
@@ -1653,15 +1686,15 @@ class _GlowingDistributionCard extends StatelessWidget {
 
     final nonZero = segments.where((s) => s.value > 0).toList();
     final trackBg = isDark
-        ? const Color(0xFF1D1730)
-        : const Color(0xFFEDE8F8);
+        ? AppTokens.cardElevatedDark
+        : const Color(0xFFE6ECE8);
 
     return Container(
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF130F21) : Colors.white,
+        color: isDark ? AppTokens.cardDark : Colors.white,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: isDark ? const Color(0xFF2E2549) : AppTokens.cardBorderLight,
+          color: isDark ? AppTokens.cardBorderDark : AppTokens.cardBorderLight,
         ),
         boxShadow: [
           BoxShadow(
@@ -1679,22 +1712,10 @@ class _GlowingDistributionCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      AppTokens.brandViolet.withValues(alpha: 0.22),
-                      AppTokens.brandSky.withValues(alpha: 0.16),
-                    ],
-                  ),
-                  borderRadius: BorderRadius.circular(11),
-                  border: Border.all(
-                    color: AppTokens.brandViolet.withValues(alpha: 0.30),
-                  ),
-                ),
-                child: const Icon(Icons.equalizer_rounded,
-                    color: AppTokens.brandViolet, size: 19),
+              const Figma3DIconBadge(
+                asset: Figma3DIcons.charts,
+                size: 36,
+                fallbackIcon: Icons.equalizer_rounded,
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -1734,7 +1755,7 @@ class _GlowingDistributionCard extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 11.5,
                     fontWeight: FontWeight.w900,
-                    color: isDark ? const Color(0xFFE9D5FF) : AppTokens.brandDeep,
+                    color: isDark ? const Color(0xFF86EFAC) : AppTokens.brandDeep,
                     fontFeatures: AppTokens.tabularNums,
                   ),
                 ),
@@ -1906,8 +1927,8 @@ class _DistributionLegendTile extends StatelessWidget {
 
     return Material(
       color: isDark
-          ? const Color(0xFF1A152C).withValues(alpha: 0.72)
-          : const Color(0xFFF8F6FD),
+          ? AppTokens.cardElevatedDark.withValues(alpha: 0.78)
+          : const Color(0xFFF5F8F6),
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
@@ -2063,10 +2084,10 @@ class _TrendLineStatisticsCard extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF130F21) : Colors.white,
+        color: isDark ? AppTokens.cardDark : Colors.white,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: isDark ? const Color(0xFF2E2549) : AppTokens.cardBorderLight,
+          color: isDark ? AppTokens.cardBorderDark : AppTokens.cardBorderLight,
         ),
         boxShadow: [
           BoxShadow(
@@ -2084,22 +2105,10 @@ class _TrendLineStatisticsCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: AppTokens.brandViolet.withValues(alpha: 0.16),
-                  borderRadius: BorderRadius.circular(11),
-                  border: Border.all(
-                    color: AppTokens.brandViolet.withValues(alpha: 0.28),
-                  ),
-                ),
-                child: Icon(
-                  isBarMode
-                      ? Icons.bar_chart_rounded
-                      : Icons.show_chart_rounded,
-                  color: AppTokens.brandViolet,
-                  size: 19,
-                ),
+              const Figma3DIconBadge(
+                asset: Figma3DIcons.exchange,
+                size: 36,
+                fallbackIcon: Icons.bar_chart_rounded,
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -2131,8 +2140,8 @@ class _TrendLineStatisticsCard extends StatelessWidget {
                 padding: const EdgeInsets.all(3),
                 decoration: BoxDecoration(
                   color: isDark
-                      ? const Color(0xFF1C1631)
-                      : const Color(0xFFF3EEFC),
+                      ? AppTokens.cardElevatedDark
+                      : const Color(0xFFEBF1ED),
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
                     color: isDark
@@ -2525,7 +2534,7 @@ class _TrendLineStatisticsCard extends StatelessWidget {
         color: sel
             ? null
             : (isDark
-                ? const Color(0xFF1C1631)
+                ? AppTokens.cardElevatedDark
                 : AppTokens.surfaceLight),
         borderRadius: BorderRadius.circular(11),
         border: Border.all(
@@ -2731,7 +2740,7 @@ class _GlowingCashFlowBarPainter extends CustomPainter {
             ..shader = const LinearGradient(
               begin: Alignment.bottomCenter,
               end: Alignment.topCenter,
-              colors: [Color(0xFF9333EA), Color(0xFFE879F9)],
+              colors: [Color(0xFF0A8F32), Color(0xFF38E87A)],
             ).createShader(spentRect.outerRect),
         );
 
@@ -2739,7 +2748,7 @@ class _GlowingCashFlowBarPainter extends CustomPainter {
           canvas.drawRRect(
             inRect,
             Paint()
-              ..color = AppTokens.brandSky.withValues(alpha: 0.40)
+              ..color = AppTokens.brandOrchid.withValues(alpha: 0.38)
               ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 7),
           );
         }
@@ -2749,7 +2758,7 @@ class _GlowingCashFlowBarPainter extends CustomPainter {
             ..shader = const LinearGradient(
               begin: Alignment.bottomCenter,
               end: Alignment.topCenter,
-              colors: [Color(0xFF0284C7), Color(0xFF38BDF8)],
+              colors: [Color(0xFFD99B26), Color(0xFFF5C443)],
             ).createShader(inRect.outerRect),
         );
       } else {
@@ -3004,6 +3013,7 @@ class _PaymentKpiCard extends StatelessWidget {
   final int count;
   final double share;
   final IconData icon;
+  final String? asset3d;
   final Color color;
   final bool isFeatured;
   final String? subtitle;
@@ -3016,6 +3026,7 @@ class _PaymentKpiCard extends StatelessWidget {
     required this.count,
     required this.share,
     required this.icon,
+    this.asset3d,
     required this.color,
     this.isFeatured = false,
     this.subtitle,
@@ -3033,13 +3044,13 @@ class _PaymentKpiCard extends StatelessWidget {
       haptic: false,
       child: Container(
         decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF130F21) : Colors.white,
+          color: isDark ? AppTokens.cardDark : Colors.white,
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
             color: isFeatured
                 ? color.withValues(alpha: isDark ? 0.56 : 0.42)
                 : (isDark
-                    ? const Color(0xFF2B2344)
+                    ? AppTokens.cardBorderDark
                     : AppTokens.cardBorderLight),
             width: isFeatured ? 1.2 : 1.0,
           ),
@@ -3113,20 +3124,28 @@ class _PaymentKpiCard extends StatelessWidget {
                       children: [
                         Row(
                           children: [
-                            Container(
-                              width: 8,
-                              height: 8,
-                              decoration: BoxDecoration(
-                                color: color,
-                                shape: BoxShape.circle,
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: color.withValues(alpha: 0.65),
-                                    blurRadius: 6,
-                                  ),
-                                ],
+                            if (asset3d != null)
+                              Figma3DIconBadge(
+                                asset: asset3d!,
+                                size: 22,
+                                fallbackIcon: icon,
+                                glowColor: color,
+                              )
+                            else
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color: color,
+                                  shape: BoxShape.circle,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: color.withValues(alpha: 0.65),
+                                      blurRadius: 6,
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
                             const SizedBox(width: 6),
                             Expanded(
                               child: Text(
@@ -3462,13 +3481,13 @@ class NakladnoyListCard extends StatelessWidget {
       haptic: false,
       child: Container(
         decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF130F21) : Colors.white,
+          color: isDark ? AppTokens.cardDark : Colors.white,
           borderRadius: BorderRadius.circular(AppTokens.radius),
           border: Border.all(
             color: item.isDebt
                 ? border.withValues(alpha: 0.72)
                 : (isDark
-                    ? const Color(0xFF2D2448)
+                    ? AppTokens.cardBorderDark
                     : AppTokens.cardBorderLight),
           ),
           boxShadow: [
@@ -4253,9 +4272,9 @@ class _DashboardLoadingSkeletonState extends State<DashboardLoadingSkeleton>
   Widget build(BuildContext context) {
     final isDark = isDarkCtx(context);
     final baseBg =
-        isDark ? const Color(0xFF1A142B) : const Color(0xFFECE7F7);
+        isDark ? AppTokens.cardDark : const Color(0xFFE6ECE8);
     final hiBg =
-        isDark ? const Color(0xFF2C2248) : const Color(0xFFF7F4FD);
+        isDark ? AppTokens.cardBorderDark : const Color(0xFFF3F6F4);
     final heroBase = Colors.white.withValues(alpha: 0.14);
     final heroHi = Colors.white.withValues(alpha: 0.30);
 
@@ -4287,7 +4306,7 @@ class _DashboardLoadingSkeletonState extends State<DashboardLoadingSkeleton>
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF130F21) : Colors.white,
+                color: isDark ? AppTokens.cardDark : Colors.white,
                 borderRadius: BorderRadius.circular(18),
                 border: Border.all(
                   color: isDark
@@ -4312,7 +4331,7 @@ class _DashboardLoadingSkeletonState extends State<DashboardLoadingSkeleton>
                 gradient: AppTokens.heroGradient,
                 borderRadius: BorderRadius.circular(24),
                 border: Border.all(
-                  color: const Color(0xFFE879F9).withValues(alpha: 0.30),
+                  color: const Color(0xFF34D399).withValues(alpha: 0.30),
                 ),
                 boxShadow: [
                   BoxShadow(
@@ -4403,11 +4422,11 @@ class _DashboardLoadingSkeletonState extends State<DashboardLoadingSkeleton>
             // Mirror Xarajatlar taqsimoti card
             Container(
               decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF130F21) : Colors.white,
+                color: isDark ? AppTokens.cardDark : Colors.white,
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
                   color: isDark
-                      ? const Color(0xFF2D2448)
+                      ? AppTokens.cardBorderDark
                       : AppTokens.cardBorderLight,
                 ),
               ),
@@ -5403,7 +5422,7 @@ class _PinLockScreenState extends State<PinLockScreen>
     final bg = accent
         ? AppTokens.brandViolet.withValues(alpha: isDark ? 0.24 : 0.14)
         : (isDark
-            ? const Color(0xFF17122A).withValues(alpha: 0.90)
+            ? AppTokens.cardDark.withValues(alpha: 0.94)
             : Colors.white);
     final border = accent
         ? AppTokens.brandViolet.withValues(alpha: 0.52)
@@ -5469,9 +5488,9 @@ class _PinLockScreenState extends State<PinLockScreen>
                     radius: 0.95,
                     colors: [
                       AppTokens.brandViolet
-                          .withValues(alpha: isDark ? 0.26 : 0.14),
-                      const Color(0xFFEC4899)
-                          .withValues(alpha: isDark ? 0.10 : 0.05),
+                          .withValues(alpha: isDark ? 0.22 : 0.12),
+                      AppTokens.brandOrchid
+                          .withValues(alpha: isDark ? 0.08 : 0.04),
                       Colors.transparent,
                     ],
                   ),
@@ -5503,8 +5522,12 @@ class _PinLockScreenState extends State<PinLockScreen>
                             icon: const Icon(Icons.close_rounded),
                           ),
                         ),
-                      const Hisobchi3DEmblem(size: 68, showOrbitRings: true),
-                      const SizedBox(height: 10),
+                      const Figma3DIconBadge(
+                        asset: Figma3DIcons.lock,
+                        size: 72,
+                        fallbackIcon: Icons.lock_rounded,
+                      ),
+                      const SizedBox(height: 12),
                       Text(
                         _titleText(),
                         textAlign: TextAlign.center,

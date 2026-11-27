@@ -1080,12 +1080,12 @@ class _LoginScreenState extends State<LoginScreen> with WidgetsBindingObserver {
                       Container(
                         decoration: BoxDecoration(
                           color: isDark
-                              ? const Color(0xFF130F21).withValues(alpha: 0.92)
+                              ? AppTokens.cardDark.withValues(alpha: 0.94)
                               : Colors.white,
                           borderRadius: BorderRadius.circular(22),
                           border: Border.all(
                             color: isDark
-                                ? const Color(0xFF2E2549)
+                                ? AppTokens.cardBorderDark
                                 : AppTokens.cardBorderLight,
                           ),
                           boxShadow: [
@@ -1103,12 +1103,26 @@ class _LoginScreenState extends State<LoginScreen> with WidgetsBindingObserver {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              const Text(
-                                '8 xonali kirish kodi (/apk)',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 13.5,
-                                ),
+                              const Row(
+                                children: [
+                                  Figma3DIconBadge(
+                                    asset: Figma3DIcons.shield,
+                                    size: 26,
+                                    fallbackIcon: Icons.verified_user_rounded,
+                                  ),
+                                  SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      '8 xonali kirish kodi (/apk)',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 13.5,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                               const SizedBox(height: 8),
                               TextField(
@@ -1223,9 +1237,9 @@ class _LoginScreenState extends State<LoginScreen> with WidgetsBindingObserver {
                                     borderRadius: BorderRadius.circular(16),
                                     gradient: const LinearGradient(
                                       colors: [
-                                        Color(0xFF8B5CF6),
-                                        Color(0xFFA855F7),
-                                        Color(0xFFD946EF),
+                                        Color(0xFF0AA838),
+                                        Color(0xFF0CCE42),
+                                        Color(0xFF28E070),
                                       ],
                                     ),
                                     boxShadow: [
@@ -1270,12 +1284,12 @@ class _LoginScreenState extends State<LoginScreen> with WidgetsBindingObserver {
                       Container(
                         decoration: BoxDecoration(
                           color: isDark
-                              ? const Color(0xFF130F21).withValues(alpha: 0.88)
+                              ? AppTokens.cardDark.withValues(alpha: 0.90)
                               : Colors.white,
                           borderRadius: BorderRadius.circular(20),
                           border: Border.all(
                             color: isDark
-                                ? const Color(0xFF2E2549)
+                                ? AppTokens.cardBorderDark
                                 : AppTokens.cardBorderLight,
                           ),
                         ),
@@ -2621,23 +2635,27 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
           const FloatingNavDestination(
             icon: Icons.space_dashboard_outlined,
             selectedIcon: Icons.space_dashboard_rounded,
+            asset3d: Figma3DIcons.charts,
             label: 'Dashboard',
           ),
           FloatingNavDestination(
             icon: Icons.receipt_long_outlined,
             selectedIcon: Icons.receipt_long_rounded,
+            asset3d: Figma3DIcons.agreement,
             label: 'Amallar',
             badgeCount: nakCount,
           ),
           FloatingNavDestination(
             icon: Icons.storefront_outlined,
             selectedIcon: Icons.storefront_rounded,
+            asset3d: Figma3DIcons.briefcase,
             label: "Ta'minotchilar",
             badgeCount: debtCount,
           ),
           const FloatingNavDestination(
             icon: Icons.assessment_outlined,
             selectedIcon: Icons.assessment_rounded,
+            asset3d: Figma3DIcons.calculator,
             label: 'Smena',
           ),
         ],
@@ -3223,6 +3241,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
 
   Widget _buildDashboardQuickPill({
     required IconData icon,
+    String? asset3d,
     required String label,
     required Color accent,
     required VoidCallback onTap,
@@ -3232,7 +3251,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     return TactileScaleTap(
       pressedScale: 0.96,
       child: Material(
-        color: isDark ? const Color(0xFF130F21) : Colors.white,
+        color: isDark ? AppTokens.cardDark : Colors.white,
         borderRadius: BorderRadius.circular(16),
         child: InkWell(
           borderRadius: BorderRadius.circular(16),
@@ -3243,7 +3262,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
                 color: isDark
-                    ? const Color(0xFF2E2549)
+                    ? AppTokens.cardBorderDark
                     : AppTokens.cardBorderLight,
               ),
               boxShadow: [
@@ -3259,15 +3278,23 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: bg,
-                    borderRadius: BorderRadius.circular(9),
-                    border: Border.all(color: border.withValues(alpha: 0.6)),
+                if (asset3d != null)
+                  Figma3DIconBadge(
+                    asset: asset3d,
+                    size: 26,
+                    fallbackIcon: icon,
+                    glowColor: accent,
+                  )
+                else
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: bg,
+                      borderRadius: BorderRadius.circular(9),
+                      border: Border.all(color: border.withValues(alpha: 0.6)),
+                    ),
+                    child: Icon(icon, size: 16, color: fg),
                   ),
-                  child: Icon(icon, size: 16, color: fg),
-                ),
                 const SizedBox(width: 8),
                 Flexible(
                   child: Text(
@@ -3300,7 +3327,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
 
     return Container(
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF130F21) : Colors.white,
+        color: isDark ? AppTokens.cardDark : Colors.white,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
           color: isDark
@@ -3479,23 +3506,37 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
           const SizedBox(height: 12),
           _buildNakladnoyMiniDashboard(s),
           const SizedBox(height: 12),
-          // Frosted Glass Quick Action Pills (Sverka & Arxiv)
+          // Frosted Glass Quick Action Pills (Sverka, Skaner & Arxiv)
           Row(
             children: [
               Expanded(
                 child: _buildDashboardQuickPill(
                   icon: Icons.query_stats_rounded,
+                  asset3d: Figma3DIcons.calculator,
                   label: 'Sverka',
                   accent: AppTokens.brandSky,
                   onTap: _openLiveSverkaSheet,
                 ),
               ),
-              const SizedBox(width: 12),
+              if (widget.api.canWrite) ...[
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _buildDashboardQuickPill(
+                    icon: Icons.qr_code_scanner_rounded,
+                    asset3d: Figma3DIcons.qr,
+                    label: 'Skaner',
+                    accent: AppTokens.brand,
+                    onTap: () => _openAddNakladnoySheet(),
+                  ),
+                ),
+              ],
+              const SizedBox(width: 10),
               Expanded(
                 child: _buildDashboardQuickPill(
                   icon: Icons.history_rounded,
+                  asset3d: Figma3DIcons.hourglass,
                   label: 'Arxiv',
-                  accent: AppTokens.brandViolet,
+                  accent: AppTokens.brandOrchid,
                   onTap: _openHistorySessionsSheet,
                 ),
               ),
@@ -3806,15 +3847,15 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
           color: isSelected
               ? (isDark
                   ? Color.alphaBlend(
-                      color.withValues(alpha: 0.16), const Color(0xFF130F21))
+                      color.withValues(alpha: 0.16), AppTokens.cardDark)
                   : bg)
-              : (isDark ? const Color(0xFF130F21) : Colors.white),
+              : (isDark ? AppTokens.cardDark : Colors.white),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: isSelected
                 ? fg.withValues(alpha: 0.85)
                 : (isDark
-                    ? const Color(0xFF2D2448)
+                    ? AppTokens.cardBorderDark
                     : AppTokens.cardBorderLight),
             width: isSelected ? 1.5 : 1.0,
           ),
@@ -3985,7 +4026,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
 
     final totalDebt =
         visibleDebts.fold<double>(0, (acc, item) => acc + item.amount);
-    final (amberFg, amberBg, amberBorder) =
+    final (amberFg, _, _) =
         AppTokens.semanticSurface(context, AppTokens.debtAmber);
 
     return RefreshIndicator(
@@ -4003,7 +4044,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
           Container(
             decoration: BoxDecoration(
               color: isDarkCtx(context)
-                  ? const Color(0xFF130F21)
+                  ? AppTokens.cardDark
                   : Colors.white,
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
@@ -4048,15 +4089,11 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                     padding: const EdgeInsets.all(18),
                     child: Row(
                       children: [
-                        Container(
-                          padding: const EdgeInsets.all(11),
-                          decoration: BoxDecoration(
-                            color: amberBg,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: amberBorder),
-                          ),
-                          child: Icon(Icons.push_pin_rounded,
-                              color: amberFg, size: 24),
+                        const Figma3DIconBadge(
+                          asset: Figma3DIcons.hourglass,
+                          size: 46,
+                          fallbackIcon: Icons.push_pin_rounded,
+                          glowColor: AppTokens.debtAmber,
                         ),
                         const SizedBox(width: 14),
                         Expanded(
@@ -4259,11 +4296,11 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     return Container(
       padding: const EdgeInsets.all(5),
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF130F21) : Colors.white,
+        color: isDark ? AppTokens.cardDark : Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color:
-              isDark ? const Color(0xFF2D2448) : AppTokens.cardBorderLight,
+              isDark ? AppTokens.cardBorderDark : AppTokens.cardBorderLight,
         ),
       ),
       child: Row(

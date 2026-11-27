@@ -454,7 +454,7 @@ def create_api_app() -> FastAPI:
                     return uname
             except Exception:
                 pass
-        return "hisobchi_my_bot"
+        return "hisobchi_my_own_bot"
 
     @app.get("/health")
     async def health() -> dict:

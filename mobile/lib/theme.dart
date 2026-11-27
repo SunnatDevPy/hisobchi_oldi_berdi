@@ -2,59 +2,60 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
-/// Design tokens for Hisobchi — unified obsidian, electric-violet, orchid & cyan fintech palette.
+/// Design tokens for Hisobchi — 1-to-1 Figma "Finance & Banking 3D" atmosphere:
+/// Matte Obsidian-Graphite + Luminous Mint-Emerald (#0CCE42) + Metallic Gold + Soft Clay.
 class AppTokens {
-  // Brand (Electric Violet + Royal Amethyst + Orchid Pink + Luminous Cyan)
-  static const Color brand = Color(0xFF8B5CF6); // electric violet-500
-  static const Color brandDeep = Color(0xFF3B0764); // royal amethyst-950
-  static const Color brandViolet = Color(0xFFA855F7); // luminous purple-500
-  static const Color brandOrchid = Color(0xFFEC4899); // neon orchid-pink-500
-  static const Color brandSky = Color(0xFF38BDF8); // luminous cyan-400
+  // Figma Finance & Banking 3D primary tokens
+  static const Color brand = Color(0xFF0CCE42); // Figma Style color 2: #0CCE42
+  static const Color brandDeep = Color(0xFF064E28); // deep forest emerald
+  static const Color brandViolet = Color(0xFF22D666); // luminous mint-emerald ("3D ICONS")
+  static const Color brandOrchid = Color(0xFFF5C443); // metallic 3D gold coin accent
+  static const Color brandSky = Color(0xFF34D399); // frosted emerald-teal highlight
 
   // Legacy names kept for compatibility
-  static const Color navyDark = Color(0xFF090712);
+  static const Color navyDark = Color(0xFF161817);
   static const Color navyPrimary = brand;
-  static const Color navyAccent = Color(0xFFA855F7);
+  static const Color navyAccent = Color(0xFF22D666);
 
   // Semantic money colors (base)
-  static const Color cashGreen = Color(0xFF10B981);
-  static const Color cashGreenBg = Color(0xFFECFDF5);
-  static const Color cardBlue = Color(0xFF0284C7);
+  static const Color cashGreen = Color(0xFF10CE52);
+  static const Color cashGreenBg = Color(0xFFECFDF3);
+  static const Color cardBlue = Color(0xFF0EA5E9);
   static const Color cardBlueBg = Color(0xFFF0F9FF);
-  static const Color transferPurple = Color(0xFFA855F7);
-  static const Color transferPurpleBg = Color(0xFFFAF5FF);
+  static const Color transferPurple = Color(0xFF8B95A1); // frosted silver-clay bank tone
+  static const Color transferPurpleBg = Color(0xFFF4F6F8);
   static const Color debtAmber = Color(0xFFF59E0B);
   static const Color debtAmberBg = Color(0xFFFFFBEB);
   static const Color dangerRed = Color(0xFFEF4444);
   static const Color dangerRedBg = Color(0xFFFEF2F2);
 
-  // Light surfaces (crisp pearl-lavender)
-  static const Color surfaceLight = Color(0xFFF6F4FB);
-  static const Color cardBorderLight = Color(0xFFE5DFF3);
-  static const Color textPrimaryLight = Color(0xFF140F26);
-  static const Color textSecondaryLight = Color(0xFF5A5275);
+  // Light surfaces (crisp frosted silver-mint clay)
+  static const Color surfaceLight = Color(0xFFF2F5F3);
+  static const Color cardBorderLight = Color(0xFFDCE4DF);
+  static const Color textPrimaryLight = Color(0xFF141A17);
+  static const Color textSecondaryLight = Color(0xFF526059);
 
-  // Dark surfaces (deep obsidian-plum matching 3D cosmic splash)
-  static const Color surfaceDark = Color(0xFF090712);
-  static const Color cardDark = Color(0xFF130F21);
-  static const Color cardElevatedDark = Color(0xFF1B162D);
-  static const Color cardBorderDark = Color(0xFF2D2448);
-  static const Color textPrimaryDark = Color(0xFFFAF8FF);
-  static const Color textSecondaryDark = Color(0xFFB8B0D0);
+  // Dark surfaces (1-to-1 Figma Cover Matte Obsidian #1E1E1E / #161817 + Charcoal #262626 + Clay #A7A6A7)
+  static const Color surfaceDark = Color(0xFF161817);
+  static const Color cardDark = Color(0xFF202322);
+  static const Color cardElevatedDark = Color(0xFF282C2B);
+  static const Color cardBorderDark = Color(0xFF363C3A);
+  static const Color textPrimaryDark = Color(0xFFF8FAF9);
+  static const Color textSecondaryDark = Color(0xFFA7B0AC);
 
   static const LinearGradient heroGradient = LinearGradient(
     colors: [
-      Color(0xFF170B30),
-      Color(0xFF3B0F70),
-      Color(0xFF7E22CE),
-      Color(0xFFA21CAF),
+      Color(0xFF1B1F1D),
+      Color(0xFF182A21),
+      Color(0xFF0D4427),
+      Color(0xFF0E6436),
     ],
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );
 
   static const LinearGradient aiGradient = LinearGradient(
-    colors: [Color(0xFF8B5CF6), Color(0xFFD946EF), Color(0xFFEC4899)],
+    colors: [Color(0xFF0AA838), Color(0xFF18D259), Color(0xFFD99B26)],
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );
@@ -192,21 +193,93 @@ Color textSecondaryOf(BuildContext context) => isDarkCtx(context)
     ? AppTokens.textSecondaryDark
     : AppTokens.textSecondaryLight;
 
+/// Bundled 3D icon asset paths exported directly from Figma "Finance & Banking 3D Icons".
+class Figma3DIcons {
+  static const String agreement = 'assets/icons3d/agreement.png';
+  static const String atm = 'assets/icons3d/atm.png';
+  static const String bag = 'assets/icons3d/bag.png';
+  static const String bank = 'assets/icons3d/bank.png';
+  static const String briefcase = 'assets/icons3d/briefcase.png';
+  static const String calculator = 'assets/icons3d/calculator.png';
+  static const String cards = 'assets/icons3d/cards.png';
+  static const String charts = 'assets/icons3d/charts.png';
+  static const String exchange = 'assets/icons3d/exchange.png';
+  static const String hourglass = 'assets/icons3d/hourglass.png';
+  static const String lock = 'assets/icons3d/lock.png';
+  static const String money = 'assets/icons3d/money.png';
+  static const String qr = 'assets/icons3d/qr.png';
+  static const String shield = 'assets/icons3d/shield.png';
+}
+
+/// Renders a 3D Finance & Banking icon from Figma inside a rounded squircle tile
+/// matching the Figma `rounded-[44px]` (`44/300`) icon geometry with subtle depth glow.
+class Figma3DIconBadge extends StatelessWidget {
+  final String asset;
+  final double size;
+  final IconData fallbackIcon;
+  final Color? glowColor;
+
+  const Figma3DIconBadge({
+    super.key,
+    required this.asset,
+    this.size = 34,
+    this.fallbackIcon = Icons.auto_awesome_rounded,
+    this.glowColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = BorderRadius.circular(size * 0.22);
+    final glow = glowColor ?? AppTokens.brandViolet;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        borderRadius: radius,
+        boxShadow: [
+          BoxShadow(
+            color: glow.withValues(alpha: 0.24),
+            blurRadius: size * 0.32,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: radius,
+        child: Image.asset(
+          asset,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          filterQuality: FilterQuality.high,
+          errorBuilder: (_, __, ___) => Container(
+            width: size,
+            height: size,
+            color: glow.withValues(alpha: 0.18),
+            alignment: Alignment.center,
+            child: Icon(fallbackIcon, size: size * 0.56, color: glow),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 ThemeData buildAppTheme(Brightness brightness) {
   final isDark = brightness == Brightness.dark;
   final primaryText =
       isDark ? AppTokens.textPrimaryDark : AppTokens.textPrimaryLight;
   final secondaryText =
       isDark ? AppTokens.textSecondaryDark : AppTokens.textSecondaryLight;
-  final primaryColor = isDark ? const Color(0xFFA78BFA) : const Color(0xFF7C3AED);
+  final primaryColor = isDark ? const Color(0xFF28E070) : const Color(0xFF0A9E36);
 
   final colorScheme = ColorScheme.fromSeed(
     seedColor: AppTokens.brand,
     brightness: brightness,
     primary: primaryColor,
-    onPrimary: Colors.white,
+    onPrimary: isDark ? const Color(0xFF062914) : Colors.white,
     secondary: AppTokens.brandOrchid,
-    onSecondary: Colors.white,
+    onSecondary: const Color(0xFF1F1600),
     tertiary: AppTokens.brandSky,
     error: AppTokens.dangerRed,
     surface: isDark ? AppTokens.cardDark : Colors.white,
@@ -257,7 +330,7 @@ ThemeData buildAppTheme(Brightness brightness) {
       ),
     ),
     bottomSheetTheme: BottomSheetThemeData(
-      backgroundColor: isDark ? const Color(0xFF120E20) : Colors.white,
+      backgroundColor: isDark ? const Color(0xFF1C1F1E) : Colors.white,
       surfaceTintColor: Colors.transparent,
       showDragHandle: true,
       dragHandleColor: isDark
@@ -273,11 +346,11 @@ ThemeData buildAppTheme(Brightness brightness) {
       surfaceTintColor: Colors.transparent,
       backgroundColor: Colors.transparent,
       indicatorColor:
-          AppTokens.brandViolet.withValues(alpha: isDark ? 0.30 : 0.15),
+          AppTokens.brandViolet.withValues(alpha: isDark ? 0.24 : 0.14),
       iconTheme: WidgetStateProperty.resolveWith(
         (s) => IconThemeData(
           color: s.contains(WidgetState.selected)
-              ? (isDark ? Colors.white : const Color(0xFF7C3AED))
+              ? (isDark ? Colors.white : const Color(0xFF0A8F30))
               : secondaryText,
         ),
       ),
@@ -293,9 +366,9 @@ ThemeData buildAppTheme(Brightness brightness) {
     ),
     chipTheme: ChipThemeData(
       backgroundColor:
-          isDark ? AppTokens.cardElevatedDark : const Color(0xFFF2EEFA),
+          isDark ? AppTokens.cardElevatedDark : const Color(0xFFEAF0EC),
       selectedColor:
-          AppTokens.brandViolet.withValues(alpha: isDark ? 0.34 : 0.16),
+          AppTokens.brandViolet.withValues(alpha: isDark ? 0.28 : 0.16),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       side: BorderSide(
         color: isDark ? AppTokens.cardBorderDark : AppTokens.cardBorderLight,
@@ -308,13 +381,13 @@ ThemeData buildAppTheme(Brightness brightness) {
       secondaryLabelStyle: TextStyle(
         fontWeight: FontWeight.w800,
         fontSize: 13,
-        color: isDark ? Colors.white : const Color(0xFF7C3AED),
+        color: isDark ? Colors.white : const Color(0xFF0A8F30),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: isDark ? AppTokens.cardElevatedDark : const Color(0xFFFAF8FE),
+      fillColor: isDark ? AppTokens.cardElevatedDark : const Color(0xFFF8FAF9),
       labelStyle: TextStyle(
         color: secondaryText,
         fontWeight: FontWeight.w600,
@@ -346,7 +419,7 @@ ThemeData buildAppTheme(Brightness brightness) {
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        backgroundColor: const Color(0xFF8B5CF6),
+        backgroundColor: const Color(0xFF0FA940),
         foregroundColor: Colors.white,
         minimumSize: const Size(0, 48),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -367,14 +440,14 @@ ThemeData buildAppTheme(Brightness brightness) {
       ),
     ),
     floatingActionButtonTheme: FloatingActionButtonThemeData(
-      backgroundColor: const Color(0xFF9333EA),
-      foregroundColor: Colors.white,
+      backgroundColor: const Color(0xFF0CCE42),
+      foregroundColor: const Color(0xFF072110),
       elevation: 6,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
     ),
     snackBarTheme: SnackBarThemeData(
       behavior: SnackBarBehavior.floating,
-      backgroundColor: isDark ? AppTokens.cardElevatedDark : const Color(0xFF1F1638),
+      backgroundColor: isDark ? AppTokens.cardElevatedDark : const Color(0xFF1C211F),
       contentTextStyle: const TextStyle(
         color: Colors.white,
         fontWeight: FontWeight.w700,

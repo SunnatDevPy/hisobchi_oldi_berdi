@@ -120,7 +120,7 @@ async def get_bot_username(bot) -> str:
     global _BOT_USERNAME
     if not _BOT_USERNAME:
         me = await bot.get_me()
-        _BOT_USERNAME = me.username or "hisobchi_my_bot"
+        _BOT_USERNAME = me.username or "hisobchi_my_own_bot"
     return _BOT_USERNAME
 
 

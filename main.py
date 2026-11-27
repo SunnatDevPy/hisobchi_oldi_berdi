@@ -11,6 +11,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramUnauthorizedError
 from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, MenuButtonWebApp, WebAppInfo
 
 from bot.auth import refresh_role_cache
@@ -137,8 +138,22 @@ async def run_bot() -> None:
             polling_timeout=20,
             allowed_updates=dp.resolve_used_update_types(),
         )
+    except TelegramUnauthorizedError:
+        logger.error(
+            "BOT_TOKEN yaroqsiz yoki @BotFather da bekor qilingan (401 Unauthorized)! "
+            "Yangi token olgach .env ni yangilang. Mobil REST API ishlashda davom etadi."
+        )
+        set_bot(None)
+        with suppress(Exception):
+            await bot.session.close()
+        if settings.API_ENABLED and bg_tasks:
+            await asyncio.gather(*bg_tasks)
+        else:
+            raise
     finally:
         set_bot(None)
+        with suppress(Exception):
+            await bot.session.close()
         for task in bg_tasks:
             task.cancel()
             with suppress(asyncio.CancelledError):
