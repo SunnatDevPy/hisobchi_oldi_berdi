@@ -170,6 +170,7 @@ from services.excel_export import build_range_excel, build_session_excel, build_
 from services.gemini_ai import extract_nakladnoy_from_image, parse_voice_or_text
 from services.pdf_sverka import generate_supplier_sverka_pdf
 from services.prixod_parser import parse_manual_itog_text, parse_yespos_table
+from services.yespos_client import get_yespos_catalog_service
 
 WEBAPP_DIR = BASE_DIR / "data" / "webapp"
 _WEBAPP_NO_CACHE_FILES = {
@@ -2430,6 +2431,75 @@ def create_api_app() -> FastAPI:
             "report": _serialize_prixod(report),
             "published": published,
             "message": pub_msg,
+        }
+
+    # -----------------------------------------------------------------------
+    # YesPOS Product Catalog (Read-only GET + Cached Search & Categories)
+    # -----------------------------------------------------------------------
+
+    @app.get("/yespos/products")
+    async def get_yespos_products_endpoint(
+        q: str = Query(default=""),
+        category_id: Optional[int] = Query(default=None),
+        stock_filter: str = Query(default="all"),
+        sort: str = Query(default="name_asc"),
+        page: int = Query(default=1, ge=1),
+        limit: int = Query(default=60, ge=1, le=200),
+        refresh: bool = Query(default=False),
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        svc = get_yespos_catalog_service()
+        if not svc.is_configured():
+            return svc.query_products(
+                q=q,
+                category_id=category_id,
+                stock_filter=stock_filter,
+                sort=sort,
+                page=page,
+                limit=limit,
+            )
+        try:
+            await svc.ensure_loaded(force=refresh, wait_for_prices=False)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"YesPOS mahsulotlarini yuklab bo'lmadi: {exc}",
+            ) from exc
+        return svc.query_products(
+            q=q,
+            category_id=category_id,
+            stock_filter=stock_filter,
+            sort=sort,
+            page=page,
+            limit=limit,
+        )
+
+    @app.post("/yespos/products/sync")
+    async def sync_yespos_products_endpoint(
+        wait_for_prices: bool = Query(default=False),
+        user: AuthenticatedUser = Depends(get_current_user),
+    ) -> dict:
+        svc = get_yespos_catalog_service()
+        if not svc.is_configured():
+            raise HTTPException(
+                status_code=400,
+                detail="YesPOS API kaliti sozlanmagan (YESPOS_API_KEY).",
+            )
+        try:
+            await svc.ensure_loaded(force=True, wait_for_prices=wait_for_prices)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"YesPOS bilan sinxronlashda xatolik: {exc}",
+            ) from exc
+        snap = svc.query_products(page=1, limit=1)
+        return {
+            "ok": True,
+            "synced_at": snap["synced_at"],
+            "prices_ready": snap["prices_ready"],
+            "syncing": snap["syncing"],
+            "total_catalog_products": snap["total_catalog_products"],
+            "total_categories": snap["total_categories"],
         }
 
     # -----------------------------------------------------------------------

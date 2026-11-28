@@ -1026,7 +1026,7 @@ class _LoginScreenState extends State<LoginScreen> with WidgetsBindingObserver {
                     colors: [
                       AppTokens.brandViolet
                           .withValues(alpha: isDark ? 0.30 : 0.14),
-                      const Color(0xFFEC4899)
+                      AppTokens.brandOrchid
                           .withValues(alpha: isDark ? 0.12 : 0.05),
                       Colors.transparent,
                     ],
@@ -3075,6 +3075,18 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
     );
   }
 
+  Future<void> _openYesposProductsSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (ctx) => YesPOSProductsSheet(
+        api: widget.api,
+        showSnack: _showSnack,
+      ),
+    );
+  }
+
   Future<void> _openSupplierSettingsSheet() async {
     await showModalBottomSheet<void>(
       context: context,
@@ -3506,7 +3518,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
           const SizedBox(height: 12),
           _buildNakladnoyMiniDashboard(s),
           const SizedBox(height: 12),
-          // Frosted Glass Quick Action Pills (Sverka, Skaner & Arxiv)
+          // Frosted Glass Quick Action Pills (Sverka, Mahsulotlar, Skaner & Arxiv)
           Row(
             children: [
               Expanded(
@@ -3518,8 +3530,22 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                   onTap: _openLiveSverkaSheet,
                 ),
               ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _buildDashboardQuickPill(
+                  icon: Icons.inventory_2_rounded,
+                  asset3d: Figma3DIcons.briefcase,
+                  label: 'Mahsulotlar',
+                  accent: AppTokens.cashGreen,
+                  onTap: _openYesposProductsSheet,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
               if (widget.api.canWrite) ...[
-                const SizedBox(width: 10),
                 Expanded(
                   child: _buildDashboardQuickPill(
                     icon: Icons.qr_code_scanner_rounded,
@@ -3529,8 +3555,8 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
                     onTap: () => _openAddNakladnoySheet(),
                   ),
                 ),
+                const SizedBox(width: 10),
               ],
-              const SizedBox(width: 10),
               Expanded(
                 child: _buildDashboardQuickPill(
                   icon: Icons.history_rounded,
@@ -4346,6 +4372,10 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
           Navigator.of(ctx).pop();
           _openSupplierSettingsSheet();
         },
+        onOpenYesposProducts: () {
+          Navigator.of(ctx).pop();
+          _openYesposProductsSheet();
+        },
         onOpenTelegramSettings: () {
           Navigator.of(ctx).pop();
           _openTelegramHubSheet();
@@ -4379,6 +4409,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen>
       onOpenHistorySessions: _openHistorySessionsSheet,
       onOpenLiveSverka: _openLiveSverkaSheet,
       onOpenPrixod: _openPrixodSheet,
+      onOpenYesposProducts: _openYesposProductsSheet,
     );
   }
 }
@@ -4392,6 +4423,7 @@ class _SmenaAndReportsView extends StatefulWidget {
   final VoidCallback onOpenHistorySessions;
   final VoidCallback onOpenLiveSverka;
   final VoidCallback onOpenPrixod;
+  final VoidCallback? onOpenYesposProducts;
 
   const _SmenaAndReportsView({
     required this.summary,
@@ -4402,6 +4434,7 @@ class _SmenaAndReportsView extends StatefulWidget {
     required this.onOpenHistorySessions,
     required this.onOpenLiveSverka,
     required this.onOpenPrixod,
+    this.onOpenYesposProducts,
   });
 
   @override
@@ -5188,6 +5221,14 @@ class _SmenaAndReportsViewState extends State<_SmenaAndReportsView> {
                   icon: const Icon(Icons.workspace_premium_rounded),
                   label: const Text('Prixod (ITOG)'),
                 ),
+                if (widget.onOpenYesposProducts != null) ...[
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: widget.onOpenYesposProducts,
+                    icon: const Icon(Icons.inventory_2_rounded),
+                    label: const Text('YesPOS mahsulotlar'),
+                  ),
+                ],
               ],
             ),
           ),
@@ -5494,6 +5535,7 @@ class _AppSettingsSheet extends StatefulWidget {
   final bool isOfflineMode;
   final VoidCallback onToggleTheme;
   final VoidCallback onOpenSupplierSettings;
+  final VoidCallback? onOpenYesposProducts;
   final VoidCallback onOpenTelegramSettings;
   final VoidCallback onCheckUpdate;
   final VoidCallback onLoggedOut;
@@ -5506,6 +5548,7 @@ class _AppSettingsSheet extends StatefulWidget {
     required this.isOfflineMode,
     required this.onToggleTheme,
     required this.onOpenSupplierSettings,
+    this.onOpenYesposProducts,
     required this.onOpenTelegramSettings,
     required this.onCheckUpdate,
     required this.onLoggedOut,
@@ -5780,6 +5823,14 @@ class _AppSettingsSheetState extends State<_AppSettingsSheet> {
                                 icon: const Icon(Icons.storefront_rounded),
                                 label: const Text('Postavshik sozlamalari'),
                               ),
+                              if (widget.onOpenYesposProducts != null) ...[
+                                const SizedBox(height: 8),
+                                OutlinedButton.icon(
+                                  onPressed: widget.onOpenYesposProducts,
+                                  icon: const Icon(Icons.inventory_2_rounded),
+                                  label: const Text('YesPOS mahsulotlar katalogi'),
+                                ),
+                              ],
                             ],
                           ),
                         ),
@@ -14515,6 +14566,1056 @@ class _OfflineQueueSheetState extends State<OfflineQueueSheet> {
                 ),
               ],
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// YESPOS MAHSULOTLAR KATALOGI (READ-ONLY GET + QIDIRUV + KATEGORIYA)
+// ============================================================================
+
+class YesPOSProductsSheet extends StatefulWidget {
+  final HisobchiApiClient api;
+  final void Function(String, {bool isError}) showSnack;
+
+  const YesPOSProductsSheet({
+    super.key,
+    required this.api,
+    required this.showSnack,
+  });
+
+  @override
+  State<YesPOSProductsSheet> createState() => _YesPOSProductsSheetState();
+}
+
+class _YesPOSProductsSheetState extends State<YesPOSProductsSheet> {
+  final TextEditingController _searchCtrl = TextEditingController();
+  Timer? _debounce;
+  Timer? _syncPollTimer;
+  int _requestSeq = 0;
+
+  bool _loading = true;
+  bool _loadingMore = false;
+  bool _syncTriggering = false;
+  bool _configured = true;
+  bool _pricesReady = false;
+  bool _syncing = false;
+  String? _error;
+  String _syncedAt = '';
+  String _lastError = '';
+
+  int _totalCatalog = 0;
+  int _totalCategories = 0;
+  int _inStockCount = 0;
+  int _outOfStockCount = 0;
+  int _matchedCount = 0;
+  int _page = 1;
+  bool _hasMore = false;
+
+  int? _selectedCategoryId;
+  String _stockFilter = 'all';
+  String _sort = 'name_asc';
+
+  List<Map<String, dynamic>> _categories = const [];
+  List<Map<String, dynamic>> _items = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProducts(reset: true);
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _syncPollTimer?.cancel();
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  void _updateSyncPolling() {
+    if (_syncing && _configured) {
+      _syncPollTimer ??= Timer.periodic(const Duration(seconds: 4), (_) {
+        if (!mounted || !_syncing) {
+          _syncPollTimer?.cancel();
+          _syncPollTimer = null;
+          return;
+        }
+        _loadProducts(reset: true, silent: true);
+      });
+    } else {
+      _syncPollTimer?.cancel();
+      _syncPollTimer = null;
+    }
+  }
+
+  void _onSearchChanged(String _) {
+    setState(() {});
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 260), () {
+      if (!mounted) return;
+      _loadProducts(reset: true);
+    });
+  }
+
+  Future<void> _loadProducts({
+    bool reset = true,
+    bool refresh = false,
+    bool silent = false,
+  }) async {
+    final seq = ++_requestSeq;
+    final targetPage = reset ? 1 : (_page + 1);
+    if (!silent && mounted) {
+      setState(() {
+        if (reset) {
+          _loading = true;
+          _error = null;
+        } else {
+          _loadingMore = true;
+        }
+      });
+    }
+    try {
+      final data = await widget.api.getYesposProducts(
+        q: _searchCtrl.text.trim(),
+        categoryId: _selectedCategoryId,
+        stockFilter: _stockFilter,
+        sort: _sort,
+        page: targetPage,
+        limit: 50,
+        refresh: refresh,
+      );
+      if (!mounted || seq != _requestSeq) return;
+      final cats = ((data['categories'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      final newItems = ((data['items'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      setState(() {
+        _configured = data['configured'] != false;
+        _syncedAt = (data['synced_at'] ?? '').toString();
+        _pricesReady = data['prices_ready'] == true;
+        _syncing = data['syncing'] == true;
+        _lastError = (data['last_error'] ?? '').toString();
+        _totalCatalog = (data['total_catalog_products'] as num?)?.toInt() ?? 0;
+        _totalCategories =
+            (data['total_categories'] as num?)?.toInt() ?? cats.length;
+        _inStockCount = (data['in_stock_count'] as num?)?.toInt() ?? 0;
+        _outOfStockCount = (data['out_of_stock_count'] as num?)?.toInt() ?? 0;
+        _matchedCount =
+            (data['matched_count'] as num?)?.toInt() ?? newItems.length;
+        _page = (data['page'] as num?)?.toInt() ?? targetPage;
+        _hasMore = data['has_more'] == true;
+        _categories = cats;
+        _items = reset ? newItems : [..._items, ...newItems];
+        _loading = false;
+        _loadingMore = false;
+        _error = null;
+      });
+      _updateSyncPolling();
+    } catch (e) {
+      if (!mounted || seq != _requestSeq) return;
+      setState(() {
+        _loading = false;
+        _loadingMore = false;
+        if (!silent) {
+          _error = e.toString().replaceFirst('Exception: ', '');
+        }
+      });
+    }
+  }
+
+  Future<void> _triggerManualSync() async {
+    if (_syncTriggering) return;
+    HapticFeedback.selectionClick();
+    setState(() => _syncTriggering = true);
+    try {
+      await widget.api.syncYesposProducts(waitForPrices: false);
+      if (!mounted) return;
+      widget.showSnack("🔄 YesPOS katalogi yangilanmoqda...");
+      await _loadProducts(reset: true);
+    } catch (e) {
+      if (!mounted) return;
+      widget.showSnack(
+        e.toString().replaceFirst('Exception: ', ''),
+        isError: true,
+      );
+    } finally {
+      if (mounted) setState(() => _syncTriggering = false);
+    }
+  }
+
+  String _formatQty(num? val) {
+    if (val == null) return '—';
+    final d = val.toDouble();
+    if (d == d.roundToDouble()) return d.round().toString();
+    return d.toStringAsFixed(2).replaceFirst(RegExp(r'\.?0+$'), '');
+  }
+
+  Future<void> _copyValue(String label, String value) async {
+    if (value.trim().isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: value.trim()));
+    HapticFeedback.selectionClick();
+    widget.showSnack("📋 $label nusxalandi");
+  }
+
+  Future<void> _openProductDetail(Map<String, dynamic> item) async {
+    HapticFeedback.selectionClick();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (ctx) => _YesPOSProductDetailSheet(
+        item: item,
+        formatQty: _formatQty,
+        onCopy: _copyValue,
+      ),
+    );
+  }
+
+  Widget _buildMetaPill(BuildContext context, String label, String val) {
+    final isDark = isDarkCtx(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: isDark
+            ? Colors.white.withValues(alpha: 0.06)
+            : Colors.black.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        '$label: $val',
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: textSecondaryOf(context),
+          fontFeatures: AppTokens.tabularNums,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStockBadge(BuildContext context, Map<String, dynamic> item) {
+    final stockNum = item['stock'] as num?;
+    final lowNum = item['low_stock'] as num?;
+    if (stockNum == null) {
+      final (fg, bg, border) =
+          AppTokens.semanticSurface(context, AppTokens.brandSky);
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: border),
+        ),
+        child: Text(
+          _syncing ? 'Yuklanmoqda...' : 'Qoldiq: —',
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            color: fg,
+          ),
+        ),
+      );
+    }
+
+    final st = stockNum.toDouble();
+    final thresh =
+        (lowNum != null && lowNum.toDouble() > 0) ? lowNum.toDouble() : 5.0;
+    final Color baseColor;
+    final String label;
+    if (st <= 0) {
+      baseColor = AppTokens.dangerRed;
+      label = 'Tugagan (0)';
+    } else if (st <= thresh) {
+      baseColor = AppTokens.debtAmber;
+      label = 'Kam: ${_formatQty(stockNum)}';
+    } else {
+      baseColor = AppTokens.cashGreen;
+      label = 'Qoldiq: ${_formatQty(stockNum)}';
+    }
+    final (fg, bg, border) = AppTokens.semanticSurface(context, baseColor);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: border),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+          color: fg,
+          fontFeatures: AppTokens.tabularNums,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProductCard(BuildContext context, Map<String, dynamic> item) {
+    final isDark = isDarkCtx(context);
+    final name = (item['name'] ?? '').toString().trim();
+    final catName = (item['category_name'] ?? '').toString().trim();
+    final sku = (item['sku'] ?? '').toString().trim();
+    final barcode = (item['barcode'] ?? '').toString().trim();
+    final classcode = (item['classcode'] ?? '').toString().trim();
+    final priceNum = item['price'] as num?;
+    final (catFg, catBg, catBorder) =
+        AppTokens.semanticSurface(context, AppTokens.brandViolet);
+
+    return Material(
+      color: isDark ? AppTokens.cardDark : Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: isDark ? AppTokens.cardBorderDark : AppTokens.cardBorderLight,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _openProductDetail(item),
+        child: Padding(
+          padding: const EdgeInsets.all(13),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      name.isEmpty ? 'Nomsiz mahsulot' : name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w800,
+                        height: 1.25,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  _buildStockBadge(context, item),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  if (catName.isNotEmpty)
+                    Flexible(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: catBg,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: catBorder),
+                        ),
+                        child: Text(
+                          catName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: catFg,
+                          ),
+                        ),
+                      ),
+                    ),
+                  const Spacer(),
+                  Text(
+                    priceNum != null
+                        ? formatUzs(priceNum, withCurrency: true)
+                        : (_syncing ? 'Narx yuklanmoqda...' : 'Narx: —'),
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w900,
+                      color: priceNum != null
+                          ? AppTokens.brand
+                          : textSecondaryOf(context),
+                      fontFeatures: AppTokens.tabularNums,
+                    ),
+                  ),
+                ],
+              ),
+              if (sku.isNotEmpty ||
+                  barcode.isNotEmpty ||
+                  classcode.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    if (sku.isNotEmpty) _buildMetaPill(context, 'Artikul', sku),
+                    if (barcode.isNotEmpty)
+                      _buildMetaPill(context, 'Barkod', barcode),
+                    if (classcode.isNotEmpty)
+                      _buildMetaPill(context, 'MXIK', classcode),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = isDarkCtx(context);
+    final categoryOptions = <CustomDropdownOption<int>>[
+      CustomDropdownOption<int>(
+        value: -1,
+        label: 'Barcha kategoriyalar',
+        subtitle: "Hamma bo'limlar",
+        icon: Icons.apps_rounded,
+        accentColor: AppTokens.brand,
+        badge: '$_totalCatalog',
+      ),
+      for (final c in _categories)
+        CustomDropdownOption<int>(
+          value: (c['id'] as num?)?.toInt() ?? 0,
+          label: (c['name'] ?? 'Kategoriya').toString(),
+          icon: Icons.folder_outlined,
+          accentColor: AppTokens.brandViolet,
+          badge: '${(c['product_count'] as num?)?.toInt() ?? 0}',
+        ),
+    ];
+
+    final sortOptions = const <CustomDropdownOption<String>>[
+      CustomDropdownOption<String>(
+        value: 'name_asc',
+        label: 'Nomi (A-Z)',
+        icon: Icons.sort_by_alpha_rounded,
+        accentColor: AppTokens.brand,
+      ),
+      CustomDropdownOption<String>(
+        value: 'price_desc',
+        label: 'Narx (qimmat)',
+        icon: Icons.arrow_downward_rounded,
+        accentColor: AppTokens.brandOrchid,
+      ),
+      CustomDropdownOption<String>(
+        value: 'price_asc',
+        label: 'Narx (arzon)',
+        icon: Icons.arrow_upward_rounded,
+        accentColor: AppTokens.cashGreen,
+      ),
+      CustomDropdownOption<String>(
+        value: 'stock_desc',
+        label: "Qoldiq (ko'p)",
+        icon: Icons.inventory_rounded,
+        accentColor: AppTokens.brandSky,
+      ),
+      CustomDropdownOption<String>(
+        value: 'stock_asc',
+        label: 'Qoldiq (kam)',
+        icon: Icons.warning_amber_rounded,
+        accentColor: AppTokens.debtAmber,
+      ),
+    ];
+
+    final quickCategories = _categories.take(8).toList();
+    final (syncFg, syncBg, syncBorder) =
+        AppTokens.semanticSurface(context, AppTokens.brandSky);
+
+    return SafeArea(
+      top: false,
+      maintainBottomViewPadding: true,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(16, 6, 16, sheetBottomPadding(context)),
+        child: SizedBox(
+          height: sheetMaxHeight(context, fraction: 0.92),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Header
+              Row(
+                children: [
+                  const Figma3DIconBadge(
+                    asset: Figma3DIcons.briefcase,
+                    size: 34,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'YesPOS Mahsulotlar',
+                          style: TextStyle(
+                            fontSize: 18.5,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        Text(
+                          _totalCatalog > 0
+                              ? '$_totalCatalog ta mahsulot • $_totalCategories ta kategoriya'
+                              : "Faqat o'qish (GET) katalogi",
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: textSecondaryOf(context),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'YesPOS dan yangilash',
+                    onPressed: _syncTriggering ? null : _triggerManualSync,
+                    icon: _syncTriggering
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.sync_rounded),
+                  ),
+                  IconButton(
+                    tooltip: 'Yopish',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+
+              // Search bar
+              TextField(
+                controller: _searchCtrl,
+                textInputAction: TextInputAction.search,
+                onChanged: _onSearchChanged,
+                onSubmitted: (_) {
+                  _debounce?.cancel();
+                  _loadProducts(reset: true);
+                },
+                decoration: InputDecoration(
+                  hintText: 'Qidiruv: nomi, artikul, barkod, MXIK...',
+                  prefixIcon: const Icon(Icons.search_rounded),
+                  suffixIcon: _searchCtrl.text.isNotEmpty
+                      ? IconButton(
+                          tooltip: 'Tozalash',
+                          icon: const Icon(Icons.close_rounded, size: 19),
+                          onPressed: () {
+                            _searchCtrl.clear();
+                            _debounce?.cancel();
+                            setState(() {});
+                            _loadProducts(reset: true);
+                          },
+                        )
+                      : null,
+                  isDense: true,
+                  filled: true,
+                  fillColor: isDark ? AppTokens.cardDark : Colors.white,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+
+              // Category + Sort dropdown row
+              Row(
+                children: [
+                  Expanded(
+                    flex: 6,
+                    child: HisobchiCustomDropdown<int>(
+                      value: _selectedCategoryId ?? -1,
+                      compact: true,
+                      searchable: true,
+                      labelText: 'Kategoriya',
+                      sheetTitle: 'Kategoriya tanlang',
+                      options: categoryOptions,
+                      onChanged: (v) {
+                        setState(() {
+                          _selectedCategoryId = v == -1 ? null : v;
+                        });
+                        _loadProducts(reset: true);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    flex: 5,
+                    child: HisobchiCustomDropdown<String>(
+                      value: _sort,
+                      compact: true,
+                      labelText: 'Saralash',
+                      sheetTitle: 'Saralash tartibi',
+                      options: sortOptions,
+                      onChanged: (v) {
+                        setState(() => _sort = v);
+                        _loadProducts(reset: true);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+
+              // Quick category chips
+              if (quickCategories.isNotEmpty) ...[
+                SizedBox(
+                  height: 34,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: ChoiceChip(
+                          label: const Text('Barchasi',
+                              style: TextStyle(fontSize: 12)),
+                          selected: _selectedCategoryId == null,
+                          visualDensity: VisualDensity.compact,
+                          onSelected: (_) {
+                            if (_selectedCategoryId == null) return;
+                            setState(() => _selectedCategoryId = null);
+                            _loadProducts(reset: true);
+                          },
+                        ),
+                      ),
+                      for (final c in quickCategories)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: ChoiceChip(
+                            label: Text(
+                              '${c['name']} (${c['product_count'] ?? 0})',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                            selected: _selectedCategoryId ==
+                                (c['id'] as num?)?.toInt(),
+                            visualDensity: VisualDensity.compact,
+                            onSelected: (_) {
+                              final cid = (c['id'] as num?)?.toInt();
+                              setState(() {
+                                _selectedCategoryId =
+                                    _selectedCategoryId == cid ? null : cid;
+                              });
+                              _loadProducts(reset: true);
+                            },
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 6),
+              ],
+
+              // Stock filter chips
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    for (final entry in <(String, String)>[
+                      ('all', 'Hamma'),
+                      (
+                        'in_stock',
+                        _pricesReady ? 'Bor ($_inStockCount)' : 'Bor'
+                      ),
+                      ('low_stock', 'Kam qoldiq'),
+                      (
+                        'out_of_stock',
+                        _pricesReady ? 'Tugagan ($_outOfStockCount)' : 'Tugagan'
+                      ),
+                    ])
+                      Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: FilterChip(
+                          label: Text(entry.$2,
+                              style: const TextStyle(fontSize: 11.5)),
+                          selected: _stockFilter == entry.$1,
+                          visualDensity: VisualDensity.compact,
+                          onSelected: (_) {
+                            if (_stockFilter == entry.$1) return;
+                            setState(() => _stockFilter = entry.$1);
+                            _loadProducts(reset: true);
+                          },
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+
+              // Background price/stock sync indicator
+              if (_syncing) ...[
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: syncBg,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: syncBorder),
+                  ),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: syncFg,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          "Narx va qoldiqlar YesPOS dan fon rejimida yuklanmoqda...",
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w700,
+                            color: syncFg,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+
+              // Match count + synced timestamp strip
+              Row(
+                children: [
+                  Text(
+                    'Topildi: $_matchedCount ta',
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const Spacer(),
+                  if (_syncedAt.isNotEmpty)
+                    Text(
+                      'Yangilandi: $_syncedAt',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: textSecondaryOf(context),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+
+              // Body
+              Expanded(
+                child: !_configured
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(20),
+                          child: Text(
+                            "YesPOS API kaliti (YESPOS_API_KEY) serverda sozlanmagan.",
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: textSecondaryOf(context),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      )
+                    : _loading
+                        ? const Center(child: CircularProgressIndicator())
+                        : _error != null
+                            ? Center(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.cloud_off_rounded,
+                                        size: 40, color: AppTokens.dangerRed),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      _error!,
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w700),
+                                    ),
+                                    const SizedBox(height: 12),
+                                    FilledButton.icon(
+                                      onPressed: () =>
+                                          _loadProducts(reset: true),
+                                      icon: const Icon(Icons.refresh_rounded),
+                                      label: const Text("Qayta urinish"),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            : _items.isEmpty
+                                ? Center(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.search_off_rounded,
+                                            size: 44,
+                                            color: textSecondaryOf(context)),
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          _lastError.isNotEmpty
+                                              ? "Mahsulotlar topilmadi ($_lastError)"
+                                              : "Qidiruv bo'yicha mahsulot topilmadi",
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            color: textSecondaryOf(context),
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        if (_searchCtrl.text.isNotEmpty ||
+                                            _selectedCategoryId != null ||
+                                            _stockFilter != 'all') ...[
+                                          const SizedBox(height: 10),
+                                          OutlinedButton.icon(
+                                            onPressed: () {
+                                              _searchCtrl.clear();
+                                              setState(() {
+                                                _selectedCategoryId = null;
+                                                _stockFilter = 'all';
+                                              });
+                                              _loadProducts(reset: true);
+                                            },
+                                            icon: const Icon(
+                                                Icons.filter_alt_off_rounded),
+                                            label:
+                                                const Text('Filtrlarni tozalash'),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  )
+                                : ListView.separated(
+                                    padding: const EdgeInsets.only(bottom: 18),
+                                    itemCount:
+                                        _items.length + (_hasMore ? 1 : 0),
+                                    separatorBuilder: (_, __) =>
+                                        const SizedBox(height: 8),
+                                    itemBuilder: (ctx, i) {
+                                      if (i >= _items.length) {
+                                        return Padding(
+                                          padding:
+                                              const EdgeInsets.only(top: 4),
+                                          child: OutlinedButton.icon(
+                                            onPressed: _loadingMore
+                                                ? null
+                                                : () => _loadProducts(
+                                                    reset: false),
+                                            icon: _loadingMore
+                                                ? const SizedBox(
+                                                    width: 16,
+                                                    height: 16,
+                                                    child:
+                                                        CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                    ),
+                                                  )
+                                                : const Icon(
+                                                    Icons.expand_more_rounded),
+                                            label: Text(
+                                              "Yana ko'rsatish (${_items.length} / $_matchedCount)",
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                      return _buildProductCard(ctx, _items[i]);
+                                    },
+                                  ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _YesPOSProductDetailSheet extends StatelessWidget {
+  final Map<String, dynamic> item;
+  final String Function(num?) formatQty;
+  final Future<void> Function(String label, String value) onCopy;
+
+  const _YesPOSProductDetailSheet({
+    required this.item,
+    required this.formatQty,
+    required this.onCopy,
+  });
+
+  Widget _detailRow(
+    BuildContext context,
+    String label,
+    String value, {
+    bool copyable = false,
+  }) {
+    if (value.trim().isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              color: textSecondaryOf(context),
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: const TextStyle(
+                fontSize: 13.5,
+                fontWeight: FontWeight.w800,
+                fontFeatures: AppTokens.tabularNums,
+              ),
+            ),
+          ),
+          if (copyable) ...[
+            const SizedBox(width: 6),
+            IconButton(
+              tooltip: '$label nusxalash',
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              padding: EdgeInsets.zero,
+              icon: const Icon(Icons.copy_rounded, size: 17),
+              onPressed: () => onCopy(label, value),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final name = (item['name'] ?? '').toString().trim();
+    final catName = (item['category_name'] ?? '').toString().trim();
+    final sku = (item['sku'] ?? '').toString().trim();
+    final barcode = (item['barcode'] ?? '').toString().trim();
+    final classcode = (item['classcode'] ?? '').toString().trim();
+    final packageCode = (item['package_code'] ?? '').toString().trim();
+    final desc = (item['description'] ?? '').toString().trim();
+    final idStr = (item['id'] ?? '').toString();
+    final priceNum = item['price'] as num?;
+    final stockNum = item['stock'] as num?;
+    final lowNum = item['low_stock'] as num?;
+
+    return SafeArea(
+      top: false,
+      maintainBottomViewPadding: true,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(18, 8, 18, sheetBottomPadding(context)),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: sheetMaxHeight(context, fraction: 0.80),
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Figma3DIconBadge(
+                      asset: Figma3DIcons.briefcase,
+                      size: 32,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        name.isEmpty ? 'Mahsulot' : name,
+                        style: const TextStyle(
+                          fontSize: 17.5,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 10),
+                    child: Column(
+                      children: [
+                        _detailRow(
+                          context,
+                          'Narx',
+                          priceNum != null
+                              ? formatUzs(priceNum, withCurrency: true)
+                              : '—',
+                        ),
+                        _detailRow(
+                          context,
+                          'Qoldiq',
+                          stockNum != null ? formatQty(stockNum) : '—',
+                        ),
+                        if (lowNum != null && lowNum.toDouble() > 0)
+                          _detailRow(
+                              context, 'Minimal qoldiq', formatQty(lowNum)),
+                        _detailRow(context, 'Kategoriya', catName),
+                        _detailRow(context, 'Artikul (SKU)', sku,
+                            copyable: true),
+                        _detailRow(context, 'Barkod', barcode, copyable: true),
+                        _detailRow(context, 'MXIK kodi', classcode,
+                            copyable: true),
+                        _detailRow(context, 'Qadoq kodi', packageCode,
+                            copyable: true),
+                        _detailRow(context, 'YesPOS ID', idStr, copyable: true),
+                      ],
+                    ),
+                  ),
+                ),
+                if (desc.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Tavsif',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              color: textSecondaryOf(context),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(desc, style: const TextStyle(fontSize: 13.5)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                FilledButton.tonalIcon(
+                  onPressed: () => onCopy(
+                    'Nomi',
+                    sku.isNotEmpty ? '$name ($sku)' : name,
+                  ),
+                  icon: const Icon(Icons.copy_all_rounded),
+                  label: const Text("Nomi va artikulni nusxalash"),
+                ),
+              ],
+            ),
           ),
         ),
       ),

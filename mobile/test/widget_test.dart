@@ -1914,4 +1914,125 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(Figma3DIconBadge), findsNWidgets(14));
   });
+
+  testWidgets(
+      'YesPOSProductsSheet renders categories, searches by SKU/name, and filters by category',
+      (WidgetTester tester) async {
+    final seenQueries = <Map<String, String>>[];
+    final mockHttp = MockClient((req) async {
+      if (req.url.path == '/yespos/products') {
+        seenQueries.add(Map<String, String>.from(req.url.queryParameters));
+        final q = (req.url.queryParameters['q'] ?? '').toLowerCase();
+        final catId = req.url.queryParameters['category_id'];
+        final allItems = <Map<String, dynamic>>[
+          {
+            'id': 101,
+            'name': 'Mikado ананас 850ml',
+            'sku': '10990',
+            'barcode': '4780012345678',
+            'classcode': '02008001001000001',
+            'package_code': '1495086',
+            'category_id': 10,
+            'category_name': 'Ichimliklar',
+            'description': 'Ananas sharbati',
+            'price': 24000,
+            'stock': 18,
+            'low_stock': 5,
+          },
+          {
+            'id': 201,
+            'name': 'Qazi ichak kg',
+            'sku': '10005',
+            'barcode': '',
+            'classcode': '01902001001080001',
+            'package_code': '1381128',
+            'category_id': 20,
+            'category_name': 'Oziq-ovqat',
+            'description': 'Yangi qazi',
+            'price': 180000,
+            'stock': 12,
+            'low_stock': 2,
+          },
+        ];
+        final filtered = allItems.where((it) {
+          if (catId != null && '${it['category_id']}' != catId) return false;
+          if (q.isNotEmpty) {
+            final blob =
+                '${it['name']} ${it['sku']} ${it['barcode']} ${it['classcode']}'
+                    .toLowerCase();
+            return blob.contains(q);
+          }
+          return true;
+        }).toList();
+
+        return http.Response.bytes(
+          utf8.encode(jsonEncode({
+            'configured': true,
+            'synced_at': '2026-11-28 12:30',
+            'prices_ready': true,
+            'syncing': false,
+            'last_error': '',
+            'total_catalog_products': 2,
+            'total_categories': 2,
+            'in_stock_count': 2,
+            'out_of_stock_count': 0,
+            'matched_count': filtered.length,
+            'page': 1,
+            'limit': 50,
+            'total_pages': 1,
+            'has_more': false,
+            'categories': [
+              {'id': 10, 'parent': 0, 'name': 'Ichimliklar', 'product_count': 1},
+              {'id': 20, 'parent': 0, 'name': 'Oziq-ovqat', 'product_count': 1},
+            ],
+            'items': filtered,
+          })),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      }
+      return http.Response('{}', 200);
+    });
+
+    final api = HisobchiApiClient(
+      baseUrl: 'https://hisobchi.okaposai.uz',
+      accessToken: 'tok',
+      httpClient: mockHttp,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark),
+        home: Scaffold(
+          body: YesPOSProductsSheet(
+            api: api,
+            showSnack: (_, {bool isError = false}) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('YesPOS Mahsulotlar'), findsOneWidget);
+    expect(find.text('Mikado ананас 850ml'), findsOneWidget);
+    expect(find.text('Qazi ichak kg'), findsOneWidget);
+
+    // Tap quick category chip "Ichimliklar (1)"
+    await tester.tap(find.text('Ichimliklar (1)'));
+    await tester.pumpAndSettle();
+    expect(find.text('Mikado ананас 850ml'), findsOneWidget);
+    expect(find.text('Qazi ichak kg'), findsNothing);
+    expect(seenQueries.last['category_id'], equals('10'));
+
+    // Reset to all categories and search by SKU "10005"
+    await tester.tap(find.text('Barchasi'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '10005');
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Qazi ichak kg'), findsOneWidget);
+    expect(find.text('Mikado ананас 850ml'), findsNothing);
+    expect(seenQueries.last['q'], equals('10005'));
+  });
 }

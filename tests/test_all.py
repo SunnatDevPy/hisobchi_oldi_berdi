@@ -4028,3 +4028,214 @@ def test_supplier_merge_undo_and_split(tmp_path: Path, monkeypatch) -> None:
         api_auth_mod.clear_auth_memory_state()
         clear_role_cache()
         get_settings.cache_clear()
+
+
+def test_yespos_catalog_search_categories_and_api(tmp_path, monkeypatch):
+    """YesPOS read-only catalog: caching, Cyrillic<->Latin search, SKU/barcode/MXIK, categories, and API endpoints."""
+    import api.app as api_app_mod
+    import api.auth as api_auth_mod
+    import database.session as db_sess
+    import httpx
+    from bot.auth import clear_role_cache
+    from config import get_settings
+    from services.yespos_client import YesPOSCatalogService
+
+    db_file = tmp_path / "yespos_test.db"
+    cache_file = tmp_path / "yespos_cache.json"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{db_file.as_posix()}")
+    monkeypatch.setenv("BOT_TOKEN", "123456:TESTTOKEN")
+    monkeypatch.setenv("ADMIN_IDS", "9009")
+    monkeypatch.setenv("ALLOWED_USERS", "9009")
+    monkeypatch.setenv("YESPOS_API_KEY", "fake-yespos-key")
+    monkeypatch.setenv("YESPOS_BASE_URL", "https://marketplace.yestask.uz")
+    get_settings.cache_clear()
+    api_auth_mod.clear_auth_memory_state()
+    clear_role_cache()
+
+    class FakeYesPOSClient:
+        base_url = "https://marketplace.yestask.uz"
+        api_key = "fake-yespos-key"
+
+        async def get_marketplace_products(self):
+            return {
+                "code": 0,
+                "message": "OK",
+                "data": [
+                    {
+                        "id": 10,
+                        "parent": 0,
+                        "name": "Ichimliklar",
+                        "products": [
+                            {
+                                "id": 101,
+                                "category": 10,
+                                "name": "Mikado ананас 850ml",
+                                "sku": "10990",
+                                "barcode": "4780012345678",
+                                "classcode": "02008001001000001",
+                                "package_code": "1495086",
+                                "description": "Shirin ananas sharbati",
+                                "image": "temp-images/ananas.jpg",
+                            },
+                            {
+                                "id": 102,
+                                "category": 10,
+                                "name": "Coca Cola 1.5L",
+                                "sku": "20450",
+                                "barcode": "5449000000996",
+                                "classcode": "02202001001000002",
+                                "package_code": "1234567",
+                                "description": "Gazli ichimlik",
+                                "image": "",
+                            },
+                        ],
+                    },
+                    {
+                        "id": 11,
+                        "parent": 10,
+                        "name": "Energetiklar",
+                        "products": [
+                            {
+                                "id": 103,
+                                "category": 11,
+                                "name": "Gorilla Energy 450ml",
+                                "sku": "30111",
+                                "classcode": "02202009001000003",
+                                "package_code": "7654321",
+                                "description": "Energetik ichimlik",
+                                "image": "",
+                            },
+                        ],
+                    },
+                    {
+                        "id": 20,
+                        "parent": 0,
+                        "name": "Oziq-ovqat",
+                        "products": [
+                            {
+                                "id": 201,
+                                "category": 20,
+                                "name": "Qazi ichak kg",
+                                "sku": "10005",
+                                "classcode": "01902001001080001",
+                                "package_code": "1381128",
+                                "description": "Yangi qazi",
+                                "image": "",
+                            },
+                        ],
+                    },
+                ],
+            }
+
+        async def get_products_info(self, *, page: int = 1, limit: int = 500):
+            return {
+                "code": 0,
+                "data": [
+                    {"product_id": 101, "price": 24000, "stock": 18, "low_stock": 5},
+                    {"product_id": 102, "price": 15000, "stock": 0, "low_stock": 5},
+                    {"product_id": 103, "price": 12500, "stock": 3, "low_stock": 5},
+                    {"product_id": 201, "price": 180000, "stock": 12.5, "low_stock": 2},
+                ],
+                "pagination": {
+                    "page": 1,
+                    "limit": limit,
+                    "total_items": 4,
+                    "total_pages": 1,
+                },
+            }
+
+    svc = YesPOSCatalogService(cache_path=cache_file, client_factory=FakeYesPOSClient)
+    monkeypatch.setattr(api_app_mod, "get_yespos_catalog_service", lambda: svc)
+
+    async def scenario():
+        import api.deps as api_deps_mod
+
+        eng, maker = create_engine_and_session(f"sqlite+aiosqlite:///{db_file.as_posix()}")
+        await init_db(engine_override=eng, session_maker_override=maker)
+        monkeypatch.setattr(api_auth_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_deps_mod, "async_session_maker", maker)
+        monkeypatch.setattr(api_app_mod, "async_session_maker", maker)
+
+        try:
+            # 1. Load catalog + wait for prices and verify disk cache written
+            await svc.ensure_loaded(force=True, wait_for_prices=True)
+            assert cache_file.exists()
+
+            # 2. Cross-script search (Latin "ananas" finds Cyrillic "Mikado ананас 850ml")
+            q_ananas = svc.query_products(q="ananas")
+            assert q_ananas["matched_count"] == 1
+            assert q_ananas["items"][0]["sku"] == "10990"
+            assert q_ananas["items"][0]["price"] == 24000.0
+
+            # 3. Barcode search
+            q_barcode = svc.query_products(q="5449000000996")
+            assert q_barcode["matched_count"] == 1
+            assert q_barcode["items"][0]["id"] == 102
+
+            # 4. Exact SKU & MXIK search
+            q_sku = svc.query_products(q="10005")
+            assert q_sku["matched_count"] == 1
+            assert q_sku["items"][0]["name"] == "Qazi ichak kg"
+
+            q_mxik = svc.query_products(q="01902001001080001")
+            assert q_mxik["matched_count"] == 1
+            assert q_mxik["items"][0]["id"] == 201
+
+            # 5. Parent category includes child category products (10 + child 11 -> 3 products)
+            q_parent = svc.query_products(category_id=10)
+            assert q_parent["matched_count"] == 3
+
+            # 6. Stock filters
+            assert svc.query_products(stock_filter="in_stock")["matched_count"] == 3
+            assert svc.query_products(stock_filter="out_of_stock")["matched_count"] == 1
+            assert svc.query_products(stock_filter="low_stock")["matched_count"] == 1
+
+            # 7. Reloading from disk cache works without hitting API
+            svc_disk = YesPOSCatalogService(
+                cache_path=cache_file,
+                client_factory=FakeYesPOSClient,
+            )
+            disk_res = svc_disk.query_products(q="Gorilla")
+            assert disk_res["matched_count"] == 1
+            assert disk_res["prices_ready"] is True
+
+            # 8. FastAPI endpoints GET /yespos/products and POST /yespos/products/sync
+            app = api_app_mod.create_api_app()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver",
+            ) as client:
+                code = api_auth_mod.create_login_code(9009)
+                tok = (await client.post("/auth/login", json={"code": code})).json()["access_token"]
+                headers = {"Authorization": f"Bearer {tok}"}
+                r_get = await client.get(
+                    "/yespos/products",
+                    params={"q": "ananas", "sort": "price_desc"},
+                    headers=headers,
+                )
+                assert r_get.status_code == 200
+                j_get = r_get.json()
+                assert j_get["configured"] is True
+                assert j_get["matched_count"] == 1
+                assert j_get["items"][0]["sku"] == "10990"
+                assert len(j_get["categories"]) == 3
+
+                r_sync = await client.post(
+                    "/yespos/products/sync",
+                    params={"wait_for_prices": "true"},
+                    headers=headers,
+                )
+                assert r_sync.status_code == 200
+                j_sync = r_sync.json()
+                assert j_sync["ok"] is True
+                assert j_sync["prices_ready"] is True
+                assert j_sync["total_catalog_products"] == 4
+        finally:
+            await eng.dispose()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        api_auth_mod.clear_auth_memory_state()
+        clear_role_cache()
+        get_settings.cache_clear()

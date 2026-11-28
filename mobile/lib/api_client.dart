@@ -1373,6 +1373,46 @@ class HisobchiApiClient {
     return _decodeJson(res);
   }
 
+  Future<Map<String, dynamic>> getYesposProducts({
+    String q = '',
+    int? categoryId,
+    String stockFilter = 'all',
+    String sort = 'name_asc',
+    int page = 1,
+    int limit = 60,
+    bool refresh = false,
+  }) async {
+    final res = await _http
+        .get(
+          _uri('/yespos/products', {
+            if (q.trim().isNotEmpty) 'q': q.trim(),
+            if (categoryId != null) 'category_id': '$categoryId',
+            'stock_filter': stockFilter,
+            'sort': sort,
+            'page': '$page',
+            'limit': '$limit',
+            if (refresh) 'refresh': 'true',
+          }),
+          headers: _headers(),
+        )
+        .timeout(const Duration(seconds: 25));
+    return _decodeJson(res);
+  }
+
+  Future<Map<String, dynamic>> syncYesposProducts({
+    bool waitForPrices = false,
+  }) async {
+    final res = await _http
+        .post(
+          _uri('/yespos/products/sync', {
+            if (waitForPrices) 'wait_for_prices': 'true',
+          }),
+          headers: _headers(),
+        )
+        .timeout(const Duration(seconds: 35));
+    return _decodeJson(res);
+  }
+
   Future<String> sendExcelToTelegram({
     required String reportType, // session | range | sverka
     int? sessionId,

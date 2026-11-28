@@ -1,9 +1,9 @@
 # Hisobchi — Kassa, Nakladnoy va Hisobot Tizimi
 
-> **Joriy ilova versiyasi:** `v1.0.48`  
+> **Joriy ilova versiyasi:** `v1.0.55`  
 > **Platformalar:** Android (Play Market `.aab` va to'g'ridan-to'g'ri `.apk`), Telegram Web Mini App (Flutter Web), Telegram Bot (Python / `aiogram`), Ma'lumotlar bazasi (SQLite / PostgreSQL).
 
-**Hisobchi** — do'kon va savdo nuqtalari uchun kunlik naqd pul aylanmasi, ta'minotchi (postavshik) nakladnoylari, nasiya/qarz nazorati, kassa sverkasi, YesPOS prixod (ITOG) tahlili va Excel/PDF hisobotlarini yagona ekotizimda boshqaruvchi tizim.
+**Hisobchi** — do'kon va savdo nuqtalari uchun kunlik naqd pul aylanmasi, ta'minotchi (postavshik) nakladnoylari, nasiya/qarz nazorati, kassa sverkasi, YesPOS mahsulotlar katalogi va prixod (ITOG) tahlili hamda Excel/PDF hisobotlarini yagona ekotizimda boshqaruvchi tizim.
 
 ---
 
@@ -13,8 +13,9 @@
 | :--- | :--- |
 | **Kunlik Kassa va Smena** | Kechadan qoldiq, `Pul oldim`, `Pul oldimni qaytarish`, `Kassa qarzi (olish / qaytarish)`, `Xarajat` va smena yopish balansini avtomatik hisoblaydi. |
 | **Nakladnoy va To'lovlar** | Naqd, Karta, O'tkazma (perechesleniya) va Qarzga nakladnoylar, qisman to'lov, rasm biriktirish, guruhga yuborish va tahrirlash. |
-| **Kassa Sverkasi** | Kun davomida qo'ldagi naqd pulni o'zgartirmaydigan **oraliq (vaqtinchalik)** sverkalar (vaqt, sanalgan pul, farq) hamda kun yopishdagi **asosiy** sverka tarixi. |
-| **Ta'minotchilar va Nasiya** | Postavshiklar reyestri, sinxron qidiruv (lotin/kirill o'xshash nomlar), qarzlar nazorati, jonli sverka va PDF akt-sverka. |
+| **Kassa Sverkasi** | Kun davomida qo'ldagi naqd pulni o'zgartirmaydigan **oraliq (vaqtinchalik)** sverkalar (vaqt, sanalgan pul, farq), kun yopishdagi **asosiy** sverka tarixi hamda davr bo'yicha jami `plus` / `minus` farq va kassa oqimi tahlili. |
+| **Ta'minotchilar va Nasiya** | Postavshiklar reyestri, sinxron qidiruv (lotin/kirill o'xshash nomlar), birlashtirish (`Merge`), bir bosishda qaytarish (`Undo`), ajratish (`Split`), qarzlar nazorati, jonli sverka va PDF akt-sverka. |
+| **YesPOS Mahsulotlar Katalogi** | YesPOS tizimidan faqat o'qish (`GET`) rejimida mahsulotlar, kategoriyalar, narx va qoldiqlarni keshlab yuklaydi; nomi, artikul (`SKU`), barkod, MXIK (`classcode`), qadoq kodi va kategoriya bo'yicha lotin/kirill qidiruv hamda filtrlashni ta'minlaydi. |
 | **AI Hujjat va Ovoz** | Nakladnoy rasmidan postavshik, summa va qatorlar tekshiruvini avtomatik o'qish; ovozli buyruqlar orqali tez kirim/chiqim kiritish. |
 | **Hisobotlar va Prixod (ITOG)** | Kunlik, 7 kunlik, oylik, ixtiyoriy davr va sverka bo'yicha formatlangan Excel (`.xlsx`), PDF akt-sverka hamda YesPOS prixod jadvali tahlili. |
 | **Oflayn Rejim va Duplikat Himoyasi** | Internetsiz holatda ma'lumotlarni lokal navbatda saqlash, aloqa tiklanganda avtomatik sinxronlash va takroriy yuborishlarga qarshi himoya. |
@@ -60,7 +61,7 @@ Hisobot_bot_and_integratsiya_yespos/
 ├── alembic.ini                     # Baza migratsiyalari sozlamasi
 ├── alembic/
 │   ├── env.py                      # Alembic muhiti
-│   └── versions/                   # Baza sxemasi migratsiyalari (0001..0004)
+│   └── versions/                   # Baza sxemasi migratsiyalari (0001..0005)
 │
 ├── database/                       # Ma'lumotlar bazasi qatlami
 │   ├── models.py                   # Jadvallar (Smena, Kassa, Sverka, Nakladnoy, Qarz, Prixod va b.)
@@ -93,7 +94,7 @@ Hisobot_bot_and_integratsiya_yespos/
 │   ├── pdf_sverka.py               # Postavshiklar uchun PDF akt-sverka generatori
 │   ├── gemini_ai.py                # Rasm (nakladnoy) va ovozli buyruqlar AI tahlili
 │   ├── prixod_parser.py            # YesPOS jadval va matnli ITOG parseri
-│   ├── yespos_client.py            # YesPOS integratsiya yordamchisi
+│   ├── yespos_client.py            # YesPOS API mijoz va keshlangan mahsulotlar katalogi servisi
 │   ├── backup.py                   # Ma'lumotlar bazasi zaxira nusxasi
 │   └── scheduler.py                # Rejali avtomatik vazifalar
 │
@@ -109,7 +110,9 @@ Hisobot_bot_and_integratsiya_yespos/
 │
 └── mobile/                         # Flutter Mobil va Web Ilova
     ├── pubspec.yaml                # Flutter paketlari va joriy versiya
-    ├── assets/app_icon.png         # Ilova logotipi
+    ├── assets/
+    │   ├── app_icon.png            # 3D Obsidian-Emerald-Gold ilova logotipi
+    │   └── icons3d/                # 14 ta shaffof 3D moliya ikonkalari (Figma Finance 3D)
     ├── android/                    # Android konfiguratsiya (play/direct flavor, ProGuard, Keystore)
     ├── web/                        # Web Mini App shabloni va ikonkalari
     ├── lib/
@@ -137,10 +140,10 @@ Hisobot_bot_and_integratsiya_yespos/
   - Qo'lda yangilash tugmasi olib tashlangan — barcha bo'limlar fon rejimida va tab almashtirganda avtomatik yangilanadi.
 - **Pastki menyu (Chekkaga birlashtirilgan 4 ta bo'lim):**
   1. **Dashboard** — Asosiy balans kartasi (`Pul oldim` [Olish / Qaytarish], `Kassa` [Qarz olish / Qaytarish], `Xarajat`), xarajatlar taqsimoti, davriy grafiklar va kassa amallari lentasi.
-  2. **Amallar** — Kunlik nakladnoylar ro'yxati, tezkor **`Sverka`** va **`Arxiv`** tugmalari, filtrlar, qidiruv va tezkor swipe amallari.
-  3. **Ta'minotchilar** — Postavshiklar profili, qarzlar/nasiyalar, qisman yoki to'liq yopish va PDF akt-sverka.
-  4. **Smena** — Kassa sverka (oraliq va asosiy), kupyura kalkulyatori, smena yopish, Excel hisobotlar va Prixod (ITOG).
-- **Sozlamalar (`⚙️`):** Tungi mavzu, Postavshik sozlamalari, Xavfsizlik (PIN va Otpechatka), Telegram guruh/xodimlar va hisob boshqaruvi.
+  2. **Amallar** — Kunlik nakladnoylar ro'yxati, tezkor **`Sverka`**, **`Mahsulotlar` (YesPOS)**, **`Skaner`** va **`Arxiv`** tugmalari, filtrlar, qidiruv va tezkor swipe amallari.
+  3. **Ta'minotchilar** — Postavshiklar profili, birlashtirish (`Merge`), qaytarish (`Undo`), ajratish (`Split`), qarzlar/nasiyalar, qisman yoki to'liq yopish va PDF akt-sverka.
+  4. **Smena** — Kassa sverka (oraliq va asosiy, jami `plus`/`minus` tahlili), kupyura kalkulyatori, smena yopish, Excel hisobotlar, Prixod (ITOG) va YesPOS mahsulotlar katalogi.
+- **Sozlamalar (`⚙️`):** Tungi mavzu, Postavshik sozlamalari, YesPOS mahsulotlar katalogi, Xavfsizlik (PIN va Otpechatka), Telegram guruh/xodimlar va hisob boshqaruvi.
 - **Yagona bildirishnomalar:** Ilovadagi barcha xabarlar (saqlash, tahrirlash, o'chirish + `Bekor qilish`, xatolar) tepadan pastga yumshoq tushadi va ustiga bosilganda tez yopiladi.
 
 ---
@@ -163,10 +166,10 @@ Hisobot_bot_and_integratsiya_yespos/
 Mahalliy muhitda kod sifatini va avtomatik testlarni tekshirish:
 
 ```powershell
-# Backend testlari (40 ta test)
+# Backend testlari (44 ta test)
 python -m pytest -q
 
-# Mobil ilova statik tahlili va testlari (34 ta test)
+# Mobil ilova statik tahlili va testlari (40 ta test)
 cd mobile
 flutter analyze
 flutter test
