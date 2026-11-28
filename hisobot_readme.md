@@ -1,6 +1,6 @@
 # Hisobchi — Kassa, Nakladnoy va Hisobot Tizimi
 
-> **Joriy ilova versiyasi:** `v1.0.55`  
+> **Joriy ilova versiyasi:** `v1.1.0`  
 > **Platformalar:** Android (Play Market `.aab` va to'g'ridan-to'g'ri `.apk`), Telegram Web Mini App (Flutter Web), Telegram Bot (Python / `aiogram`), Ma'lumotlar bazasi (SQLite / PostgreSQL).
 
 **Hisobchi** — do'kon va savdo nuqtalari uchun kunlik naqd pul aylanmasi, ta'minotchi (postavshik) nakladnoylari, nasiya/qarz nazorati, kassa sverkasi, YesPOS mahsulotlar katalogi va prixod (ITOG) tahlili hamda Excel/PDF hisobotlarini yagona ekotizimda boshqaruvchi tizim.

@@ -1,5 +1,7 @@
 ﻿param(
-    [switch]$NoBump = $false
+    [switch]$NoBump = $false,
+    [ValidateSet("patch", "minor", "major")]
+    [string]$Bump = "patch"
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,7 +32,11 @@ if ($PubspecContent -match '(?m)^version:\s*(\d+)\.(\d+)\.(\d+)\+(\d+)') {
     $Build = [int]$Matches[4]
 
     if (-not $NoBump) {
-        $Patch += 1
+        switch ($Bump) {
+            "major" { $Major += 1; $Minor = 0; $Patch = 0 }
+            "minor" { $Minor += 1; $Patch = 0 }
+            default { $Patch += 1 }
+        }
         $Build += 1
     }
 
